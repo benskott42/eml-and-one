@@ -1,0 +1,31 @@
+{
+  "name": "eml-and-one",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EML and One, a two-button calculator",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "eslint --max-warnings=0",
+    "eml:check": "tsx lib/eml/check.ts",
+    "eml:smoke": "tsx scripts/calculator-smoke.tsx",
+    "eml:golf": "tsx scripts/eml-golf-slow.ts"
+  },
+  "dependencies": {
+    "decimal.js": "^10.6.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "jsdom": "^31.0.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  }
+}
