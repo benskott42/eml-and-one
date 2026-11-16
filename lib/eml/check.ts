@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
@@ -76,6 +77,19 @@ import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } 
 import table from "./best-known.json";
 
 let failed = 0;
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+
+/** A fresh node process. `npx` and `URL.pathname` both break on Windows. */
+function runTsx(script: string, input: string, timeout = 180_000) {
+  return spawnSync(process.execPath, [tsxCli, path.join(repoRoot, script)], {
+    cwd: repoRoot,
+    input,
+    encoding: "utf8",
+    timeout,
+  });
+}
+
 const isolateCases: { source: string; env: Record<string, { re: number; im: number }> }[] = [];
 
 function relClose(got: { re: number; im: number }, want: { re: number; im: number }, tol = 1e-12): boolean {
@@ -2938,13 +2952,7 @@ failed += runPropertyChecks();
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
-  const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-  const fresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
-    cwd: rootDir,
-    input: JSON.stringify(jobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
   if (fresh.status !== 0) {
     failed += 1;
     console.log("FAIL fresh exact process", fresh.status, fresh.stderr);
@@ -2980,6 +2988,15 @@ failed += runPropertyChecks();
     ["0-(2*exp(-1000))", "−1.01519177951×10^−434"],
     ["0+exp(-1000)", "5.075958897549×10^−435"],
     ["-10^(-500)", "−1×10^−500"],
+    ["0-1/10^400", "−1×10^−400"],
+    ["0-1/10^433", "−1×10^−433"],
+    ["0-(exp(-1000)/3)", "−1.691986299183×10^−435"],
+    ["(1+10^-500)-1", "1×10^−500"],
+    ["10^-500+1-1", "1×10^−500"],
+    ["exp(-1000)+exp(-1000)", "1.01519177951×10^−434"],
+    ["-(exp(-1000)+exp(-1000))", "−1.01519177951×10^−434"],
+    ["ln(1+1/10^400)", "1×10^−400"],
+    ["0-ln(1+10^(-400))", "−1×10^−400"],
     ["ln(1-10^(-400))", "−1×10^−400"],
     ["ln(1+10^(-400))", "1×10^−400"],
     ["-(10^(-30))", "−1×10^−30"],
@@ -3014,14 +3031,24 @@ failed += runPropertyChecks();
     failed += 1;
     console.log("FAIL typed -0", signed);
   }
-  // Past the 480-digit cap, and a sum of two underflows, must not certify 0.
-  const lostRows = [
-    "0-10^(-433)",
-    "0-10^(-500)",
-    "ln(1-10^(-500))",
-    "exp(-1000)+exp(-1000)",
-    "-(exp(-1000)+exp(-1000))",
+  // A logarithm the circuit collapses past the cap must not certify 0.
+  const lostRows = ["ln(1-10^(-500))", "ln(1+10^(-500))", "ln(1+exp(-1000))", "ln(1-exp(-1000))"];
+  // Past-cap 0 − power may print the value or say it could not verify. A confident 0 fails.
+  const eitherRows: Array<[string, string]> = [
+    ["0-10^(-433)", "−1×10^−433"],
+    ["0-10^(-500)", "−1×10^−500"],
   ];
+  const eitherNodes = eitherRows.map(([source]) => compileExpression(source, {}));
+  for (const [i, [source, want]] of eitherRows.entries()) {
+    const report = exactReport(eitherNodes[i], {}, { maxNodes: 400_000 });
+    const text = formatExact(report.value).replace(/\u200b/g, "");
+    if (report.unverified) console.log("either", source, "couldn't verify");
+    else if (text === want) console.log("either", source, text);
+    else {
+      failed += 1;
+      console.log("FAIL past-cap sub", source, text);
+    }
+  }
   const lostNodes = lostRows.map((source) => compileExpression(source, {}));
   for (const [i, source] of lostRows.entries()) {
     const report = exactReport(lostNodes[i], {}, { maxNodes: 400_000 });
@@ -3040,25 +3067,47 @@ failed += runPropertyChecks();
     failed += 1;
     console.log("FAIL identical past-cap cancel", foldedPow.unverified ? "unverified" : foldedText);
   }
+  // Exact zeros. A cap mark must not turn these into "couldn't verify".
+  const zeroRows = [
+    "0*10^-500",
+    "10^-500*0",
+    "ln(1)*10^-500",
+    "(0-10^-433)+10^-433",
+    "(exp(-1000)+exp(-1000))-2*exp(-1000)",
+    "(0-10^-500)*0",
+  ];
+  const zeroNodes = zeroRows.map((source) => compileExpression(source, {}));
+  for (const [i, source] of zeroRows.entries()) {
+    const report = exactReport(zeroNodes[i], {}, { maxNodes: 400_000 });
+    const text = formatExact(report.value).replace(/\u200b/g, "");
+    if (report.unverified || text !== "0") {
+      failed += 1;
+      console.log("FAIL exact tiny zero", source, report.unverified ? "unverified" : text);
+    } else {
+      console.log("zero", source, text);
+    }
+  }
   const tinyJobs = [
-    ...tinyRows.flatMap(([source], i) => {
+    ...tinyRows.flatMap(([source, want], i) => {
       // JSON has no −0, so the typed −0 control stays in this process.
       if (source === "-0") return [];
       const packed = packCircuit(tinyNodes[i]);
-      return [{ source, tokens: packed.tokens, root: packed.root, unverified: false }];
+      return [{ source, tokens: packed.tokens, root: packed.root, unverified: false, want, either: false }];
     }),
     ...lostRows.map((source, i) => {
       const packed = packCircuit(lostNodes[i]);
-      return { source, tokens: packed.tokens, root: packed.root, unverified: true };
+      return { source, tokens: packed.tokens, root: packed.root, unverified: true, want: "0", either: false };
+    }),
+    ...zeroRows.map((source, i) => {
+      const packed = packCircuit(zeroNodes[i]);
+      return { source, tokens: packed.tokens, root: packed.root, unverified: false, want: "0", either: false };
+    }),
+    ...eitherRows.map(([source, want], i) => {
+      const packed = packCircuit(eitherNodes[i]);
+      return { source, tokens: packed.tokens, root: packed.root, unverified: false, want, either: true };
     }),
   ];
-  const tinyRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-  const tinyFresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
-    cwd: tinyRoot,
-    input: JSON.stringify(tinyJobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const tinyFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(tinyJobs), 300_000);
   if (tinyFresh.status !== 0) {
     failed += 1;
     console.log("FAIL fresh tiny underflow", tinyFresh.status, tinyFresh.stderr);
@@ -3068,18 +3117,19 @@ failed += runPropertyChecks();
       const job = tinyJobs.find((item) => item.source === row.source);
       const text = row.text.replace(/\u200b/g, "");
       if (!job) continue;
-      if (job.unverified) {
+      if (job.either) {
+        if (row.unverified || text === job.want) continue;
+        failed += 1;
+        console.log("FAIL fresh past-cap sub", row.source, text);
+      } else if (job.unverified) {
         const collapsed = text === "0" || text === "−0";
         if (!row.unverified || !collapsed) {
           failed += 1;
           console.log("FAIL fresh lost tiny", row.source, row.unverified ? "unverified" : text);
         }
-      } else {
-        const want = tinyRows.find(([source]) => source === row.source)?.[1];
-        if (row.unverified || text !== want) {
-          failed += 1;
-          console.log("FAIL fresh tiny", row.source, row.unverified ? "unverified" : text);
-        }
+      } else if (row.unverified || text !== job.want) {
+        failed += 1;
+        console.log("FAIL fresh tiny", row.source, row.unverified ? "unverified" : text);
       }
     }
   }

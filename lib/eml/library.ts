@@ -1,15 +1,19 @@
 import type { C } from "./complex";
 import {
   beginInteger,
+  carryTinyScale,
   domainAdd,
   domainNeg,
   domainSub,
   endInteger,
   decadeOf,
+  hiddenUnderflow,
+  isLostTiny,
   isNonfiniteNode,
   knownValue,
   noteDecade,
   noteLostTiny,
+  provenFinite,
   noteTinyReal,
   naiveSub,
   negativeZero,
@@ -98,10 +102,20 @@ export function tExp(t: Node): Node {
 }
 
 export function tLn(t: Node): Node {
-  const inner = onePlus.get(t);
+  const plus = onePlus.get(t);
+  const minus = oneMinus.get(t);
   // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
-  if (inner && tinyScale(inner, SERIES_REL) !== null) return markSeries(inner, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
-  return noteLn(E(ONE, E(E(ONE, t), ONE)), t);
+  if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
+  const inner = plus ?? minus;
+  if (!inner) return node;
+  const decade = decadeOf(inner);
+  // ln(1±x) shares x's decade when that decade still fits. Past the cap, or an
+  // underflow with no decade, the circuit prints 0 and that 0 is not certified.
+  if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
+  else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
+  return node;
 }
 
 export const tE = memo(() => tagReal(programNode("e"), Math.E));
@@ -112,6 +126,7 @@ const cosArg = new WeakMap<Node, Node>();
 const expArg = new WeakMap<Node, Node>();
 const sqrtArg = new WeakMap<Node, Node>();
 const onePlus = new WeakMap<Node, Node>();
+const oneMinus = new WeakMap<Node, Node>();
 
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
@@ -281,7 +296,11 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
 }
 
 export function tSub(a: Node, b: Node): Node {
-  return cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b) ?? domainSub(a, b);
+  const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
+  if (series) return series;
+  const node = domainSub(a, b);
+  if (isOneNode(a)) oneMinus.set(node, b);
+  return node;
 }
 
 export function tNeg(b: Node): Node {
@@ -313,7 +332,9 @@ export function tInv(b: Node): Node {
 }
 
 function exactZero(node: Node): boolean {
-  return rangeOf(node).int === BigInt(0);
+  if (rangeOf(node).int === BigInt(0)) return true;
+  const known = knownValue(node);
+  return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
 }
 
 function negativeFactor(node: Node): boolean {
@@ -331,7 +352,11 @@ export function tMul(a: Node, b: Node): Node {
   // 0 · (−1) is the −0 leaf. The product program collapses that sign.
   if (exactZero(a) && negativeFactor(b)) return negativeZero();
   if (exactZero(b) && negativeFactor(a)) return negativeZero();
-  return rawMul(a, b);
+  // 0 times a finite value is exactly 0. The other factor's cap mark stops here,
+  // so 0·10^(−500) stays a certified 0.
+  if (exactZero(a) && provenFinite(b)) return tZero();
+  if (exactZero(b) && provenFinite(a)) return tZero();
+  return carryTinyScale(rawMul(a, b), a, b, "mul");
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -357,7 +382,7 @@ export function tDiv(a: Node, b: Node): Node {
   const u = expArgument(a);
   const v = expArgument(b);
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
-  return rawDiv(a, b);
+  return carryTinyScale(rawDiv(a, b), a, b, "div");
 }
 
 export function tPow(a: Node, b: Node): Node {
