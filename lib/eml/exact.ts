@@ -10,8 +10,9 @@ import {
   type EvalBudget,
   type Node,
   precisionMessage,
+  provenInteger,
 } from "./node";
-import { decadeOf, inScaledShell, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 
 /**
@@ -624,6 +625,17 @@ function exactReportOnce(
     if (!n) throw new EmlError("Could not evaluate this circuit.");
     if (isSeriesShortcut(n)) sawLead = true;
     if (memo.has(n)) continue;
+    if (isMarkedExactInt(n)) {
+      const big = provenInteger(n);
+      if (big !== undefined) {
+        const value = z(big.toString(), 0);
+        memo.set(n, value);
+        noteSeen(value);
+        why.set(n, null);
+        logged.set(n, false);
+        continue;
+      }
+    }
 
     if (n.type === "one") {
       memo.set(n, Z1);

@@ -2966,6 +2966,101 @@ failed += runPropertyChecks();
   }
 }
 
+{
+  // Marked infinities. mpmath dps 50: ln(0) is -inf and 0/0 raises ZeroDivisionError.
+  // tan(pi/2) there is the finite -1.9788349012695708716820519525808990497221781173111e+51,
+  // because a 50-digit pi/2 is not the symbolic pole. The self-differences below are undefined,
+  // with a singular flag, in both modes. (1/0)-(1/0) is the same kind of control.
+  // exp(ln(0)) is 0, so that difference stays the folded 0.
+  // mpmath dps 420: (10^400-1)-10^400 = -1, (10^400+1)-10^400 = 1,
+  // 10^400-(10^400-1) = 1, (10^400-10^300)/10^300 = 10^100-1.
+  // At dps 50, 10^100-1 prints as 1.0000000000000000000000000000000000000000000000000e+100,
+  // the same text as 10^100. The exact check uses 110 digits, where they differ.
+  const budget = { maxNodes: 400_000 };
+  const undef = (source: string) => {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    if (formatC(hw.value) !== "undefined" || hw.singular === null || formatExact(ex.value) !== "undefined" || ex.singular === null) {
+      failed += 1;
+      console.log("FAIL marked cancellation", source, hw.singular, hw.value, ex.singular, formatExact(ex.value));
+    }
+  };
+  undef("(0/0)-(0/0)");
+  undef("tan(pi/2)-tan(pi/2)");
+  undef("tan(3*pi/2)-tan(3*pi/2)");
+  undef("ln(ln(0))-ln(ln(0))");
+  undef("ln(0)-ln(0)");
+  undef("tan(pi/2)+(-tan(pi/2))");
+  undef("(0/0)+(-(0/0))");
+  undef("(1/0)-(1/0)");
+
+  const finiteZero = (source: string) => {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    if (hw.value.re !== 0 || hw.value.im !== 0 || hw.singular !== null || ex.singular !== null || !ex.value.re.isZero() || !ex.value.im.isZero()) {
+      failed += 1;
+      console.log("FAIL finite cancellation", source, hw.singular, hw.value, ex.singular, formatExact(ex.value));
+    }
+  };
+  finiteZero("exp(ln(0))-exp(ln(0))");
+  const zeroGates = circuitStats(compileExpression("0", {})).dagGates;
+  const sinDiff = compileExpression("sin(1)-sin(1)", {});
+  const sinGates = circuitStats(compileExpression("sin(1)", {})).dagGates;
+  if (circuitStats(sinDiff).dagGates !== zeroGates || sinGates <= zeroGates) {
+    failed += 1;
+    console.log("FAIL sin(1)-sin(1) was not the folded zero", circuitStats(sinDiff).dagGates, sinGates, zeroGates);
+  }
+  finiteZero("sin(1)-sin(1)");
+  const near = "tan(1.5707963267948966)-tan(1.5707963267948966)";
+  const nearNode = compileExpression(near, {});
+  if (circuitStats(nearNode).dagGates !== zeroGates) {
+    failed += 1;
+    console.log("FAIL nearby tan fold", circuitStats(nearNode).dagGates, zeroGates);
+  }
+  finiteZero(near);
+
+  const expectInt = (source: string, wantNum: number, wantText: string) => {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    if (hw.value.re !== wantNum || hw.value.im !== 0 || hw.singular !== null || ex.singular !== null || text !== wantText) {
+      failed += 1;
+      console.log("FAIL huge exact difference", source, hw.value, hw.singular, text, ex.singular);
+    }
+  };
+  expectInt("(10^400-1)-10^400", -1, "−1");
+  expectInt("(10^400+1)-10^400", 1, "1");
+  expectInt("10^400-(10^400-1)", 1, "1");
+
+  const gap = exactReport(compileExpression("10^400-10^300", {}), {}, budget);
+  const gapText = "9".repeat(100) + "0".repeat(300);
+  if (exactClose(gap.value, "1e400", 0, 110) || !exactClose(gap.value, gapText, 0, 110)) {
+    failed += 1;
+    console.log("FAIL exact 10^400-10^300 dropped 10^300", formatExact(gap.value));
+  }
+  const quotNode = compileExpression("(10^400-10^300)/10^300", {});
+  const quotHw = evaluateReport(quotNode, {}, budget);
+  const quotEx = exactReport(quotNode, {}, budget);
+  const nines = "9".repeat(100);
+  const quotText = formatExact(quotEx.value).replace(/\u200b/g, "");
+  if (
+    !Number.isFinite(quotHw.value.re) ||
+    Math.abs(quotHw.value.re - 1e100) / 1e100 > 1e-12 ||
+    quotHw.value.im !== 0 ||
+    quotHw.singular !== null ||
+    quotEx.singular !== null ||
+    quotText !== nines ||
+    !exactClose(quotEx.value, nines, 0, 110) ||
+    exactClose(quotEx.value, "1e100", 0, 110)
+  ) {
+    failed += 1;
+    console.log("FAIL (10^400-10^300)/10^300", quotHw.value, quotHw.singular, quotText, quotEx.singular);
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
