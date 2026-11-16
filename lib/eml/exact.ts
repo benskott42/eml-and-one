@@ -572,7 +572,10 @@ export function exactReport(
   // cap the screen says it could not verify, rather than certifying a rounding.
   if (pass === 0) {
     const span = literalSpan(root);
-    if (span > 0) {
+    // A pasted number is shown from its own digits. The cap is for a cancellation
+    // that would need more than 480 digits, not for printing the number.
+    const plain = root.type === "input" && exactLiteralOf(root) !== undefined;
+    if (span > 0 && !plain) {
       const need = span + PRECISION + 32;
       if (need > PRECISION_CAP) return certifyZero(exactReportOnce(root, env, budget));
       if (need > D.precision) {

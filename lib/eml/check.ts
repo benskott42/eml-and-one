@@ -2997,6 +2997,29 @@ failed += runPropertyChecks();
     console.log("FAIL exp(1/(-0)) leaf", expLeaf);
   }
   expect.set("expSin", { re: expSinRe, im: "0", leaf: { re: "-Infinity", im: "0" } });
+  for (const n of [41, 309, 600, 4000]) {
+    const digits = "9".repeat(n);
+    packSource(`sub${n}`, `(${digits}+1)-${digits}`);
+    expect.set(`sub${n}`, { re: "1", im: "0" });
+    packSource(`sq${n}`, `(${digits}+1)^2-${digits}^2-2*${digits}`);
+    expect.set(`sq${n}`, { re: "1", im: "0" });
+  }
+  const bare470 = "7".repeat(470);
+  const bare4000 = `4${"0".repeat(3999)}`;
+  const bareText = (source: string) => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    if (report.unverified) {
+      failed += 1;
+      console.log("FAIL bare literal unverified", source.length);
+    }
+    return report.value.re.toFixed();
+  };
+  packSource("bare470", bare470);
+  expect.set("bare470", { re: bareText(bare470), im: "0" });
+  packSource("bare4000", bare4000);
+  expect.set("bare4000", { re: bareText(bare4000), im: "0" });
+  packSource("neg4000", `-${bare4000}`);
+  expect.set("neg4000", { re: bareText(`-${bare4000}`), im: "0" });
   const ks = [40, 41, 99, 120, 121, 308, 309, 310, 464, 465, 480, 481, 1000, 3999];
   for (const k of ks) {
     const base = `1${"0".repeat(k)}`;

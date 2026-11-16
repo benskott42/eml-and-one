@@ -8,8 +8,10 @@ import {
   endInteger,
   decadeOf,
   isNonfiniteNode,
+  exactIntNode,
   integerQuotient,
   knownValue,
+  isMarkedExactInt,
   markExactInt,
   noteDecade,
   noteTinyReal,
@@ -369,7 +371,10 @@ export function tPow(a: Node, b: Node): Node {
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
-    return tagInteger(node, ia ** ib);
+    const value = ia ** ib;
+    // A pasted integer's power stays exact. The float power would round it away.
+    if (isMarkedExactInt(a) && value.toString().length <= 16_000) return exactIntNode(value);
+    return tagInteger(node, value);
   }
   const va = knownValue(a);
   const vb = knownValue(b);

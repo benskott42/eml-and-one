@@ -1,4 +1,4 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, noteExactLiteral, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { noteBuilder } from "./provenance";
 import { applyProgram, programNode } from "./programs";
 
@@ -527,6 +527,14 @@ export function markExactInt(node: Node, value: bigint): Node {
   return attachInt(node, value);
 }
 
+/** A new leaf for an integer that does not fit in a float. The text is the value. */
+export function exactIntNode(value: bigint): Node {
+  const text = value.toString();
+  const numeric = Number(text);
+  const re = Number.isFinite(numeric) ? numeric : value < BigInt(0) ? -Number.MAX_VALUE : Number.MAX_VALUE;
+  return markExactInt(noteExactLiteral(input({ re, im: 0 }, text), text), value);
+}
+
 /** Exact quotient of an integer past the float range, when the quotient itself still fits in a float. */
 export function integerQuotient(a: Node, b: Node): Node | null {
   if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
@@ -762,7 +770,8 @@ export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
   const rest = subComplement(a, b);
   if (rest) return rest;
   // 10^400 − 1 is still +∞ in float. The exact gates already lose the 1.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
+  // A pasted integer keeps the 1: N − 1 is not N.
+  if (floatOverflowInt(a) && finiteBeside(b) && !isMarkedExactInt(a)) return a;
   const pa = poleSignOf(a);
   const pb = poleSignOf(b);
   if (pa !== null && pb !== null && pa === pb) return rememberSub(naiveSub(a, b), a, b);
@@ -778,8 +787,10 @@ export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
   if (ia !== undefined && ib !== undefined) {
     const diff = ia - ib;
     if (diff === BigInt(0)) return zeroNode();
+    if (diff <= SAFE && diff >= -SAFE) return smallInt(Number(diff));
+    // The float circuit cannot represent this difference. A pasted integer still can.
+    if (isMarkedExactInt(a) || isMarkedExactInt(b)) return exactIntNode(diff);
     const huge = ia > SAFE || ia < -SAFE || ib > SAFE || ib < -SAFE;
-    if (huge && diff <= SAFE && diff >= -SAFE) return smallInt(Number(diff));
     const node = buildSub(a, b, kFrom);
     return rememberSub(huge ? node : attachInt(node, diff), a, b);
   }
@@ -991,7 +1002,9 @@ export function domainAdd(a: Node, b: Node): Node {
 }
 
 export function domainNeg(b: Node): Node {
-  if (rangeOf(b).int === BigInt(0)) return negativeZero();
+  const n = rangeOf(b).int;
+  if (n === BigInt(0)) return negativeZero();
+  if (n !== undefined && isMarkedExactInt(b) && (n > SAFE || n < -SAFE)) return exactIntNode(-n);
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();
