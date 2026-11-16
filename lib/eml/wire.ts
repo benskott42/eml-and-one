@@ -1,5 +1,8 @@
-import { decadeOf, inScaledShell, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
+import { decadeOf, inScaledShell, isTwoScaled, isWideTiny, knownValue, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
 import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, type Node } from "./node";
+
+/** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
+export const WIRE_VERSION = 2;
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -20,6 +23,8 @@ export type Wire =
       /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
       kr?: number;
       ki?: number;
+      /** v2: a real below float64's normal range as [m, e] = m·10^e, 1 ≤ |m| < 10. Exponent, not value. */
+      kx?: [number, number];
     };
 
 /** True when a known component is below the 120-digit floor and must travel with the circuit. */
@@ -65,6 +70,10 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     const decade = decadeOf(frame.n);
     if (decade !== undefined) token.dec = decade;
     const known = knownValue(frame.n);
+    if (isWideTiny(frame.n)) {
+      const w = wideOf(frame.n);
+      if (w) token.kx = [w.m, w.e];
+    }
     if (known && tinyPoint(known.re, known.im)) {
       token.kr = known.re;
       token.ki = known.im;
@@ -93,6 +102,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.lead) markSeriesShortcut(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
+      if (tok.kx) noteWide(node, normWide(tok.kx[0], tok.kx[1]));
     }
   }
   const node = nodes[root];

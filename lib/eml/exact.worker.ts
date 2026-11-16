@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "./exact";
-import { unpackCircuit, type Wire } from "./wire";
+import { unpackCircuit, WIRE_VERSION, type Wire } from "./wire";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -24,6 +24,9 @@ self.onmessage = (event: MessageEvent<Request>) => {
       touchedLn0: report.touchedLn0,
       underflowedExact: exactUnderflowsFloat(report.value),
       unverified: report.unverified === true,
+      // v1.1: sticky "not certified" (absorbed term). Old main threads ignore the field.
+      notCertified: report.notCertified ?? null,
+      wire: WIRE_VERSION,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Exact evaluation failed.";

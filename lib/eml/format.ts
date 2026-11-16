@@ -12,7 +12,9 @@ function formatReal(n: number): string {
   }
   let text: string;
   if (abs >= 1e9 || abs < 1e-6) {
-    text = abs.toExponential(6).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
+    // Twelve significant digits, the same count as toPrecision(12). toExponential's
+    // argument is digits after the point, so 11. The noise cut is floatShowsComponent.
+    text = abs.toExponential(11).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
   } else {
     text = abs.toPrecision(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
   }
@@ -33,6 +35,16 @@ function formatImag(n: number): string {
  * display rounding for float mode. A component that changed is marked with ≈.
  * Exact mode does not use this function.
  */
+/** v1.1: true when tidy() would print this component of a number of size `mag`. */
+export function floatShowsComponent(part: number, mag: number): boolean {
+  if (part === 0 || !Number.isFinite(part)) return part !== 0;
+  if (!(mag > 0) || !Number.isFinite(mag)) return true;
+  if (Math.abs(part) * 1e4 >= mag) return true;
+  const unit = 10 ** (Math.floor(Math.log10(mag)) - 11);
+  if (!(unit > 0) || !Number.isFinite(unit)) return true;
+  return Math.abs(Math.round(part / unit) * unit) >= unit / 2;
+}
+
 function tidy(z: C): C {
   if (!Number.isFinite(z.re) || !Number.isFinite(z.im)) return z;
   const mag = hypotC(z);
@@ -41,10 +53,10 @@ function tidy(z: C): C {
   if (!(unit > 0) || !Number.isFinite(unit)) return z;
   const snap = (part: number): number => {
     if (part === 0 || Object.is(part, -0)) return part;
+    // Same predicate the exact flag uses, so a component that is not shown cannot be unflagged noise.
+    if (!floatShowsComponent(part, mag)) return 0;
     if (Math.abs(part) * 1e4 >= mag) return part;
-    const rounded = Math.round(part / unit) * unit;
-    if (Math.abs(rounded) < unit / 2) return 0;
-    return rounded;
+    return Math.round(part / unit) * unit;
   };
   const re = snap(z.re);
   const im = snap(z.im);

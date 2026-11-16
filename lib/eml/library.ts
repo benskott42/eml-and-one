@@ -6,6 +6,11 @@ import {
   domainSub,
   endInteger,
   decadeOf,
+  isWideTiny,
+  MIN_NORMAL,
+  normWide,
+  noteWide,
+  wideOf,
   isNonfiniteNode,
   knownValue,
   noteDecade,
@@ -91,6 +96,11 @@ export function tExp(t: Node): Node {
   const known = knownValue(t);
   if (known && known.re === Infinity && imagZero(known)) return noteNonfinite(node, 1);
   if (known && known.re < 0 && !Number.isFinite(known.re)) return node;
+  if (known && Number.isFinite(known.re) && known.re < -708 && (known.im === 0 || Object.is(known.im, -0))) {
+    const L = known.re / Math.LN10;
+    const e = Math.floor(L);
+    noteWide(node, normWide(10 ** (L - e), e));
+  }
   if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteNonfinite(node, 1);
   if (isNonfiniteNode(t) && !(known && known.re < 0)) return noteNonfinite(node, 1);
   return node;
@@ -100,6 +110,13 @@ export function tLn(t: Node): Node {
   const inner = onePlus.get(t);
   // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
   if (inner && tinyScale(inner, SERIES_REL) !== null) return markSeries(inner, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  // v1.1 prototype: x − x²/2 leaves x³/3, below the 480-digit cap for |x| ≤ 10^(−241).
+  // This closes the 10^(−433)…10^(−480) gap, where k + 48 digits is past the cap.
+  const two = inner ? tinyScale(inner, LN_TWO_TERM) : null;
+  if (inner && two !== null) {
+    const halfSquare = noteDecade(tHalfOf(tMul(inner, inner)), 2 * two - 1);
+    return markSeries(noteDecade(tSub(inner, halfSquare), two), "series shortcut: x − x²/2, for |x| ≤ 10^(−241)");
+  }
   return noteLn(E(ONE, E(E(ONE, t), ONE)), t);
 }
 
@@ -114,7 +131,8 @@ const onePlus = new WeakMap<Node, Node>();
 
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
- * only once |x| ≤ 10^(−241). exp(x)−1, ln(1+x), and sqrt(1+x)−1 drop a relative
+ * only once |x| ≤ 10^(−241). ln(1+x) and exp(x)−1 keep two terms down to that
+ * same bound, and one term for |x| ≤ 10^(−480). sqrt(1+x)−1 drops a relative
  * x, which needs |x| ≤ 10^(−480). A larger argument keeps the real circuit.
  */
 const SERIES_ODD = -241;
@@ -129,6 +147,9 @@ const SERIES_POLY = -61;
  */
 const SERIES_WIDE = -20;
 const SERIES_REL = -480;
+const LN_TWO_TERM = -241;
+/** exp(x) − 1 → x + x²/2. The remainder x³/6 stays under the 480-digit cap for |x| ≤ 10^(−241). */
+const EXP_TWO_TERM = -241;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
 const seriesNotes = new WeakMap<Node, string>();
@@ -262,10 +283,24 @@ function expMinusOne(a: Node, b: Node): Node | null {
   if (expArg.has(a) && isOneNode(b)) {
     const arg = expArg.get(a);
     if (arg && tinyScale(arg, SERIES_REL) !== null) return markSeries(arg, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+    const two = arg ? tinyScale(arg, EXP_TWO_TERM) : null;
+    if (arg && two !== null) {
+      // exp(x) − 1 = x + x²/2 + x³/6 + … . Two terms leave a remainder under the 480-digit cap.
+      // Subtract the negated square. domainAdd of two wide values lifts from the float
+      // ceiling and the raw add then loses a term below 10^(−308); domainSub keeps it.
+      const halfSquare = noteDecade(tHalfOf(tMul(arg, arg)), 2 * two - 1);
+      return markSeries(noteDecade(tSub(arg, tNeg(halfSquare)), two), "series shortcut: x + x²/2, for |x| ≤ 10^(−241)");
+    }
   }
   if (expArg.has(b) && isOneNode(a)) {
     const arg = expArg.get(b);
     if (arg && tinyScale(arg, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), arg), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+    const two = arg ? tinyScale(arg, EXP_TWO_TERM) : null;
+    if (arg && two !== null) {
+      const halfSquare = noteDecade(tHalfOf(tMul(arg, arg)), 2 * two - 1);
+      const sum = noteDecade(tSub(arg, tNeg(halfSquare)), two);
+      return markSeries(noteDecade(rawMul(tNeg(ONE), sum), two), "series shortcut: −x − x²/2, for |x| ≤ 10^(−241)");
+    }
   }
   return null;
 }
@@ -328,8 +363,14 @@ export function tMul(a: Node, b: Node): Node {
     return naiveIndeterminate(pole);
   }
   // 0 · (−1) is the −0 leaf. The product program collapses that sign.
-  if (exactZero(a) && negativeFactor(b)) return negativeZero();
-  if (exactZero(b) && negativeFactor(a)) return negativeZero();
+  const ka = knownValue(a);
+  const kb = knownValue(b);
+  const underflows = !!ka && !!kb && ka.im === 0 && kb.im === 0 && ka.re !== 0 && kb.re !== 0 && Math.abs(ka.re * kb.re) < MIN_NORMAL;
+  const wa = isWideTiny(a) || isWideTiny(b) || underflows ? wideOf(a) : null;
+  const wb = wa ? wideOf(b) : null;
+  if (wa && wb) return noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e));
+  if (exactZero(a) && negativeFactor(b) && !isWideTiny(a)) return negativeZero();
+  if (exactZero(b) && negativeFactor(a) && !isWideTiny(b)) return negativeZero();
   return rawMul(a, b);
 }
 
@@ -356,6 +397,11 @@ export function tDiv(a: Node, b: Node): Node {
   const u = expArgument(a);
   const v = expArgument(b);
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
+  if (isWideTiny(a) || isWideTiny(b)) {
+    const wa = wideOf(a);
+    const wb = wideOf(b);
+    if (wa && wb) return noteWide(rawDiv(a, b), normWide(wa.m / wb.m, wa.e - wb.e));
+  }
   return rawDiv(a, b);
 }
 
@@ -370,7 +416,14 @@ export function tPow(a: Node, b: Node): Node {
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0 && va.re > 0 && Number.isFinite(vb.re)) {
     const re = va.re ** vb.re;
-    if (Number.isFinite(re)) tagReal(node, re);
+    // v1.1: an underflowed or subnormal power is not the integer 0. Keep m·10^e instead.
+    if (Number.isFinite(re) && Math.abs(re) >= MIN_NORMAL) tagReal(node, re);
+    else if (Number.isFinite(re)) {
+      const exact10 = va.re === 10 && Number.isInteger(vb.re);
+      const L = vb.re * Math.log10(va.re);
+      const e = exact10 ? vb.re : Math.floor(L);
+      noteWide(node, normWide(exact10 ? 1 : 10 ** (L - e), e));
+    }
   }
   return node;
 }
@@ -903,8 +956,15 @@ function literalNodeBuild(text: string): Node {
     const magnitude =
       expAdj >= 0 ? tMul(digitsToInteger(1, digits), pow10(expAdj)) : tDiv(digitsToInteger(1, digits), pow10(-expAdj));
     const signed = sign < 0 ? tNeg(magnitude) : magnitude;
-    noteDecade(signed, expAdj);
     const numeric = Number(trimmed);
+    // v1.1: the decade is the leading digit's (15e-401 sits in 10^(−400)), and a literal
+    // float64 cannot hold as a normal keeps its exact m·10^e.
+    const lead = expAdj + digits.length - 1;
+    if (digits !== "0" && !(Number.isFinite(numeric) && Math.abs(numeric) >= MIN_NORMAL)) {
+      noteWide(signed, normWide(sign * Number(`${digits[0]}.${digits.slice(1) || "0"}`), lead));
+      return signed;
+    }
+    noteDecade(signed, digits === "0" ? expAdj : lead);
     return Number.isFinite(numeric) && numeric !== 0 ? tagReal(signed, numeric) : signed;
   }
   if (/^[+-]?\d+$/.test(trimmed)) {
