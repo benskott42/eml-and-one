@@ -1,9 +1,9 @@
 import { type C } from "@/lib/eml/complex";
 import { exactScreen, finiteLossMessage, underflowDisclosure, FLOAT_DIFFERS } from "@/lib/eml/history";
-import { scalarNode, seriesShortcutNote } from "@/lib/eml/library";
+import { floatText, scalarNode, seriesShortcutNote } from "@/lib/eml/library";
 import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describe, evaluateReport, isPure, rpnTokens } from "@/lib/eml/node";
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
-import { formatC, isUsable } from "@/lib/eml/format";
+import { isUsable } from "@/lib/eml/format";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programNumberText } from "@/lib/eml/programIndex";
 
@@ -94,9 +94,24 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
   }
   try {
     const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    // #11 b1d54b9: a circuit that dropped a term is not a float result either.
+    if (report.unverified) {
+      return {
+        value: { re: Number.NaN, im: Number.NaN },
+        text: "—",
+        singular: null,
+        mode,
+        touchedLn0: false,
+        overflowed: false,
+        underflowed: false,
+        nearCut: false,
+        pendingExact: false,
+        notice: "couldn't verify",
+      };
+    }
     return {
       value: report.value,
-      text: formatC(report.value),
+      text: floatText(node, report.value),
       singular: report.singular,
       mode,
       touchedLn0: report.touchedLn0,

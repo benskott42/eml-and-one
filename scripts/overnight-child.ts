@@ -16,7 +16,7 @@ for (const it of job.items) {
       // Float mode on the same fresh circuit (v1.1: ln 0 folds are checked in both modes).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const f = evaluateReport(unpackCircuit(it.tokens as any, it.root), it.env ?? {}, { maxNodes: 200_000 });
-      runs.push({ text: formatExact(r.value), unverified: r.unverified === true, notCertified: r.notCertified ? true : false, singular: r.singular ?? null, floatRe: f.value.re, floatIm: f.value.im, floatSingular: f.singular, ms: Date.now() - t0 });
+      runs.push({ text: formatExact(r.value), unverified: r.unverified === true, notCertified: r.notCertified ? true : false, singular: r.singular ?? null, floatRe: f.value.re, floatIm: f.value.im, floatSingular: f.singular, floatUnverified: f.unverified === true, ms: Date.now() - t0 });
     } catch (e) {
       runs.push({ error: (e as Error).message, ms: Date.now() - t0 });
     }

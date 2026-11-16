@@ -10,6 +10,7 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  unverifiedKind,
   precisionMessage,
   provenInteger,
 } from "./node";
@@ -687,6 +688,30 @@ function settleResidue(
 }
 
 /**
+ * A huge integer kept beside a non-integer is a mul by a leaf labelled `beside:`.
+ * That mul is not the sum: exact evaluation would certify the bare integer.
+ * The leaf sits next to the root, so this does not walk the power.
+ */
+function hidesBeside(root: Node): boolean {
+  const stack: { n: Node; depth: number }[] = [{ n: root, depth: 0 }];
+  let steps = 0;
+  while (stack.length && steps < 64) {
+    const frame = stack.pop();
+    if (!frame) break;
+    steps += 1;
+    const node = frame.n;
+    if (node.type === "input") {
+      if (node.label.startsWith("beside:")) return true;
+      continue;
+    }
+    if (node.type === "eml" && frame.depth < 8) {
+      stack.push({ n: node.a, depth: frame.depth + 1 }, { n: node.b, depth: frame.depth + 1 });
+    }
+  }
+  return false;
+}
+
+/**
  * v1.1 prototype: absorbed-term policy. One decision, no loop: a gap that fits
  * under the cap is re-run once at gap + 48 digits; a gap past the cap (the
  * #431 tower's ~1.66M decades) is marked not certified at once.
@@ -703,6 +728,10 @@ export function exactReport(
   if (pass !== 0) return exactReportAbsorb(root, env, budget, pass);
   firstPassGap = 0;
   const out = exactReportAbsorb(root, env, budget, pass);
+  // v1.1 (item 6): beside a possible infinity only "undefined" (NaN) is a result.
+  if (!out.unverified && unverifiedKind(root) === 1 && !(out.value.re.isNaN() && out.value.im.isNaN())) {
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+  }
   if (!out.unverified && vanished(out.value) && firstPassGap > 0) return { ...out, cancelledZero: true };
   return out;
 }
@@ -785,6 +814,24 @@ function exactReportCore(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
+  if (unverifiedKind(root) === 2 || hidesBeside(root)) {
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+  }
+  // The integer is the value. A later retry would rebuild the circuit and round off its units.
+  if (isMarkedExactInt(root)) {
+    const big = provenInteger(root);
+    if (big !== undefined) {
+      const text = big.toString();
+      const width = text.startsWith("-") ? text.length - 1 : text.length;
+      const saved = D.precision;
+      if (width > saved) D.set({ precision: width });
+      try {
+        return { value: z(text, 0), singular: null, touchedLn0: false };
+      } finally {
+        if (width > saved) D.set({ precision: saved });
+      }
+    }
+  }
   lossGap = 0;
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
@@ -1249,8 +1296,15 @@ function formatDecImag(d: Decimal): string {
 
 function formatFullInteger(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
-  const digits = d.abs().toFixed(0);
-  return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  const saved = D.precision;
+  const need = Math.max(saved, d.abs().e + 2);
+  if (need > saved) D.set({ precision: need });
+  try {
+    const digits = d.abs().toFixed(0);
+    return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  } finally {
+    if (need > saved) D.set({ precision: saved });
+  }
 }
 
 /**
@@ -1260,8 +1314,9 @@ function formatFullInteger(d: Decimal): string {
  * exponent is past the working precision, so it stays in scientific form.
  */
 function exactInteger(d: Decimal): boolean {
-  if (!d.isFinite() || d.isZero() || d.abs().e >= D.precision) return false;
-  if (d.abs().lt(0.5)) return false;
+  if (!d.isFinite() || d.isZero() || d.abs().lt(0.5)) return false;
+  // A marked integer can be wider than the working precision and still hold its units digit.
+  if (d.abs().e >= D.precision) return d.sd() > d.abs().e && d.isInt();
   const gap = d.sub(d.round()).abs();
   if (gap.eq(0)) return true;
   // The last 24 digits of a 120-digit run are construction dust.

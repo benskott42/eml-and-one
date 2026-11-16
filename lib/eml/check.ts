@@ -1,6 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import DecimalValue from "decimal.js";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
@@ -16,6 +17,7 @@ import {
   bindInput,
   constantNode,
   integerNode,
+  floatText,
   literalNode,
   seriesShortcutNote,
   X,
@@ -94,6 +96,19 @@ if (SHARD !== "all" && !(SHARDS as readonly string[]).includes(SHARD)) {
 }
 function inShard(name: (typeof SHARDS)[number]): boolean {
   return SHARD === "all" || SHARD === name;
+}
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+
+/** A fresh node process. `npx` and `URL.pathname` both break on Windows. */
+function runTsx(script: string, input: string) {
+  return spawnSync(process.execPath, [tsxCli, path.join(repoRoot, script)], {
+    cwd: repoRoot,
+    input,
+    encoding: "utf8",
+    timeout: 180_000,
+  });
 }
 const isolateCases: { source: string; env: Record<string, { re: number; im: number }> }[] = [];
 
@@ -1905,7 +1920,10 @@ if (inShard("core")) {
   const infExact = exactReport(compileExpression("(1+1/0)-1/0", {}));
   const infIsOne = infFold.value.re === 1 && infFold.value.im === 0;
   const infExactIsOne = infExact.value.re.eq(1) && infExact.value.im.eq(0);
-  if (infIsOne || infExactIsOne || !Number.isNaN(infFold.value.re) || !infExact.value.re.isNaN() || !infFold.singular || !infExact.singular) {
+  // v1.1 (reviewbot 03:33 item 6): two different possibly infinite terms are "couldn't verify"
+  // in both modes, as (ln0−1)−ln0. That is also not a fake 1, and it is flagged.
+  const infUnverified = infFold.unverified === true && infExact.unverified === true;
+  if (!infUnverified && (infIsOne || infExactIsOne || !Number.isNaN(infFold.value.re) || !infExact.value.re.isNaN() || !infFold.singular || !infExact.singular)) {
     failed += 1;
     console.log("FAIL (1+∞)-∞", infFold.value, infFold.singular, formatExact(infExact.value), infExact.singular);
   }
@@ -3083,19 +3101,56 @@ if (inShard("core")) {
       ["arcsin(1/10^130)-1/10^130", "1.66666666667×10^−391"], ["arctan(-1/10^130)-(-1/10^130)", "3.33333333333×10^−391"],
       ["arctan(10^(-130))-10^(-130)", "−3.33333333333×10^−391"], ["arcsin(1/10^30)-1/10^30", "1.66666666667×10^−91"],
       ["arsinh(1/10^130)", "1×10^−130"], ["arsinh(10^(-130))", "1×10^−130"], ["arsinh(1/10^130)-1/10^130", "−1.66666666667×10^−391"],
+      // v1.1 (reviewbot 03:33 item 4): sinh takes the odd series as well (1.8 s against main's 0.76 s before).
+      ["sinh(1/10^130)", "1×10^−130"], ["sinh(10^(-130))", "1×10^−130"], ["sinh(1/10^130)-1/10^130", "1.66666666667×10^−391"],
+      ["sinh(-1/10^130)", "−1×10^−130"],
     ] as const) {
       const x = exactReport(compileExpression(src, {}), {}, { maxNodes: 80_000 });
       e3.push([`tiny series ${src}`, x.unverified ? "unverified" : formatExact(x.value).replace(/\u200b/g, ""), want]);
       e3.push([`tiny series ${src} certified`, x.singular === null && !x.notCertified, true]);
     }
-    for (const src of ["arctan(1/10^130)", "tanh(1/10^130)", "arcsin(1/10^130)"]) {
+    for (const src of ["arctan(1/10^130)", "tanh(1/10^130)", "arcsin(1/10^130)", "sinh(1/10^130)"]) {
       const t0 = performance.now();
       const x = exactReport(compileExpression(src, {}), {}, { maxNodes: 80_000 });
       const ms = performance.now() - t0;
-      e3.push([`tiny series ${src} under 500 ms (${ms.toFixed(0)} ms)`, ms < 500 && formatExact(x.value) === "1×10^−130", true]);
+      // reviewbot's bar is ≤ 1 s on an idle box (main: tanh 0.70 s, arcsin 0.95 s); about 0.4 s here when idle.
+      e3.push([`tiny series ${src} under 1000 ms (${ms.toFixed(0)} ms)`, ms < 1000 && formatExact(x.value) === "1×10^−130", true]);
     }
     // A zero from the leading-term shortcut alone still cannot be verified.
     e3.push(["tiny series arctan(10^(-250))-10^(-250) unverified", exactReport(compileExpression("arctan(10^(-250))-10^(-250)", {}), {}, { maxNodes: 80_000 }).unverified === true, true]);
+    // v1.1 (reviewbot 03:33 items 3, 6, 7). Float text is what the screen prints (floatText).
+    {
+      const shownFloat = (src: string) => {
+        const node = compileExpression(src, {});
+        const f = evaluateReport(node, {}, { maxNodes: 200_000 });
+        return f.unverified ? "couldn't verify" : floatText(node, f.value);
+      };
+      const shownExact = (src: string) => {
+        const x = exactReport(compileExpression(src, {}), {}, { maxNodes: 80_000 });
+        return x.unverified ? "couldn't verify" : formatExact(x.value).replace(/\u200b/g, "");
+      };
+      // Item 3 (#11 b1d54b9): a sum and its negation are exact 0 beside a huge integer.
+      for (const src of ["(10^400+pi)+(-(10^400+pi))", "(10^400+pi)-(10^400+pi)"]) {
+        e3.push([`item 3 ${src} float`, shownFloat(src), "0"]);
+        e3.push([`item 3 ${src} exact`, shownExact(src), "0"]);
+      }
+      // Item 6: an operand that may be infinite (or an overflow minus itself) is not a value in either mode.
+      for (const src of ["(ln(0)-1)-ln(0)", "exp(800)-exp(800)", "(inf+1)-1", "inf+1", "ln(0)-1", "2*((inf+1)-1)", "sin((inf+1)-1)", "ln(0)*2-ln(0)", "(0/0)-(1/0)"]) {
+        e3.push([`item 6 ${src} float`, shownFloat(src), "couldn't verify"]);
+        e3.push([`item 6 ${src} exact`, shownExact(src), "couldn't verify"]);
+      }
+      // ...but ∞ − ∞ of one node, a + (−a), and same-sign infinities stay "undefined"; a finite overflow beside 1 keeps exact digits.
+      for (const src of ["ln(0)-ln(0)", "inf-inf", "(0/0)+(-(0/0))", "tan(pi/2)-tan(pi/2)", "ln(0)+(-ln(0))", "exp(-ln(0))-exp(-ln(0))"]) {
+        e3.push([`item 6 control ${src} float`, shownFloat(src), "undefined"]);
+        e3.push([`item 6 control ${src} exact`, shownExact(src), "undefined"]);
+      }
+      e3.push(["item 6 control exp(800)-1 exact", shownExact("exp(800)-1"), "2.72637457211×10^347"]);
+      e3.push(["item 6 control exp(800)+(-exp(800)) exact", shownExact("exp(800)+(-exp(800))"), "0"]);
+      // Item 7: a float result outside the proven range carries ≈; an ordinary one does not.
+      e3.push(["item 7 (10^400+10^300)-10^400 float", shownFloat("(10^400+10^300)-10^400"), "9.99999999998×10^299 ≈"]);
+      e3.push(["item 7 control (10^400+7)-10^400 float", shownFloat("(10^400+7)-10^400"), "7"]);
+      e3.push(["item 7 control pi float", shownFloat("pi"), "3.14159265359"]);
+    }
     // v1.1 (bigfixer's #11 review C): the mark goes through exp (unless Re → −∞ only), pow,
     // sqr, sqrt, sinh, cosh and a marked denominator. Each of these minus itself is ∞ − ∞.
     for (const src of ["exp(-ln(0))-exp(-ln(0))", "0^(-1)-0^(-1)", "pow(0,-1)-pow(0,-1)", "sqrt(ln(0))-sqrt(ln(0))", "ln(0)^2-ln(0)^2", "1/(0/0)-1/(0/0)", "sqrt(0/0)-sqrt(0/0)", "exp(0/0)-exp(0/0)", "sinh(ln(0))-sinh(ln(0))", "cosh(1/0)-cosh(1/0)", "(1/0)^2-(1/0)^2", "ln(0)*0", "exp(0*ln(0))"]) {
@@ -3167,14 +3222,7 @@ if (inShard("core")) {
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
-  // v1.1: portable (URL pathname is /C:/… on Windows, and npx is npx.cmd there).
-  const rootDir = path.resolve(__dirname, "../..");
-  const fresh = spawnSync(process.execPath, [path.join(rootDir, "node_modules/tsx/dist/cli.mjs"), "scripts/fresh-exact.ts"], {
-    cwd: rootDir,
-    input: JSON.stringify(jobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
   if (fresh.status !== 0) {
     failed += 1;
     console.log("FAIL fresh exact process", fresh.status, fresh.stderr);
@@ -3248,7 +3296,7 @@ if (inShard("core")) {
 // Values are mpmath (dps 400 and 800). Finding 6 (a−b−b) is bigfixer's and is not here.
 if (inShard("core")) {
   const root = path.resolve(__dirname, "../..");
-  type Case = { finding: number; src: string; want: [string, string]; exactText?: string; word?: string; src2?: string; env?: Record<string, [number, number]>; digits?: boolean; flags?: boolean; undef?: boolean };
+  type Case = { finding: number; src: string; want: [string, string]; exactText?: string; word?: string; src2?: string; env?: Record<string, [number, number]>; digits?: boolean; flags?: boolean; undef?: boolean; unver?: boolean };
   const cases = JSON.parse(readFileSync(path.join(root, "scripts/overnight-cases.json"), "utf8")) as Case[];
   const items = cases.map((item) => {
     const env: Record<string, { re: number; im: number }> = {};
@@ -3265,7 +3313,7 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL overnight child", child.status, child.stderr?.slice(0, 400));
   } else {
-    const runs = JSON.parse(child.stdout) as Array<Array<{ text?: string; unverified?: boolean; singular?: string | null; error?: string; floatRe?: number | null; floatIm?: number | null; floatSingular?: string | null }>>;
+    const runs = JSON.parse(child.stdout) as Array<Array<{ text?: string; unverified?: boolean; singular?: string | null; error?: string; floatRe?: number | null; floatIm?: number | null; floatSingular?: string | null; floatUnverified?: boolean }>>;
     const parse = (text: string): [Decimal, Decimal] | null => {
       const t = text.replace(/−/g, "-").replace(/×10\^/g, "e").replace(/\s+/g, "");
       const num = "[0-9.]+(?:e[+-]?\\d+)?";
@@ -3305,6 +3353,14 @@ if (inShard("core")) {
           if (run.text !== "undefined" || !run.singular || floatFinite || !run.floatSingular) {
             failed += 1;
             console.log("FAIL", name, run.text, run.singular, "float", run.floatRe, run.floatIm, run.floatSingular);
+          }
+          return;
+        }
+        // v1.1 (reviewbot 03:33 item 6): "couldn't verify" in both modes, through the wire.
+        if (item.unver) {
+          if (!run.unverified || !run.floatUnverified) {
+            failed += 1;
+            console.log("FAIL", name, run.unverified ? "unverified" : run.text, "float unverified", run.floatUnverified);
           }
           return;
         }
@@ -3536,15 +3592,7 @@ if (inShard("core")) {
     const packed = packCircuit(compileExpression(row.source, {}));
     return { source: row.source, tokens: packed.tokens, root: packed.root, re: row.re, im: row.im, digits: row.digits };
   });
-  // v1.1: node + the tsx cli, as the other spawn checks here; "npx" without a shell and a
-  // URL pathname ("/C:/…") both fail on Windows (Ben's PC).
-  const wireRoot = path.resolve(__dirname, "../..");
-  const wire = spawnSync(process.execPath, [path.join(wireRoot, "node_modules/tsx/dist/cli.mjs"), "scripts/fresh-exact.ts"], {
-    cwd: wireRoot,
-    input: JSON.stringify(wireJobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const wire = runTsx("scripts/fresh-exact.ts", JSON.stringify(wireJobs));
   if (wire.status !== 0) {
     failed += 1;
     console.log("FAIL fresh huge integer", wire.status, wire.stderr);
@@ -3556,6 +3604,147 @@ if (inShard("core")) {
       if (row.unverified || row.singular !== null || row.close !== true || (want?.text !== undefined && text !== want.text)) {
         failed += 1;
         console.log("FAIL fresh huge", row.source, row.unverified ? "unverified" : text, row.singular, row.close);
+      }
+    }
+  }
+
+  // Identical nodes cancel to 0. mpmath at 1,200 digits is 0.
+  // Two huge-carried terms whose small parts are not both exact integers are unverified, never a value.
+  // (10^400+1)+(10^400+1) is the integer 2×10^400+2. A 1,200-digit compare sees the units digit.
+  // The parser has no juxtaposition, so 2(10^400+pi) is written 2*(10^400+pi).
+  const twoPlus = `2${"0".repeat(399)}2`;
+  const cancelRows = [
+    "(10^400+pi)+(-(10^400+pi))",
+    "(10^400+i)+(-(10^400+i))",
+    "(10^400+sqrt(2))+(-(10^400+sqrt(2)))",
+    "(10^400+e)+(-(10^400+e))",
+    "(10^400+0.5)+(-(10^400+0.5))",
+    "(10^400+pi)-(10^400+pi)",
+    "(10^400+i)-(10^400+i)",
+    "(10^400+sqrt(2))-(10^400+sqrt(2))",
+    "(10^400+e)-(10^400+e)",
+  ];
+  const flagRows = [
+    "(10^400+pi)+(-(10^400+e))",
+    "(10^400+pi)-(10^400+1)",
+    "(10^400+1)-(10^400+i)",
+    "(10^400+i)-(10^400+(-i))",
+    "(10^400+sqrt(2))-(10^400+0.5)",
+    "(10^400+pi)-(10^400+e)",
+    "2*(10^400+pi)-2*10^400",
+    "(10^400+i)-(10^400-i)",
+    "-(10^400+pi)+10^400",
+    "(10^400+1)+(-(10^400+i))",
+    "(10^400+pi)+(-(10^400+1))",
+    "(10^400+3)+(-(10^400+pi))",
+    "(10^400+e)-(10^400+0.5)",
+    "(10^400+i)+(10^400+i)",
+    "(10^400+i)+(10^400+(-i))",
+  ];
+  const bareRows = ["10^400+pi", "10^400+i", "10^400-0.5"];
+  const hugeJobs: { source: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number; re?: string; digits?: number }[] = [];
+  const timeCancel = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    const ok =
+      ms < 200 &&
+      hw.unverified !== true &&
+      ex.unverified !== true &&
+      hw.singular === null &&
+      ex.singular === null &&
+      close(hw.value, c(0, 0), 1e-12) &&
+      text === "0" &&
+      exactClose(ex.value, "0", "0", 1200);
+    if (!ok) {
+      failed += 1;
+      console.log("FAIL identical cancel", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : text);
+    } else {
+      console.log("cancel", source, "exact 0", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root, re: "0", digits: 1200 });
+  };
+  for (const source of cancelRows) timeCancel(source);
+  const timeFlag = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    if (ms >= 200 || hw.unverified !== true || ex.unverified !== true) {
+      failed += 1;
+      console.log("FAIL unverified huge pair", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : formatExact(ex.value));
+    } else {
+      console.log("flag", source, "unverified", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root });
+  };
+  for (const source of flagRows) timeFlag(source);
+  const timeBare = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    const floatDropped = hw.unverified !== true && Number.isFinite(hw.value.re) && Number.isFinite(hw.value.im);
+    if (ms >= 200 || ex.unverified !== true || floatDropped) {
+      failed += 1;
+      console.log("FAIL bare huge sum", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : text);
+    } else {
+      console.log("bare", source, "unverified", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root });
+  };
+  for (const source of bareRows) timeBare(source);
+  const intSource = "(10^400+1)+(10^400+1)";
+  const intStarted = performance.now();
+  const intNode = compileExpression(intSource, {});
+  const intHw = evaluateReport(intNode, {}, budget);
+  const intEx = exactReport(intNode, {}, budget);
+  const intMs = performance.now() - intStarted;
+  const intText = formatExact(intEx.value).replace(/\u200b/g, "");
+  if (
+    intMs >= 200 ||
+    intHw.unverified === true ||
+    intEx.unverified === true ||
+    intHw.value.re !== Infinity ||
+    intHw.value.im !== 0 ||
+    intEx.singular !== null ||
+    intText !== twoPlus ||
+    !exactClose(intEx.value, twoPlus, "0", 1200) ||
+    exactClose(intEx.value, `2${"0".repeat(400)}`, "0", 1200)
+  ) {
+    failed += 1;
+    console.log("FAIL exact 2*10^400+2", `${intMs.toFixed(1)}ms`, intHw.value, intHw.unverified, intEx.unverified ? "unverified" : intText.slice(0, 12), intEx.singular);
+  } else {
+    console.log("int", intSource, "2×10^400+2", `${intMs.toFixed(1)}ms`);
+  }
+  const intPacked = packCircuit(intNode);
+  hugeJobs.push({ source: intSource, tokens: intPacked.tokens, root: intPacked.root, re: twoPlus, digits: 1200 });
+  const hugeWire = runTsx("scripts/fresh-exact.ts", JSON.stringify(hugeJobs));
+  if (hugeWire.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh huge pairs", hugeWire.status, hugeWire.stderr);
+  } else {
+    const rows = JSON.parse(hugeWire.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number }>;
+    for (const row of rows) {
+      const text = row.text.replace(/\u200b/g, "");
+      const wantFlag = flagRows.includes(row.source) || bareRows.includes(row.source);
+      const freshOk = wantFlag
+        ? row.unverified === true && row.ms < 200
+        : row.unverified !== true && row.singular === null && row.close === true && row.ms < 200 && (row.source === intSource ? text === twoPlus : text === "0");
+      if (!freshOk) {
+        failed += 1;
+        console.log("FAIL fresh huge pair", row.source, `${row.ms}ms`, row.unverified ? "unverified" : text, row.singular, row.close);
+      } else {
+        console.log("fresh", row.source, wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
       }
     }
   }

@@ -1,4 +1,5 @@
 import type { C } from "./complex";
+import { formatC } from "./format";
 import { noteBuilder } from "./provenance";
 import {
   beginInteger,
@@ -32,6 +33,7 @@ import {
   noteNonfinite,
   rangeOf,
   sumOfNegation,
+  isNegationPair,
   tagInteger,
   rawDiv,
   rawMul,
@@ -39,7 +41,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -474,6 +476,94 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
   return markSeries(noteDecade(half, scale - 1), "series shortcut: x/2, for |x| ≤ 10^(−480)");
 }
 
+/**
+ * v1.1 (reviewbot item 6): the add and sub circuits rotate through ln of their operands, so
+ * an operand that may be infinite comes out as a wrong number ((inf+1)−1 = −∞i, ln 0 − 1 = −∞i,
+ * (ln0−1)−ln0 = ∞), and a float overflow minus itself goes through ∞ − ∞ in both modes
+ * (exp(800)−exp(800) = −∞). Neither mode can verify those, so the screen says so.
+ * x − x of a marked x keeps review C's "undefined" (∞ − ∞). A finite overflow beside a
+ * finite term (exp(800) − 1) is left alone: exact mode gets it right.
+ */
+function unverifiedSum(a: Node, b: Node, sub: boolean): 0 | 1 | 2 | -1 | 3 | 4 {
+  if (a === b) return sub && isNonfiniteNode(a) && !mayBeInfinite(a) ? 2 : 0;
+  // a + (−a) of a marked a is review B1/B2's ∞ − ∞: "undefined", as x − x.
+  if (!sub && isNegationPair(a, b)) return 0;
+  const ia = mayBeInfinite(a);
+  const ib = mayBeInfinite(b);
+  if (!ia && !ib) return 0;
+  const sa = infiniteSignOf(a);
+  const sb = infiniteSignOf(b);
+  // ±∞ ∓ ±∞ with both signs known: "undefined" (inf − inf), if the circuit says so (code 4).
+  if (ia && ib && sa !== undefined && sb !== undefined && (sub ? sa === sb : sa !== sb)) return 4;
+  // One real infinity of known sign beside a finite term: the answer is that infinity
+  // (−1 or +1 here, as 3 for +). The circuit is checked against it once, in float.
+  if (ia !== ib) {
+    const s = ia ? sa : sb === undefined ? undefined : sub ? -sb : sb;
+    if (s !== undefined) return s < 0 ? -1 : 3;
+  }
+  // Two different possibly infinite terms ((ln0 − 1) − ln0): even a float NaN is the circuit's
+  // guess, not a decided ∞ − ∞, so neither mode shows a value.
+  if (ia && ib) return 2;
+  return 1;
+}
+
+/** v1.1 (item 6): does the float circuit give the real infinity it must? */
+function givesInfinity(node: Node, sign: -1 | 1): boolean {
+  try {
+    const f = evaluateReport(node, {}, { maxNodes: 50_000 });
+    return f.value.re === sign * Infinity && (f.value.im === 0 || Object.is(f.value.im, -0));
+  } catch {
+    return false;
+  }
+}
+
+function givesNaN(node: Node): boolean {
+  try {
+    const f = evaluateReport(node, {}, { maxNodes: 50_000 });
+    return Number.isNaN(f.value.re) && Number.isNaN(f.value.im) && !f.unverified;
+  } catch {
+    return false;
+  }
+}
+
+function markSum(node: Node, kind: 0 | 1 | 2 | -1 | 3 | 4): Node {
+  if (kind === -1 || kind === 3) return givesInfinity(node, kind === 3 ? 1 : -1) ? node : markMaybeUnverified(node);
+  // Same-sign infinities: ∞ − ∞ is undefined; a circuit that gives a number instead is not a result.
+  if (kind === 4) return givesNaN(node) ? node : markUnverified(node);
+  return kind === 2 ? markUnverified(node) : kind === 1 ? markMaybeUnverified(node) : node;
+}
+
+/** The user's a + b. Library code calls tAdd: its intermediate infinities are handled there. */
+export function userAdd(a: Node, b: Node): Node {
+  return markSum(tAdd(a, b), unverifiedSum(a, b, false));
+}
+
+/** The user's a − b. */
+export function userSub(a: Node, b: Node): Node {
+  return markSum(tSub(a, b), unverifiedSum(a, b, true));
+}
+
+/**
+ * v1.1 (reviewbot item 7): float-mode text. A float result outside the node's proven range
+ * (the circuit's own rounding, e.g. (10^400+10^300)−10^400 = 9.99999999998×10^299 against the
+ * proven 10^300) is not what the gates should give, so it carries the ≈ mark too.
+ */
+export function floatText(node: Node, value: C): string {
+  const text = formatC(value);
+  if (text.endsWith("≈")) return text;
+  const range = rangeOf(node);
+  const mag = Math.hypot(value.re, value.im);
+  // Only a miss the twelve shown digits can see: a point range from a float known value
+  // may sit an ulp away from the gates, and that is not worth a mark.
+  const off = (part: number, r: { lo: number; hi: number } | null | undefined) => {
+    if (!r || !Number.isFinite(part) || !Number.isFinite(r.lo) || !Number.isFinite(r.hi)) return false;
+    const slack = 1e-12 * Math.max(Math.abs(r.lo), Math.abs(r.hi), mag);
+    return part < r.lo - slack || part > r.hi + slack;
+  };
+  return off(value.re, range.re) || off(value.im, range.im) ? `${text} ≈` : text;
+}
+
+
 export function tSub(a: Node, b: Node): Node {
   const node = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b) ?? domainSub(a, b);
   return markInfiniteSign(tagPi(markMaybeInfinite(node, a, b), piSub(a, b)), sumInfiniteSign(a, b, true));
@@ -662,11 +752,21 @@ export const tThree = memo(() => tagReal(programNode("3"), 3));
 
 export const tTwoThirds = memo(() => tDiv(tTwo(), tThree()));
 
+const sqrtInfLeaf = new WeakMap<Node, Node>();
+
 export function tSqrt(t: Node): Node {
   // v1.1 (#11 review C): sqrt(−∞) is +∞i (principal root, as sqrt(−4) = 2i). The sqrt word of
   // ln 0 gave +∞. A real −∞ (Re → −∞, imaginary exactly 0) becomes the typed ∞i leaf.
   const kv = knownValue(t);
-  if (infiniteSignOf(t) === -1 && (!kv || imagZero(kv))) return markInfiniteSource(input({ re: 0, im: Infinity }, "∞i"));
+  if (infiniteSignOf(t) === -1 && (!kv || imagZero(kv))) {
+    // One leaf per argument, so sqrt(ln 0) − sqrt(ln 0) is x − x (review C), not two infinities.
+    let leaf = sqrtInfLeaf.get(t);
+    if (!leaf) {
+      leaf = markInfiniteSource(input({ re: 0, im: Infinity }, "∞i"));
+      sqrtInfLeaf.set(t, leaf);
+    }
+    return leaf;
+  }
   const s = infiniteSignOf(t);
   return markInfiniteSign(markMaybeInfinite(tSqrtBuild(t), t), s === 1 ? 1 : undefined);
 }
@@ -706,6 +806,12 @@ export function tSigmoid(t: Node): Node {
 }
 
 export function tSinh(t: Node): Node {
+  // v1.1 (reviewbot item 4): a tiny real x takes the certified odd series, as sin does.
+  // sinh(1/10^130) went through the exp formula: 1.8 s exact against main's 0.76 s.
+  const small = tinyRealArgument(t);
+  if (small) return small;
+  const series = oddSeries(t, SINH_ODD, SERIES_POLY);
+  if (series) return series;
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
   if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
@@ -852,6 +958,9 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
   den: String(2 * (i + 1) + 1),
   sign: (i % 2 === 0 ? -1 : 1) as -1 | 1,
 }));
+
+/** sinh x = x + x³/6 + x⁵/120 + x⁷/5040 + … */
+const SINH_ODD: SignedRatio[] = SIN_ODD.map((coeff) => ({ ...coeff, sign: 1 }));
 
 export function tSin(t: Node): Node {
   const small = tinyRealArgument(t);
@@ -1217,7 +1326,9 @@ function literalNodeBuild(text: string): Node {
   if (/^-0(?:\.0+)?(?:[eE][+-]?\d+)?$/.test(trimmed)) return negativeZero();
   if (!Number.isFinite(Number(trimmed)) && /^[+-]?(?:inf|infinity)$/i.test(trimmed)) {
     const negative = trimmed.startsWith("-");
-    return noteNonfinite(input({ re: negative ? -Infinity : Infinity, im: 0 }, trimmed), negative ? -1 : 1);
+    // v1.1 (reviewbot item 6): inf is a true infinity, unlike exp(800), which only overflows float.
+    const node = noteNonfinite(input({ re: negative ? -Infinity : Infinity, im: 0 }, trimmed), negative ? -1 : 1);
+    return markInfiniteSign(markInfiniteSource(node), negative ? -1 : 1);
   }
   const sci = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(trimmed);
   if (sci) {

@@ -2,13 +2,13 @@ import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, 
 
 /** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
 export const WIRE_VERSION = 2;
-import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; int?: string }
+  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; int?: string; unver?: 1; mu?: 1 }
   | {
       i: number;
       k: "E";
@@ -29,6 +29,10 @@ export type Wire =
       int?: string;
       /** v1.1: an odd series node, [id of x, coefficients]; exact mode evaluates the polynomial. */
       os?: [number, SeriesCoeff[]];
+      /** A dropped term. Exact mode must not certify the gates. */
+      unver?: 1;
+      /** v1.1 (item 6): a sum beside a possible infinity; only a NaN result stands. */
+      mu?: 1;
     };
 
 function exactIntDigits(node: Node): string | undefined {
@@ -60,6 +64,8 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         const digits = exactIntDigits(frame.n);
         const tok: Wire = { i, k: "in", re: wireNum(frame.n.value.re), im: wireNum(frame.n.value.im), label: frame.n.label };
         if (digits !== undefined) tok.int = digits;
+        if (isUnverified(frame.n)) tok.unver = 1;
+        if (isMaybeUnverified(frame.n)) tok.mu = 1;
         tokens.push(tok);
       }
       continue;
@@ -98,6 +104,8 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.kr = known.re;
       token.ki = known.im;
     }
+    if (isUnverified(frame.n)) token.unver = 1;
+    if (isMaybeUnverified(frame.n)) token.mu = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -118,6 +126,8 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
     else if (tok.k === "in") {
       const leaf = input({ re: Number(tok.re), im: Number(tok.im) }, tok.label);
+      if (tok.unver) markUnverified(leaf);
+      if (tok.mu) markMaybeUnverified(leaf);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(leaf, BigInt(tok.int)) : leaf;
     }
     else {
@@ -136,6 +146,8 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.kx) noteWide(node, normWide(tok.kx[0], tok.kx[1]));
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
       if (tok.os && nodes[tok.os[0]]) noteOddSeries(node, nodes[tok.os[0]], tok.os[1]);
+      if (tok.unver) markUnverified(node);
+      if (tok.mu) markMaybeUnverified(node);
     }
   }
   const node = nodes[root];
