@@ -124,7 +124,7 @@ export function CalculatorView(props: CalculatorModel) {
               {top ? (top.caption.length > 80 ? `${preview?.presses.toString() ?? "many"} presses` : top.caption) : "Press 1, then 1, then EML. That is e."}
               {named ? ` · ${named}` : ""}
             </p>
-            {top?.sequence ? <SequencePanel sequence={top.sequence} typed={top.caption.length > 80 || /^\d+ presses$/.test(top.caption) ? "a loaded word" : top.caption} result={top.text} /> : null}
+            {top?.sequence ? <SequencePanel source={top.sequence} typed={top.caption.length > 80 || /^\d+ presses$/.test(top.caption) ? "a loaded word" : top.caption} result={top.text} /> : null}
             {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
             {top && shownSingular(top) ? <p className="ti-lcd-flag">{shownSingular(top)}</p> : null}
             {pressLine ? <p className="ti-press">{pressLine}</p> : null}

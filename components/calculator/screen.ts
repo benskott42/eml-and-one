@@ -5,7 +5,7 @@ import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describ
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
 import { formatC, isUsable } from "@/lib/eml/format";
 import { pressPreviewForNode } from "@/lib/eml/presses";
-import { snapshotSequence, type SequenceSnapshot } from "@/lib/eml/provenance";
+import { captureLabels, type SequenceSource } from "@/lib/eml/provenance";
 import { programNumberText } from "@/lib/eml/programIndex";
 
 export type Mode = "float" | "exact";
@@ -23,7 +23,7 @@ export type Entry = {
   underflowed?: boolean;
   nearCut?: boolean;
   pendingExact?: boolean;
-  sequence?: SequenceSnapshot;
+  sequence?: SequenceSource;
   cancelled?: boolean;
   floatDiffers?: boolean;
   exactBeside?: string;
@@ -177,12 +177,13 @@ export function resultError(item: Entry): string | null {
 let watchSerial = 1;
 
 export function entry(node: Node, caption: string, mode: Mode): Entry {
-  // Labels exist only until the next isolate, which the key-cost pass does
-  // on the following render. The walk is iterative, so this stays off the
-  // multi-second path that used to throw on a long loaded word.
-  let sequence: SequenceSnapshot | undefined;
+  // The outline and the press word are built when Show all is opened.
+  // Labels die on the next isolate, so keep a copy of them here. The length
+  // is one dag walk, which is what the collapsed summary needs.
+  let sequence: SequenceSource | undefined;
   try {
-    sequence = snapshotSequence(node);
+    const presses = node.type === "eml" ? circuitStats(node).rpnLength : BigInt(1);
+    sequence = { node, labels: captureLabels(node), presses: presses.toString() };
   } catch {
     sequence = undefined;
   }

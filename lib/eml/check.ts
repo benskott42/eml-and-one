@@ -2968,19 +2968,21 @@ failed += runPropertyChecks();
   }
 }
 
-function spansTile(outline: Outline, word: string | null): boolean {
+function spansTile(outline: Outline, word: string | null, abs = 0): boolean {
   if (!spanCovers(outline)) return false;
-  if (word === null) return outline.children.every((child) => spansTile(child, null));
-  let cursor = Number(outline.start);
-  let built = word.slice(cursor, cursor);
+  if (word === null) return outline.children.every((child) => spansTile(child, null, abs + Number(child.start)));
+  let cursor = 0;
+  let built = "";
   for (const child of outline.children) {
-    built += word.slice(cursor, Number(child.start));
-    built += word.slice(Number(child.start), Number(child.end));
-    if (!spansTile(child, word)) return false;
+    const start = abs + Number(child.start);
+    const end = abs + Number(child.end);
+    built += word.slice(abs + cursor, start);
+    built += word.slice(start, end);
+    if (!spansTile(child, word, start)) return false;
     cursor = Number(child.end);
   }
-  built += word.slice(cursor, Number(outline.end));
-  return built === word.slice(Number(outline.start), Number(outline.end));
+  built += word.slice(abs + cursor, abs + Number(outline.length));
+  return built === word.slice(abs, abs + Number(outline.length));
 }
 
 function expectSpan(label: string, ok: boolean) {
@@ -3029,7 +3031,11 @@ function expectSpan(label: string, ok: boolean) {
   const sineSpans = pressSpans(sine);
   expectSpan("sin tiles", sineSpans.presses === BigInt(1239) && spansTile(sineSpans.root, sineWord.oneE));
   const sineTold = explainCircuit(sine, "sin(pi/6)", "");
-  expectSpan("sin told", sineTold.full.startsWith("You typed sin(pi/6).") && sineTold.full.includes("1239 presses") && !/proven|verified|✓/.test(sineTold.full));
+  expectSpan("sin told", sineTold.full.startsWith("You typed sin(pi/6).") && sineTold.full.includes("1239 presses") && !/proven|verified|✓/.test(sineTold.full) && !sineTold.full.includes("no ÷ key") && !sineTold.full.includes("no × key"));
+
+  const ipi = compileExpression("sin(pi/6)-2", {});
+  const ipiTold = explainCircuit(ipi, "sin(pi/6)-2", "");
+  expectSpan("ipi not shortest", !ipiTold.full.includes("shortest possible") && !ipiTold.full.includes("no ÷ key"));
 
   const near = compileExpression("ln(1+10^(-300))", {});
   const nearSpans = pressSpans(near);
@@ -3045,7 +3051,11 @@ function expectSpan(label: string, ok: boolean) {
   expectSpan("series length", seriesSpans.presses === BigInt(129865) && seriesSpans.tooLong && !seriesWord.copyable && seriesWord.oneE === "");
   expectSpan("series covers", spanCovers(seriesSpans.root));
   const seriesTold = explainCircuit(series, "tan(10^(-40))-10^(-40)", "");
-  expectSpan("series told", seriesTold.full.includes("one scaledTinySub block of 129865 presses") && !/proven|verified|✓/.test(seriesTold.full));
+  expectSpan("series told", seriesTold.full.includes("one scaledTinySub block of 129865 presses") && !/proven|verified|✓/.test(seriesTold.full) && !seriesTold.full.includes("no × key") && !seriesTold.full.includes("no ÷ key"));
+
+  const tangent = compileExpression("tan(10^(-5000))", {});
+  const tangentTold = explainCircuit(tangent, "tan(10^(-5000))", "");
+  expectSpan("tan told", tangentTold.full.startsWith("You typed tan(10^(-5000)).") && !tangentTold.full.includes("no × key") && !tangentTold.full.includes("no ÷ key") && !tangentTold.full.includes("shortest possible"));
 
   const tiny = compileExpression("0.00005i+0.00005i", {});
   const tinySpans = pressSpans(tiny);

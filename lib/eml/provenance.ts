@@ -18,7 +18,7 @@ export type Label = {
   template?: string;
   holes?: Hole[];
   status?: string;
-  provenMinimal?: boolean;
+  provedMinimal?: boolean;
   opaque?: boolean;
 };
 
@@ -39,8 +39,35 @@ function pushLabel(node: Node, label: Label): void {
   else current.push(label);
 }
 
+let frozenLabels: Map<Node, Label[]> | null = null;
+
 export function labelsOf(node: Node): Label[] {
+  if (frozenLabels) return frozenLabels.get(node) ?? [];
   return labels.get(node) ?? [];
+}
+
+/** Copy the labels on this circuit before the next isolate drops them. */
+export function captureLabels(root: Node): Map<Node, Label[]> {
+  const found = new Map<Node, Label[]>();
+  const stack: Node[] = [root];
+  const seen = new Set<number>();
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node.id)) continue;
+    seen.add(node.id);
+    const mine = labels.get(node);
+    if (mine && mine.length) {
+      found.set(node, mine.map((label) => ({ ...label })));
+      for (const label of mine) {
+        for (const hole of label.holes ?? []) stack.push(hole.node);
+      }
+    }
+    if (node.type === "eml" && node.a && node.b) {
+      stack.push(node.a);
+      stack.push(node.b);
+    }
+  }
+  return found;
 }
 
 export function noteGadget(node: Node, id: string, template: string, holes: Hole[]): Node {
@@ -51,10 +78,11 @@ export function noteGadget(node: Node, id: string, template: string, holes: Hole
 export function noteProgram(node: Node, id: string): Node {
   const template = table.programs[id as keyof typeof table.programs];
   if (template && /[xy]/.test(template)) return node;
-  const status = table.records[id as keyof typeof table.records];
-  if (status) {
-    const provenMinimal = /proven minimal/i.test(status) && !/not proven/i.test(status);
-    pushLabel(node, { kind: "record", text: id, status, provenMinimal });
+  const record = table.records[id as keyof typeof table.records];
+  if (record) {
+    const status = typeof record === "string" ? record : record.status;
+    const provedMinimal = typeof record === "string" ? false : record.provedMinimal === true;
+    pushLabel(node, { kind: "record", text: id, status, provedMinimal });
     return node;
   }
   pushLabel(node, { kind: "construction", text: id });
@@ -260,19 +288,14 @@ function holesFromTemplate(template: string, holes: Hole[], seen: Set<number>): 
   return parts;
 }
 
+/** Offsets stay relative to the parent, so a move does not copy the subtree. */
 function place(source: Outline, offset: bigint, hole: string | null, repeat: boolean): Outline {
-  const moved = shiftBy(source, offset - source.start);
-  return { ...moved, hole: hole ?? source.hole, repeat: repeat || source.repeat };
-}
-
-/** Every start in a subtree shares one coordinate system, so a move is one delta. */
-function shiftBy(source: Outline, shift: bigint): Outline {
-  if (shift === BigInt(0)) return source;
   return {
     ...source,
-    start: source.start + shift,
-    end: source.end + shift,
-    children: source.children.map((child) => shiftBy(child, shift)),
+    start: offset,
+    end: offset + source.length,
+    hole: hole ?? source.hole,
+    repeat: repeat || source.repeat,
   };
 }
 
@@ -292,13 +315,14 @@ export function pressSpans(root: Node): PressOutline {
 }
 
 export function spanCovers(outline: Outline): boolean {
-  let cursor = outline.start;
+  if (outline.end - outline.start !== outline.length) return false;
+  let cursor = BigInt(0);
   for (const child of outline.children) {
-    if (child.start < cursor || child.end > outline.end || child.start < outline.start) return false;
+    if (child.start < cursor || child.end > outline.length) return false;
     if (!spanCovers(child)) return false;
     cursor = child.end;
   }
-  return outline.end >= cursor && outline.end - outline.start === outline.length;
+  return outline.length >= cursor;
 }
 
 const MAX_WORD = 20_000;
@@ -346,8 +370,39 @@ function tokensOf(node: Node, budget: number): string[] | null {
 const QUALIFIER = "(lower cut, ln 0 = −∞ where used)";
 
 function shortest(label: Label | null): string | null {
-  if (!label || label.kind !== "record" || !label.provenMinimal) return null;
+  if (!label || label.kind !== "record" || label.provedMinimal !== true) return null;
   return `the shortest possible ${QUALIFIER}`;
+}
+
+/** The operator the user actually typed, ignoring operators inside parentheses. */
+function typedOperator(source: string): "mul" | "add" | "sub" | "div" | null {
+  let depth = 0;
+  let addSub: "add" | "sub" | null = null;
+  let mulDiv: "mul" | "div" | null = null;
+  let prev = "";
+  for (const ch of source) {
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth += 1;
+      prev = ch;
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      depth = Math.max(0, depth - 1);
+      prev = ch;
+      continue;
+    }
+    if (ch === " " || ch === "\t") continue;
+    if (depth !== 0) {
+      prev = ch;
+      continue;
+    }
+    if (ch === "+") addSub = "add";
+    else if ((ch === "-" || ch === "−") && /[0-9A-Za-z)\]]/.test(prev)) addSub = "sub";
+    else if (ch === "*" || ch === "×") mulDiv = "mul";
+    else if (ch === "/" || ch === "÷") mulDiv = "div";
+    prev = ch;
+  }
+  return addSub ?? mulDiv;
 }
 
 /**
@@ -370,7 +425,10 @@ export function explainOutline(root: Outline, presses: bigint, typed: string, re
   });
   const sameTwice = root.children.length === 2 && root.children[0]?.name === root.children[1]?.name && root.children[1]?.repeat;
   const glue = sameTwice ? presses - root.children[0]!.length - root.children[1]!.length : null;
-  const op = gadget === "mul" ? "×" : gadget === "add" ? "+" : gadget === "sub" ? "−" : gadget === "div" ? "÷" : gadget;
+  const typedOp = typedOperator(typed);
+  const op = typedOp && gadget === typedOp
+    ? typedOp === "mul" ? "×" : typedOp === "add" ? "+" : typedOp === "sub" ? "−" : "÷"
+    : null;
   const fullParts = [`You typed ${typed || root.name}.`];
   if (root.opaque) {
     fullParts.push(`This is one ${root.name} block of ${count} presses.`);
@@ -403,16 +461,28 @@ export type SequenceSnapshot = {
   outline: Outline;
 };
 
-/** Call while the builder labels are still in place. A later isolate drops them. */
-export function snapshotSequence(node: Node): SequenceSnapshot {
-  const word = pressWord(node);
-  const spans = pressSpans(node);
-  return {
-    oneE: word.oneE,
-    bits: word.bits,
-    presses: word.presses.toString(),
-    copyable: word.copyable,
-    tooLong: spans.tooLong,
-    outline: spans.root,
-  };
+export type SequenceSource = {
+  node: Node;
+  labels: Map<Node, Label[]>;
+  presses: string;
+};
+
+/** Pass labels captured at build time. A later isolate has already dropped the live map. */
+export function snapshotSequence(node: Node, captured?: Map<Node, Label[]>): SequenceSnapshot {
+  const previous = frozenLabels;
+  frozenLabels = captured ?? null;
+  try {
+    const word = pressWord(node);
+    const spans = pressSpans(node);
+    return {
+      oneE: word.oneE,
+      bits: word.bits,
+      presses: word.presses.toString(),
+      copyable: word.copyable,
+      tooLong: spans.tooLong,
+      outline: spans.root,
+    };
+  } finally {
+    frozenLabels = previous;
+  }
 }
