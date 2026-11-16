@@ -5,6 +5,7 @@ import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describ
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
 import { formatC, isUsable } from "@/lib/eml/format";
 import { pressPreviewForNode } from "@/lib/eml/presses";
+import { captureLabels, type SequenceSource } from "@/lib/eml/provenance";
 import { programNumberText } from "@/lib/eml/programIndex";
 
 export type Mode = "float" | "exact";
@@ -22,6 +23,7 @@ export type Entry = {
   underflowed?: boolean;
   nearCut?: boolean;
   pendingExact?: boolean;
+  sequence?: SequenceSource;
   cancelled?: boolean;
   floatDiffers?: boolean;
   exactBeside?: string;
@@ -175,7 +177,17 @@ export function resultError(item: Entry): string | null {
 let watchSerial = 1;
 
 export function entry(node: Node, caption: string, mode: Mode): Entry {
-  return { node, caption, watch: watchSerial++, ...runNode(node, mode) };
+  // The outline and the press word are built when Show all is opened.
+  // Labels die on the next isolate, so keep a copy of them here. The length
+  // is one dag walk, which is what the collapsed summary needs.
+  let sequence: SequenceSource | undefined;
+  try {
+    const presses = node.type === "eml" ? circuitStats(node).rpnLength : BigInt(1);
+    sequence = { node, labels: captureLabels(node), presses: presses.toString() };
+  } catch {
+    sequence = undefined;
+  }
+  return { node, caption, watch: watchSerial++, sequence, ...runNode(node, mode) };
 }
 
 export function readScalar(text: string): Node {

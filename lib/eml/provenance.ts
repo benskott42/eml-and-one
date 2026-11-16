@@ -1,5 +1,5 @@
 import table from "./best-known.json";
-import { onCircuitIsolate, type Node, circuitStats } from "./node";
+import { onCircuitIsolate, type Node, circuitStats, rpnLengthOf } from "./node";
 
 /**
  * Labels recorded while a circuit is built. They are not recovered by
@@ -18,7 +18,7 @@ export type Label = {
   template?: string;
   holes?: Hole[];
   status?: string;
-  provenMinimal?: boolean;
+  provedMinimal?: boolean;
   opaque?: boolean;
 };
 
@@ -39,8 +39,35 @@ function pushLabel(node: Node, label: Label): void {
   else current.push(label);
 }
 
+let frozenLabels: Map<Node, Label[]> | null = null;
+
 export function labelsOf(node: Node): Label[] {
+  if (frozenLabels) return frozenLabels.get(node) ?? [];
   return labels.get(node) ?? [];
+}
+
+/** Copy the labels on this circuit before the next isolate drops them. */
+export function captureLabels(root: Node): Map<Node, Label[]> {
+  const found = new Map<Node, Label[]>();
+  const stack: Node[] = [root];
+  const seen = new Set<number>();
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node.id)) continue;
+    seen.add(node.id);
+    const mine = labels.get(node);
+    if (mine && mine.length) {
+      found.set(node, mine.map((label) => ({ ...label })));
+      for (const label of mine) {
+        for (const hole of label.holes ?? []) stack.push(hole.node);
+      }
+    }
+    if (node.type === "eml" && node.a && node.b) {
+      stack.push(node.a);
+      stack.push(node.b);
+    }
+  }
+  return found;
 }
 
 export function noteGadget(node: Node, id: string, template: string, holes: Hole[]): Node {
@@ -51,10 +78,11 @@ export function noteGadget(node: Node, id: string, template: string, holes: Hole
 export function noteProgram(node: Node, id: string): Node {
   const template = table.programs[id as keyof typeof table.programs];
   if (template && /[xy]/.test(template)) return node;
-  const status = table.records[id as keyof typeof table.records];
-  if (status) {
-    const provenMinimal = /proven minimal/i.test(status) && !/not proven/i.test(status);
-    pushLabel(node, { kind: "record", text: id, status, provenMinimal });
+  const record = table.records[id as keyof typeof table.records];
+  if (record) {
+    const status = typeof record === "string" ? record : record.status;
+    const provedMinimal = typeof record === "string" ? false : record.provedMinimal === true;
+    pushLabel(node, { kind: "record", text: id, status, provedMinimal });
     return node;
   }
   pushLabel(node, { kind: "construction", text: id });
@@ -87,8 +115,7 @@ const RANK: Record<LabelKind, number> = {
 };
 
 export function lengthOf(node: Node): bigint {
-  if (node.type !== "eml") return BigInt(1);
-  return circuitStats(node).rpnLength;
+  return rpnLengthOf(node);
 }
 
 export type Outline = {
@@ -102,6 +129,7 @@ export type Outline = {
   name: string;
   opaque: boolean;
   repeat: boolean;
+  record: Label | null;
   children: Outline[];
 };
 
@@ -123,23 +151,17 @@ function displayName(label: Label | null): string {
 
 const memo = new Map<number, Outline>();
 
-function relative(node: Node, seen: Set<number>): Outline {
-  const hit = memo.get(node.id);
-  if (hit) return hit;
+function shouldBubble(node: Node, label: Label | null): boolean {
+  if (label?.opaque) return false;
+  if (label?.kind === "gadget" && label.template && label.holes) return false;
+  if (node.type !== "eml" || !node.a || !node.b) return false;
+  return !label || label.kind === "expr";
+}
+
+function makeOutline(node: Node, seen: Set<number>, children: Outline[]): Outline {
   const length = lengthOf(node);
   const label = chosen(node);
-  const repeat = seen.has(node.id);
-  const nextSeen = new Set(seen);
-  nextSeen.add(node.id);
-  let children: Outline[] = [];
-  if (label?.kind === "gadget" && label.template && label.holes && !label.opaque) {
-    children = holesFromTemplate(label.template, label.holes, nextSeen);
-  } else if (label && !label.opaque && node.type === "eml" && node.a && node.b && label.kind === "expr") {
-    children = bubble(node, nextSeen);
-  } else if (!label && node.type === "eml" && node.a && node.b) {
-    children = bubble(node, nextSeen);
-  }
-  const outline: Outline = {
+  return {
     node,
     start: BigInt(0),
     end: length,
@@ -149,11 +171,100 @@ function relative(node: Node, seen: Set<number>): Outline {
     hole: null,
     name: displayName(label),
     opaque: label?.opaque === true,
-    repeat,
+    record: labelsOf(node).find((item) => item.kind === "record") ?? null,
+    repeat: seen.has(node.id),
     children,
   };
-  memo.set(node.id, outline);
-  return outline;
+}
+
+/**
+ * Explicit stack. A loaded word is a chain tens of thousands of gates deep,
+ * and the recursive walk overflowed the call stack.
+ */
+function relative(node: Node, seen: Set<number>): Outline {
+  type Frame = {
+    node: Node;
+    seen: Set<number>;
+    phase: 0 | 1 | 2;
+    childSeen?: Set<number>;
+    left?: Outline;
+    leftRepeat?: boolean;
+    rightRepeat?: boolean;
+    addedParent?: boolean;
+    addedLeft?: boolean;
+    leftNode?: Node;
+    rightNode?: Node;
+  };
+  const stack: Frame[] = [{ node, seen, phase: 0 }];
+  let produced: Outline | null = null;
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (!frame) break;
+    if (frame.phase === 0) {
+      const hit = memo.get(frame.node.id);
+      if (hit) {
+        stack.pop();
+        produced = hit;
+        continue;
+      }
+      const label = chosen(frame.node);
+      if (!shouldBubble(frame.node, label)) {
+        let children: Outline[] = [];
+        if (label?.kind === "gadget" && label.template && label.holes && !label.opaque) {
+          const nextSeen = new Set(frame.seen);
+          nextSeen.add(frame.node.id);
+          children = holesFromTemplate(label.template, label.holes, nextSeen);
+        }
+        const outline = makeOutline(frame.node, frame.seen, children);
+        memo.set(frame.node.id, outline);
+        stack.pop();
+        produced = outline;
+        continue;
+      }
+      if (frame.node.type !== "eml" || !frame.node.a || !frame.node.b) break;
+      const leftNode = frame.node.a;
+      const rightNode = frame.node.b;
+      frame.leftNode = leftNode;
+      frame.rightNode = rightNode;
+      frame.childSeen = frame.seen;
+      frame.addedParent = !frame.seen.has(frame.node.id);
+      frame.leftRepeat = frame.seen.has(leftNode.id);
+      if (frame.addedParent) frame.seen.add(frame.node.id);
+      frame.phase = 1;
+      stack.push({ node: leftNode, seen: frame.seen, phase: 0 });
+      continue;
+    }
+    if (frame.phase === 1) {
+      frame.left = produced ?? undefined;
+      const childSeen = frame.childSeen;
+      const leftNode = frame.leftNode;
+      const rightNode = frame.rightNode;
+      if (!childSeen || !leftNode || !rightNode) break;
+      frame.addedLeft = !childSeen.has(leftNode.id);
+      if (frame.addedLeft) childSeen.add(leftNode.id);
+      frame.rightRepeat = childSeen.has(rightNode.id);
+      frame.phase = 2;
+      stack.push({ node: rightNode, seen: childSeen, phase: 0 });
+      continue;
+    }
+    const right = produced;
+    const left = frame.left;
+    if (frame.addedLeft && frame.leftNode) frame.seen.delete(frame.leftNode.id);
+    if (frame.addedParent) frame.seen.delete(frame.node.id);
+    stack.pop();
+    if (!left || !right) break;
+    const parts: Outline[] = [];
+    if (left.label) parts.push(place(left, BigInt(0), null, frame.leftRepeat === true));
+    else for (const child of left.children) parts.push(place(child, child.start, child.hole, child.repeat));
+    const shift = left.length;
+    if (right.label) parts.push(place(right, shift, null, frame.rightRepeat === true));
+    else for (const child of right.children) parts.push(place(child, shift + child.start, child.hole, child.repeat));
+    const outline = makeOutline(frame.node, frame.seen, parts);
+    memo.set(frame.node.id, outline);
+    produced = outline;
+  }
+  if (!produced) return makeOutline(node, seen, []);
+  return produced;
 }
 
 function holesFromTemplate(template: string, holes: Hole[], seen: Set<number>): Outline[] {
@@ -177,23 +288,7 @@ function holesFromTemplate(template: string, holes: Hole[], seen: Set<number>): 
   return parts;
 }
 
-function bubble(node: Node, seen: Set<number>): Outline[] {
-  if (node.type !== "eml" || !node.a || !node.b) return [];
-  const leftRepeat = seen.has(node.a.id);
-  const left = relative(node.a, seen);
-  seen.add(node.a.id);
-  const rightRepeat = seen.has(node.b.id);
-  const right = relative(node.b, seen);
-  seen.add(node.b.id);
-  const parts: Outline[] = [];
-  if (left.label) parts.push(place(left, BigInt(0), null, leftRepeat));
-  else for (const child of left.children) parts.push(place(child, child.start, child.hole, child.repeat));
-  const shift = left.length;
-  if (right.label) parts.push(place(right, shift, null, rightRepeat));
-  else for (const child of right.children) parts.push(place(child, shift + child.start, child.hole, child.repeat));
-  return parts;
-}
-
+/** Offsets stay relative to the parent, so a move does not copy the subtree. */
 function place(source: Outline, offset: bigint, hole: string | null, repeat: boolean): Outline {
   return {
     ...source,
@@ -201,7 +296,6 @@ function place(source: Outline, offset: bigint, hole: string | null, repeat: boo
     end: offset + source.length,
     hole: hole ?? source.hole,
     repeat: repeat || source.repeat,
-    children: source.children.map((child) => place(child, offset + child.start, child.hole, child.repeat)),
   };
 }
 
@@ -214,19 +308,21 @@ export type PressOutline = {
 /** Lazy outline. Offsets are bigint press indexes, 0-based, end exclusive. */
 export function pressSpans(root: Node): PressOutline {
   memo.clear();
+  if (root.type === "eml") circuitStats(root);
   const presses = lengthOf(root);
   const outline = relative(root, new Set());
   return { tooLong: presses > BigInt(20_000), presses, root: outline };
 }
 
 export function spanCovers(outline: Outline): boolean {
-  let cursor = outline.start;
+  if (outline.end - outline.start !== outline.length) return false;
+  let cursor = BigInt(0);
   for (const child of outline.children) {
-    if (child.start < cursor || child.end > outline.end || child.start < outline.start) return false;
+    if (child.start < cursor || child.end > outline.length) return false;
     if (!spanCovers(child)) return false;
     cursor = child.end;
   }
-  return outline.end >= cursor && outline.end - outline.start === outline.length;
+  return outline.length >= cursor;
 }
 
 const MAX_WORD = 20_000;
@@ -274,8 +370,39 @@ function tokensOf(node: Node, budget: number): string[] | null {
 const QUALIFIER = "(lower cut, ln 0 = −∞ where used)";
 
 function shortest(label: Label | null): string | null {
-  if (!label || label.kind !== "record" || !label.provenMinimal) return null;
+  if (!label || label.kind !== "record" || label.provedMinimal !== true) return null;
   return `the shortest possible ${QUALIFIER}`;
+}
+
+/** The operator the user actually typed, ignoring operators inside parentheses. */
+function typedOperator(source: string): "mul" | "add" | "sub" | "div" | null {
+  let depth = 0;
+  let addSub: "add" | "sub" | null = null;
+  let mulDiv: "mul" | "div" | null = null;
+  let prev = "";
+  for (const ch of source) {
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth += 1;
+      prev = ch;
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      depth = Math.max(0, depth - 1);
+      prev = ch;
+      continue;
+    }
+    if (ch === " " || ch === "\t") continue;
+    if (depth !== 0) {
+      prev = ch;
+      continue;
+    }
+    if (ch === "+") addSub = "add";
+    else if ((ch === "-" || ch === "−") && /[0-9A-Za-z)\]]/.test(prev)) addSub = "sub";
+    else if (ch === "*" || ch === "×") mulDiv = "mul";
+    else if (ch === "/" || ch === "÷") mulDiv = "div";
+    prev = ch;
+  }
+  return addSub ?? mulDiv;
 }
 
 /**
@@ -283,34 +410,79 @@ function shortest(label: Label | null): string | null {
  * calculator's own text, never a name guessed from the digits.
  * A displayed 0 is not narrated.
  */
-export function explainCircuit(node: Node, typed: string, result: string): { full: string; line: string } {
-  const view = pressSpans(node);
-  const root = view.root;
+export function explainOutline(root: Outline, presses: bigint, typed: string, result: string): { full: string; line: string } {
   const gadget = root.gadgetId;
-  const presses = view.presses.toString();
-  const safeResult = result.trim() === "0" || result.trim() === "−0" ? null : result.trim();
-  const childNotes = root.children.slice(0, 2).map((child) => {
-    const record = child.label?.kind === "record" ? child.label : labelsOf(child.node).find((item) => item.kind === "record") ?? null;
+  const count = presses.toString();
+  const trimmed = result.trim();
+  const safeResult = !trimmed || trimmed === "0" || trimmed === "−0" || trimmed === "computing" || trimmed === "—" ? null : trimmed;
+  const substantial = root.children.filter((child) => child.length > BigInt(1));
+  const noted = (substantial.length ? substantial : root.children).slice(0, 2);
+  const childNotes = noted.map((child) => {
+    const record = child.record ?? (child.label?.kind === "record" ? child.label : null);
     const short = shortest(record);
     const count = child.length.toString();
     return short ? `${child.name} from 1s (${count} presses, ${short})` : `${child.name} (${count} presses)`;
   });
   const sameTwice = root.children.length === 2 && root.children[0]?.name === root.children[1]?.name && root.children[1]?.repeat;
-  const glue = sameTwice ? view.presses - root.children[0]!.length - root.children[1]!.length : null;
-  const op = gadget === "mul" ? "×" : gadget === "add" ? "+" : gadget === "sub" ? "−" : gadget === "div" ? "÷" : gadget;
+  const glue = sameTwice ? presses - root.children[0]!.length - root.children[1]!.length : null;
+  const typedOp = typedOperator(typed);
+  const op = typedOp && gadget === typedOp
+    ? typedOp === "mul" ? "×" : typedOp === "add" ? "+" : typedOp === "sub" ? "−" : "÷"
+    : null;
   const fullParts = [`You typed ${typed || root.name}.`];
-  if (op && sameTwice && childNotes[0]) {
+  if (root.opaque) {
+    fullParts.push(`This is one ${root.name} block of ${count} presses.`);
+  } else if (op && sameTwice && childNotes[0]) {
     const gadgetName = gadget === "mul" ? "multiply" : gadget === "add" ? "add" : gadget === "sub" ? "subtract" : gadget === "div" ? "divide" : gadget;
-    fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML: it built ${childNotes[0]}, did that twice, and wrapped both in a ${gadgetName} gadget${glue !== null ? ` (${glue.toString()} more presses)` : ""}.`);
+    const article = /^[aeiou]/i.test(gadgetName ?? "") ? "an" : "a";
+    fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML: it built ${childNotes[0]}, did that twice, and wrapped both in ${article} ${gadgetName} gadget${glue !== null ? ` (${glue.toString()} more presses)` : ""}.`);
   } else if (op) {
     fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML${childNotes.length ? `: ${childNotes.join("; ")}` : ""}.`);
-  } else if (root.opaque) {
-    fullParts.push(`This is one ${root.name} block of ${presses} presses.`);
   } else if (childNotes.length) {
     fullParts.push(`It is built from ${childNotes.join("; ")}.`);
   }
-  fullParts.push(safeResult ? `That's ${presses} presses in total, and the result is ${safeResult}.` : `That's ${presses} presses in total.`);
+  fullParts.push(safeResult ? `That's ${count} presses in total, and the result is ${safeResult}.` : `That's ${count} presses in total.`);
   const full = fullParts.join(" ");
-  const line = safeResult ? `${typed || root.name} → ${safeResult} in ${presses} presses.` : `${typed || root.name} in ${presses} presses.`;
+  const line = safeResult ? `${typed || root.name} → ${safeResult} in ${count} presses.` : `${typed || root.name} in ${count} presses.`;
   return { full, line };
+}
+
+export function explainCircuit(node: Node, typed: string, result: string): { full: string; line: string } {
+  const view = pressSpans(node);
+  return explainOutline(view.root, view.presses, typed, result);
+}
+
+export type SequenceSnapshot = {
+  oneE: string;
+  bits: string;
+  presses: string;
+  copyable: boolean;
+  tooLong: boolean;
+  outline: Outline;
+};
+
+export type SequenceSource = {
+  node: Node;
+  labels: Map<Node, Label[]>;
+  presses: string;
+};
+
+/** Pass labels captured at build time. A later isolate has already dropped the live map. */
+export function snapshotSequence(node: Node, captured?: Map<Node, Label[]>): SequenceSnapshot {
+  const previous = frozenLabels;
+  frozenLabels = captured ?? null;
+  try {
+    const word = pressWord(node);
+    const spans = pressSpans(node);
+    return {
+      oneE: word.oneE,
+      bits: word.bits,
+      presses: word.presses.toString(),
+      copyable: word.copyable,
+      tooLong: spans.tooLong,
+      outline: spans.root,
+    };
+  } finally {
+    frozenLabels = previous;
+  }
 }
