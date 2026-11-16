@@ -61,6 +61,10 @@ async function main() {
     console.error("calculator css is missing the font, focus ring, or reduced motion");
     failed = true;
   }
+  if (!css.includes("max-height: 11rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px")) {
+    console.error("phone display cap or landscape layout is missing");
+    failed = true;
+  }
   if (!font.includes("SIL Open Font License")) {
     console.error("VT323 license is not the SIL Open Font License");
     failed = true;
@@ -278,7 +282,7 @@ async function main() {
     failed = true;
   }
   await clickNamed("π");
-  const copyNumber = buttonByText("Copy number");
+  const copyNumber = buttonByText("Copy #");
   const piNumber = "#3125315318547434611379164";
   const note = view.document.querySelector(".ti-lcd-note span");
   if (!(copyNumber instanceof view.HTMLButtonElement) || copyNumber.getAttribute("title") !== piNumber || note?.getAttribute("title") !== piNumber) {
@@ -375,6 +379,332 @@ async function main() {
   });
   preemptView.close();
   delete workerGlobal.Worker;
+
+  const ui = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const uiView = ui.window;
+  globals.window = uiView;
+  globals.self = uiView;
+  globals.document = uiView.document;
+  globals.HTMLElement = uiView.HTMLElement;
+  const uiMount = uiView.document.getElementById("root");
+  if (!uiMount) {
+    console.error("missing ui root");
+    process.exit(1);
+  }
+  const uiRoot = createRoot(uiMount);
+  await act(async () => {
+    uiRoot.render(<EmlCalculator />);
+  });
+  const uiButton = (label: string) =>
+    [...uiView.document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
+  const uiResult = () => uiView.document.querySelector(".ti-lcd-result")?.textContent ?? "";
+  const uiAlert = () => uiView.document.querySelector("[role='alert']")?.textContent ?? "";
+  const skip = uiButton("Skip");
+  if (skip instanceof uiView.HTMLButtonElement) {
+    await act(async () => {
+      skip.click();
+    });
+  }
+  await act(async () => {
+    uiView.dispatchEvent(new uiView.KeyboardEvent("keydown", { key: "1", bubbles: true }));
+  });
+  await act(async () => {
+    uiView.dispatchEvent(new uiView.KeyboardEvent("keydown", { key: "1", bubbles: true, repeat: true }));
+  });
+  if ((uiView.document.querySelector(".ti-tape")?.textContent ?? "") !== "1") {
+    console.error("a repeated 1 key pushed more than once", uiView.document.querySelector(".ti-tape")?.textContent);
+    failed = true;
+  }
+  const swap = uiButton("swap");
+  if (!(swap instanceof uiView.HTMLButtonElement)) {
+    console.error("missing swap");
+    failed = true;
+  } else {
+    await act(async () => {
+      swap.click();
+    });
+    const alert = uiView.document.querySelector(".ti-lcd-error");
+    if (alert?.getAttribute("role") !== "alert" || !alert.textContent?.includes("Swap needs two values.")) {
+      console.error("swap error is not in the alert region", alert?.getAttribute("role"), alert?.textContent);
+      failed = true;
+    }
+    const expression = uiView.document.querySelector("#expression");
+    if (expression instanceof uiView.HTMLElement) {
+      await act(async () => {
+        expression.dispatchEvent(new uiView.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      if ((uiView.document.querySelector(".ti-lcd-error")?.textContent ?? "") !== "") {
+        console.error("Escape inside a field left the error up", uiView.document.querySelector(".ti-lcd-error")?.textContent);
+        failed = true;
+      }
+    }
+  }
+  const pushY = uiButton("push y");
+  if (!(pushY instanceof uiView.HTMLButtonElement)) {
+    console.error("missing push y");
+    failed = true;
+  } else {
+    await act(async () => {
+      pushY.dispatchEvent(new uiView.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 0, pointerId: 1 }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 520));
+    });
+    await act(async () => {
+      pushY.dispatchEvent(new uiView.PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 0, clientY: 0, pointerId: 1 }));
+      pushY.dispatchEvent(new uiView.MouseEvent("click", { bubbles: true, button: 0 }));
+    });
+    const hint = uiView.document.querySelector(".ti-lcd-hold")?.textContent ?? "";
+    if (!hint.includes("Push the value of y") || uiResult().includes("2")) {
+      console.error("a long-press both hinted and pushed y", hint, uiResult());
+      failed = true;
+    }
+    await act(async () => {
+      pushY.click();
+    });
+    let afterShort = "";
+    for (let i = 0; i < 40; i += 1) {
+      afterShort = uiResult();
+      if (afterShort.includes("2")) break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+    }
+    if (!afterShort.includes("2") || (uiView.document.querySelector(".ti-lcd-hold")?.textContent ?? "") !== "") {
+      console.error("a short press after a long-press did not push y or left the hint", afterShort, uiView.document.querySelector(".ti-lcd-hold")?.textContent);
+      failed = true;
+    }
+  }
+  const setUiProgram = async (value: string) => {
+    const program = uiView.document.querySelector("input[placeholder='#110, 110, or 11E']");
+    if (!(program instanceof uiView.HTMLInputElement)) {
+      console.error("missing program field");
+      failed = true;
+      return;
+    }
+    const setter = Object.getOwnPropertyDescriptor(uiView.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(program, value);
+      program.dispatchEvent(new uiView.Event("input", { bubbles: true }));
+    });
+  };
+  const loadUi = async () => {
+    const load = uiButton("Load");
+    if (!(load instanceof uiView.HTMLButtonElement)) {
+      console.error("missing Load");
+      failed = true;
+      return;
+    }
+    await act(async () => {
+      load.click();
+    });
+  };
+  await setUiProgram("xyE");
+  await loadUi();
+  if (!uiAlert().includes("free input") || uiAlert().toLowerCase().includes("cancelled")) {
+    console.error("xyE without free input was not rejected clearly", uiAlert());
+    failed = true;
+  }
+  const free = uiView.document.querySelector("input[type='checkbox']");
+  if (!(free instanceof uiView.HTMLInputElement)) {
+    console.error("missing free input");
+    failed = true;
+  } else {
+    await act(async () => {
+      free.click();
+    });
+    await setUiProgram("xyE");
+    await loadUi();
+    let loaded = "";
+    for (let i = 0; i < 80; i += 1) {
+      loaded = uiResult();
+      if (loaded.includes("0.955")) break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+    }
+    const note = uiView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
+    if (!loaded.includes("0.955") || note.includes("cancelled") || uiAlert().includes("needs a value")) {
+      console.error("xyE did not use x and y", loaded, note, uiAlert());
+      failed = true;
+    }
+  }
+  await setUiProgram(`${"1".repeat(20_001)}${"E".repeat(20_000)}`);
+  await loadUi();
+  if (!uiAlert().includes("too long") || uiAlert().toLowerCase().includes("cancelled")) {
+    console.error("a huge word was not rejected before it was built", uiAlert());
+    failed = true;
+  }
+  const expression = uiView.document.querySelector("#expression");
+  const compute = uiView.document.querySelector("button[aria-label='Compute']");
+  const typeExpr = async (value: string) => {
+    if (!(expression instanceof uiView.HTMLInputElement) || !(compute instanceof uiView.HTMLButtonElement)) {
+      console.error("missing expression");
+      failed = true;
+      return;
+    }
+    const setter = Object.getOwnPropertyDescriptor(uiView.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(expression, value);
+      expression.dispatchEvent(new uiView.Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      compute.click();
+    });
+  };
+  await typeExpr("😀");
+  const emojiError = uiView.document.querySelector(".ti-field-error")?.textContent ?? "";
+  if (!emojiError.includes("😀") || emojiError.includes("“\ud83d”")) {
+    console.error("emoji parse error split the character", emojiError);
+    failed = true;
+  }
+  await typeExpr("1)");
+  const parenError = uiView.document.querySelector(".ti-field-error")?.textContent ?? "";
+  if (!parenError.includes("Unexpected") || parenError.includes("Missing")) {
+    console.error("an extra ) was called missing", parenError);
+    failed = true;
+  }
+  await typeExpr("sin pi/6");
+  const sinError = uiView.document.querySelector(".ti-field-error")?.textContent ?? "";
+  if (!sinError.toLowerCase().includes("parentheses")) {
+    console.error("sin without parentheses was an unknown name", sinError);
+    failed = true;
+  }
+  let stored = "";
+  let denyClip = false;
+  Object.defineProperty(uiView.navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (value: string) => {
+        if (denyClip) throw new uiView.DOMException("denied", "NotAllowedError");
+        stored = value;
+      },
+    },
+  });
+  const clearUi = uiButton("Clear");
+  if (clearUi instanceof uiView.HTMLButtonElement) {
+    await act(async () => {
+      clearUi.click();
+    });
+  }
+  const kept = uiView.document.querySelector("#expression");
+  if (!(kept instanceof uiView.HTMLInputElement) || kept.value !== "sin pi/6") {
+    console.error("Clear wiped the expression", kept instanceof uiView.HTMLInputElement ? kept.value : kept);
+    failed = true;
+  }
+  const one = uiView.document.querySelector(".ti-btn-one");
+  if (one instanceof uiView.HTMLButtonElement) {
+    await act(async () => {
+      one.click();
+    });
+  }
+  const copyValue = uiButton("Copy value");
+  if (!(copyValue instanceof uiView.HTMLButtonElement)) {
+    console.error("missing copy value");
+    failed = true;
+  } else {
+    await act(async () => {
+      copyValue.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    if (stored !== "1" || copyValue.textContent?.trim() !== "Copied") {
+      console.error("copy value did not copy the shown number", stored, copyValue.textContent);
+      failed = true;
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+    if (uiButton("Copy value")?.textContent?.trim() !== "Copy value") {
+      console.error("Copied did not reset", uiButton("Copy value")?.textContent);
+      failed = true;
+    }
+    denyClip = true;
+    await act(async () => {
+      uiButton("Copy value")?.dispatchEvent(new uiView.MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    if (!uiAlert().includes("denied")) {
+      console.error("a denied clipboard was silent", uiAlert());
+      failed = true;
+    }
+  }
+  await act(async () => {
+    uiRoot.unmount();
+  });
+  uiView.close();
+
+  class ErrorWorker {
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    postMessage(data: { request: number }) {
+      setTimeout(() => {
+        this.onmessage?.({
+          data: { type: "error", request: data.request, message: "This circuit is too large for exact mode." },
+        });
+      }, 0);
+    }
+    terminate() {}
+  }
+  const errorGlobal = globalThis as unknown as { Worker?: typeof ErrorWorker };
+  errorGlobal.Worker = ErrorWorker;
+  const limit = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const limitView = limit.window;
+  globals.window = limitView;
+  globals.self = limitView;
+  globals.document = limitView.document;
+  globals.HTMLElement = limitView.HTMLElement;
+  const limitMount = limitView.document.getElementById("root");
+  if (!limitMount) {
+    console.error("missing limit root");
+    process.exit(1);
+  }
+  const limitRoot = createRoot(limitMount);
+  await act(async () => {
+    limitRoot.render(<EmlCalculator />);
+  });
+  const limitClick = async (selector: string) => {
+    const button = limitView.document.querySelector(selector);
+    if (!(button instanceof limitView.HTMLButtonElement)) return;
+    await act(async () => {
+      button.click();
+    });
+  };
+  await limitClick(".ti-btn-one");
+  await limitClick(".ti-btn-one");
+  await limitClick(".ti-btn-eml");
+  let limitText = "";
+  for (let i = 0; i < 20; i += 1) {
+    limitText = limitView.document.querySelector(".ti-lcd-error")?.textContent ?? "";
+    if (limitText.includes("too large")) break;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+  const limitNote = limitView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
+  if (!limitText.includes("too large") || limitNote.includes("cancelled") || limitText.toLowerCase().includes("cancelled")) {
+    console.error("an exact error was labelled cancelled", limitText, limitNote);
+    failed = true;
+  }
+  await act(async () => {
+    limitRoot.unmount();
+  });
+  limitView.close();
+  delete errorGlobal.Worker;
+
+  process.env.PAGES_BASE_PATH = "/eml-and-one";
+  const manifestMod = await import("../app/manifest");
+  const manifest = manifestMod.default();
+  delete process.env.PAGES_BASE_PATH;
+  if (manifest.orientation !== "portrait" || manifest.start_url !== "/eml-and-one/" || manifest.scope !== "/eml-and-one/" || manifest.display !== "standalone") {
+    console.error("manifest is missing the portrait lock or the Pages base path", manifest);
+    failed = true;
+  }
 
   if (failed) process.exit(1);
   console.log("calculator smoke passed");

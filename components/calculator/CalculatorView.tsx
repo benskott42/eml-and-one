@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -8,7 +8,7 @@ import table from "@/lib/eml/best-known.json";
 import { agreementNote } from "@/lib/eml/parse";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programIndexDigits } from "@/lib/eml/programIndex";
-import { CopyNumber, GolfPanel, KeyButton } from "./chrome";
+import { CopyChip, CopyNumber, GolfPanel, KeyButton } from "./chrome";
 import { SequencePanel } from "./SequencePanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
@@ -29,7 +29,7 @@ export function CalculatorView(props: CalculatorModel) {
     model, xText, setXText, yText, setYText, expr, setExpr, programField, setProgramField,
     mode, twoButtons, heldShortcut, setHeldShortcut, freeInput, setFreeInput, fieldError, costs, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
-    compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded,
+    compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded, reportError,
   } = props;
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
@@ -73,13 +73,29 @@ export function CalculatorView(props: CalculatorModel) {
   }
   useEffect(() => {
     if (!showCard) return;
-    function onKey(event: KeyboardEvent) {
+    function onKey(event: globalThis.KeyboardEvent) {
       if (event.key !== "Escape") return;
       dismissCard();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showCard]);
+  useEffect(() => {
+    if (!heldShortcut) return;
+    const timer = window.setTimeout(() => setHeldShortcut(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [heldShortcut, setHeldShortcut]);
+  function onModeKey(event: KeyboardEvent<HTMLButtonElement>) {
+    const key = event.key;
+    if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "ArrowUp" && key !== "ArrowDown") return;
+    event.preventDefault();
+    const nextMode = mode === "exact" ? "float" : "exact";
+    requestMode(nextMode);
+    const target = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`button[data-mode="${nextMode}"]`);
+    target?.focus();
+  }
+  const pendingExact = model.stack.some((item) => item.pendingExact) || model.note === "Computing…" || model.note === "computing";
+  const canCopyValue = Boolean(top && !top.pendingExact && top.text !== "—" && top.text !== "computing");
   const fullDigits = top ? programIndexDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
@@ -104,22 +120,30 @@ export function CalculatorView(props: CalculatorModel) {
           </div>
         </div>
 
+        <div className="ti-face">
         <div className="ti-bezel">
-          <div className="ti-lcd" role="region" aria-label="Calculator screen">
+          <div className="ti-lcd" role="region" aria-label="Calculator screen" tabIndex={0}>
             <p className="ti-lcd-status">
               <span>{mode === "exact" ? "exact mode · 120 digits" : "float (hardware)"}</span>
             </p>
             <div className="ti-lcd-stack">
               {buried.map((item, index) => (
                 <p key={`${item.caption}-${index}`}>
-                  {item.text} {item.caption}
+                  {item.text}
+                  <span className="ti-lcd-sep"> · </span>
+                  {item.caption}
                 </p>
               ))}
             </div>
-            <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite">
-              {readout}
-              {fieldError && top ? " previous" : ""}
-            </p>
+            <div className="ti-lcd-readout">
+              <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite">
+                {readout}
+                {fieldError && top ? " previous" : ""}
+              </p>
+              {canCopyValue && top ? (
+                <CopyChip key={top.text} text={top.text} label="Copy value" ariaLabel="Copy displayed value" onError={reportError} />
+              ) : null}
+            </div>
             <p className="ti-lcd-caption">
               {top ? (top.caption.length > 80 ? `${preview?.presses.toString() ?? "many"} presses` : top.caption) : "Press 1, then 1, then EML. That is e."}
               {named ? ` · ${named}` : ""}
@@ -133,12 +157,16 @@ export function CalculatorView(props: CalculatorModel) {
               {model.note ? <p className="ti-lcd-note"><span title={fullNumber ?? undefined}>{model.note}</span></p> : null}
               {preview?.full ? <p className="ti-press-meta">bits {preview.full}</p> : null}
               <p className="ti-press-meta">1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</p>
-              {fullNumber ? <CopyNumber text={fullNumber} /> : null}
+              {preview?.copyable ? <CopyChip text={preview.full} label="Copy presses" ariaLabel="Copy press string" onError={reportError} /> : null}
+              {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
             </details>
-            {model.error ? <p className="ti-lcd-error">{model.error}</p> : null}
+            <p className={model.error ? "ti-lcd-error" : "ti-lcd-error ti-lcd-error-empty"} role="alert">
+              {model.error ?? ""}
+            </p>
             {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
         </div>
+        <div className="ti-pad">
 
         {twoButtons ? null : (
           <form
@@ -181,15 +209,10 @@ export function CalculatorView(props: CalculatorModel) {
               type="button"
               role="radio"
               aria-checked={mode === "float"}
+              data-mode="float"
+              tabIndex={mode === "float" ? 0 : -1}
               onClick={() => requestMode("float")}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-                  event.preventDefault();
-                  requestMode("exact");
-                  const next = event.currentTarget.nextElementSibling;
-                  if (next instanceof HTMLButtonElement) next.focus();
-                }
-              }}
+              onKeyDown={onModeKey}
               className={mode === "float" ? "ti-btn ti-btn-alpha is-down" : "ti-btn ti-btn-alpha"}
             >
               float (hardware)
@@ -198,33 +221,32 @@ export function CalculatorView(props: CalculatorModel) {
               type="button"
               role="radio"
               aria-checked={mode === "exact"}
+              data-mode="exact"
+              tabIndex={mode === "exact" ? 0 : -1}
               onClick={() => requestMode("exact")}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  requestMode("float");
-                  const previous = event.currentTarget.previousElementSibling;
-                  if (previous instanceof HTMLButtonElement) previous.focus();
-                }
-              }}
+              onKeyDown={onModeKey}
               className={mode === "exact" ? "ti-btn ti-btn-alpha is-down" : "ti-btn ti-btn-alpha"}
             >
               exact mode · 120 digits
             </button>
           </div>
-          {model.stack.some((item) => item.pendingExact) ? (
-            <button type="button" className="ti-btn ti-btn-alpha" onClick={cancelExact}>
-              Cancel
-            </button>
-          ) : null}
         </div>
-        {model.stack.some((item) => item.pendingExact) || model.note === "Computing…" || model.note === "computing" ? (
-          <p className="ti-case-note">
+        <div className="ti-compute-slot">
+          <button
+            type="button"
+            className="ti-btn ti-btn-cancel"
+            onClick={cancelExact}
+            disabled={!model.stack.some((item) => item.pendingExact)}
+            aria-hidden={model.stack.some((item) => item.pendingExact) ? undefined : true}
+          >
+            Cancel
+          </button>
+          <p className={pendingExact ? "ti-case-note" : "ti-case-note is-idle"}>
             {mode === "exact"
-              ? "Exact value of this circuit. Cancel stops a long one, and the previous number comes down."
+              ? "Exact value of this circuit. Cancel stops it, and the previous number is not restored."
               : "Hardware view: the raw 64-bit float value of these gates. A disagreement is flagged, with the exact value beside it."}
           </p>
-        ) : null}
+        </div>
           {twoButtons || !freeInput ? null : (
           <div className="ti-fields">
             <label className="ti-label">
@@ -232,6 +254,11 @@ export function CalculatorView(props: CalculatorModel) {
               <input
                 value={xText}
                 onChange={(event) => setXText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  pushScalar(xText, "x");
+                }}
                 className="ti-field"
                 spellCheck={false}
                 autoComplete="off"
@@ -242,6 +269,11 @@ export function CalculatorView(props: CalculatorModel) {
               <input
                 value={yText}
                 onChange={(event) => setYText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  pushScalar(yText, "y");
+                }}
                 className="ti-field"
                 spellCheck={false}
                 autoComplete="off"
@@ -307,7 +339,7 @@ export function CalculatorView(props: CalculatorModel) {
             }}
           >
             <label className="ti-label">
-              Program number (#110), presses, or a word of 1 and E
+              Program number (#110), presses, or a word of 1, E, x, and y
               <input
                 value={programField}
                 onChange={(event) => setProgramField(event.target.value)}
@@ -382,6 +414,8 @@ export function CalculatorView(props: CalculatorModel) {
               </button>
             </div>
           </div>
+        </div>
+        </div>
       </div>
 
       <div className="ti-manual">
