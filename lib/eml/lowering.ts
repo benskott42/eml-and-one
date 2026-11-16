@@ -768,21 +768,28 @@ export function isMarkedExactInt(node: Node): boolean {
   return markedExactInt.has(node);
 }
 
-function markExactInt(node: Node, value: bigint): Node {
+export function markExactInt(node: Node, value: bigint): Node {
   markedExactInt.add(node);
   return attachInt(node, value);
 }
 
 /**
- * A distinct node whose float follows `source` and whose integer is `value`.
- * The real add and sub circuits drop a 1 beside 10^400, and they can come out negative.
+ * One node per integer. Two sums that share a float, such as 10^400+1 and 10^400+3,
+ * must not be the same node: the second write would replace the first integer.
+ * A finite float is an input leaf labelled with the full decimal.
+ * An overflow stays a multiple of its source, so dividing it does not become ln 0.
+ * The factor is a fresh 1 keyed by the decimal, so those multiples do not merge.
  */
 function carryHugeInt(value: bigint, a: Node, b: Node): Node {
+  const approx = Number(value);
+  if (Number.isFinite(approx)) return markExactInt(input({ re: approx, im: 0 }, `int:${value.toString()}`), value);
   const signA = floatOverflowInt(a);
   const source = signA ? a : b;
   const sourceSign = signA ?? floatOverflowInt(b) ?? 1;
   const want = value > BigInt(0) ? 1 : -1;
-  const node = want === sourceSign ? rawMul(source, ONE) : rawMul(oneNeg(), source);
+  const one = input({ re: 1, im: 0 }, `int:${value.toString()}`);
+  const scaled = rawMul(source, one);
+  const node = want === sourceSign ? scaled : rawMul(oneNeg(), scaled);
   return markExactInt(node, value);
 }
 

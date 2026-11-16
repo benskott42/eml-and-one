@@ -3083,6 +3083,115 @@ failed += runPropertyChecks();
     failed += 1;
     console.log("FAIL (10^400-10^300)/10^300", quotHw.value, quotHw.singular, quotText, quotEx.singular);
   }
+
+  // mpmath: (10^400+3)-(10^400+1) = 2, (10^400+1)-(10^400+2) = -1,
+  // ((10^400+3)+(10^400+1))-2*10^400 = 4,
+  // (10^400+10^300)-(10^400-10^300) = 2*10^300,
+  // (10^401+1)-(10^400+1) = 9*10^400.
+  const two300 = `2${"0".repeat(300)}`;
+  const nine400 = `9${"0".repeat(400)}`;
+  const gap400 = `${"9".repeat(100)}${"0".repeat(300)}`;
+  const expectDiff = (source: string, re: number, text: string) => {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const got = formatExact(ex.value).replace(/\u200b/g, "");
+    if (hw.singular !== null || ex.singular !== null || !close(hw.value, c(re, 0), 1e-12) || got !== text) {
+      failed += 1;
+      console.log("FAIL distinct huge difference", source, hw.value, hw.singular, got, ex.singular);
+    }
+  };
+  expectDiff("(10^400+3)-(10^400+1)", 2, "2");
+  expectDiff("(10^400+1)-(10^400+2)", -1, "−1");
+  expectDiff("((10^400+3)+(10^400+1))-2*10^400", 4, "4");
+  const wideDiff = "(10^400+10^300)-(10^400-10^300)";
+  const wideNode = compileExpression(wideDiff, {});
+  const wideHw = evaluateReport(wideNode, {}, budget);
+  const wideEx = exactReport(wideNode, {}, budget);
+  if (
+    wideHw.singular !== null ||
+    wideEx.singular !== null ||
+    !close(wideHw.value, c(2e300, 0), 1e-12) ||
+    formatExact(wideEx.value).replace(/\u200b/g, "") !== "2×10^300" ||
+    !exactClose(wideEx.value, two300, 0, 110)
+  ) {
+    failed += 1;
+    console.log("FAIL 2*10^300 gap", wideHw.value, wideHw.singular, formatExact(wideEx.value), wideEx.singular);
+  }
+  const nineNode = compileExpression("(10^401+1)-(10^400+1)", {});
+  const nineHw = evaluateReport(nineNode, {}, budget);
+  const nineEx = exactReport(nineNode, {}, budget);
+  if (
+    nineHw.value.re !== Infinity ||
+    nineHw.value.im !== 0 ||
+    nineEx.singular !== null ||
+    formatExact(nineEx.value).replace(/\u200b/g, "") !== "9×10^400" ||
+    !exactClose(nineEx.value, nine400, 0, 110)
+  ) {
+    failed += 1;
+    console.log("FAIL 9*10^400", nineHw.value, nineHw.singular, formatExact(nineEx.value), nineEx.singular);
+  }
+
+  const carried = (source: string) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return packed.tokens.flatMap((tok) => ("int" in tok && tok.int ? [tok.int] : []));
+  };
+  const expectCarried = (source: string, digits: string) => {
+    if (!carried(source).includes(digits)) {
+      failed += 1;
+      console.log("FAIL integer missing on the wire", source);
+    }
+  };
+  expectCarried("(10^401+1)-(10^400+1)", nine400);
+  expectCarried("(10^400-10^300)/10^300", nines);
+  expectCarried("10^400-10^300", gap400);
+  expectCarried(wideDiff, two300);
+  expectCarried("(10^400+1)/7", `${"1"}${"0".repeat(399)}1`);
+
+  // A fresh process has an empty mark table. Same-process unpack reuses interned leaves.
+  const wireRows: { source: string; re: string; im?: string; digits?: number; text?: string }[] = [
+    { source: "(10^400-1)-10^400", re: "-1", text: "−1" },
+    { source: "(10^400+1)-10^400", re: "1", text: "1" },
+    { source: "10^400-(10^400-1)", re: "1", text: "1" },
+    { source: "(10^400+i)-10^400", re: "0", im: "1" },
+    { source: "(10^400+pi)-10^400", re: "3.1415926535897932384626433832795028841971693993751" },
+    { source: "(10^400+sqrt(2))-10^400", re: "1.4142135623730950488016887242096980785696718753769" },
+    { source: "(10^400+0.5)-10^400", re: "0.5", text: "0.5" },
+    { source: "(10^400+(-i))-10^400", re: "0", im: "-1" },
+    { source: "(10^400+3)-(10^400+1)", re: "2", text: "2" },
+    { source: "(10^400+1)-(10^400+2)", re: "-1", text: "−1" },
+    { source: "((10^400+3)+(10^400+1))-2*10^400", re: "4", text: "4" },
+    { source: wideDiff, re: two300, digits: 110, text: "2×10^300" },
+    { source: "(10^401+1)-(10^400+1)", re: nine400, digits: 110, text: "9×10^400" },
+    { source: "(10^400-10^300)/10^300", re: nines, digits: 110, text: nines },
+    { source: "10^400-10^300", re: gap400, digits: 110 },
+    { source: "(10^400+1)/7", re: "1.428571428571428571428571e+399", digits: 20 },
+  ];
+  const wireJobs = wireRows.map((row) => {
+    const packed = packCircuit(compileExpression(row.source, {}));
+    return { source: row.source, tokens: packed.tokens, root: packed.root, re: row.re, im: row.im, digits: row.digits };
+  });
+  const wireRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const wire = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
+    cwd: wireRoot,
+    input: JSON.stringify(wireJobs),
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  if (wire.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh huge integer", wire.status, wire.stderr);
+  } else {
+    const rows = JSON.parse(wire.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; close?: boolean }>;
+    for (const row of rows) {
+      const want = wireRows.find((item) => item.source === row.source);
+      const text = row.text.replace(/\u200b/g, "");
+      if (row.unverified || row.singular !== null || row.close !== true || (want?.text !== undefined && text !== want.text)) {
+        failed += 1;
+        console.log("FAIL fresh huge", row.source, row.unverified ? "unverified" : text, row.singular, row.close);
+      }
+    }
+  }
 }
 
 if (failed) {

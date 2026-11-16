@@ -625,7 +625,7 @@ function exactReportOnce(
     if (!n) throw new EmlError("Could not evaluate this circuit.");
     if (isSeriesShortcut(n)) sawLead = true;
     if (memo.has(n)) continue;
-    if (isMarkedExactInt(n)) {
+    if (isMarkedExactInt(n) && n.type !== "input") {
       const big = provenInteger(n);
       if (big !== undefined) {
         const value = z(big.toString(), 0);
@@ -645,6 +645,17 @@ function exactReportOnce(
       continue;
     }
     if (n.type === "input") {
+      if (isMarkedExactInt(n)) {
+        const big = provenInteger(n);
+        if (big !== undefined) {
+          const value = z(big.toString(), 0);
+          memo.set(n, value);
+          noteSeen(value);
+          why.set(n, null);
+          logged.set(n, false);
+          continue;
+        }
+      }
       const leaf = z(n.value.re, n.value.im);
       memo.set(n, leaf);
       noteSeen(leaf);
