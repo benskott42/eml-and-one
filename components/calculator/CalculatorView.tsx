@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
 import table from "@/lib/eml/best-known.json";
+import { agreementNote } from "@/lib/eml/parse";
+import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programIndexDigits } from "@/lib/eml/programIndex";
-import { CopyNumber, GolfPanel, KeyButton, PressLine } from "./chrome";
+import { CopyNumber, GolfPanel, KeyButton } from "./chrome";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
@@ -23,20 +26,61 @@ const EXAMPLES = [
 export function CalculatorView(props: CalculatorModel) {
   const {
     model, xText, setXText, yText, setYText, expr, setExpr, programField, setProgramField,
-    mode, twoButtons, heldShortcut, setHeldShortcut, costs, expansions, writeTwoButtons,
+    mode, twoButtons, heldShortcut, setHeldShortcut, freeInput, setFreeInput, fieldError, costs, expansions, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
     compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded,
   } = props;
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
-  const readout = top ? top.text : "0";
-  const named = top ? captionName(top.text, top.value, top.caption) : null;
+  const readout = top ? top.text : "Stack empty. Press 1.";
+  const named = top && !fieldError ? captionName(top.text, top.value, top.caption) : null;
+  const preview = top ? pressPreviewForNode(top.node) : null;
+  const agreement = top && top.notice !== "couldn't verify" ? agreementNote(top.caption, top.value, top.bound ?? {}, top.text) : null;
+  const pressCount = preview?.presses.toString();
+  const pressLine = pressCount
+    ? `${pressCount} ${pressCount === "1" ? "press" : "presses"}${agreement === "same as float math (12 digits)" ? " · same as float math (12 digits)" : ""}`
+    : null;
+  const onlyOnes = model.stack.every((item) => item.text === "1" || item.caption === "1");
+  const lightOne = model.stack.length < 2 && (model.stack.length === 0 || onlyOnes);
+  const lightEml = model.stack.length === 2 && onlyOnes;
+  const [showCard, setShowCard] = useState(false);
+  useEffect(() => {
+    let open = false;
+    try {
+      open = window.localStorage.getItem("eml-onboarding") !== "1";
+    } catch {
+      open = true;
+    }
+    if (!open) return;
+    // Client-only: the server render stays without the card so hydration matches.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowCard(true);
+  }, []);
+  function dismissCard() {
+    setShowCard(false);
+    try {
+      window.localStorage.setItem("eml-onboarding", "1");
+    } catch {
+      /* the card stays dismissed for this visit */
+    }
+  }
   const fullDigits = top ? programIndexDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
   return (
     <main className="ti-stage">
+      <a className="ti-skip" href="#expression">Skip to expression</a>
       <div className={twoButtons ? "ti-device ti-device-two" : "ti-device"}>
+        {showCard ? (
+          <div className="ti-onboard" role="region" aria-label="First visit">
+            <p>Try the two keys, or type an expression.</p>
+            <div className="ti-onboard-actions">
+              <button type="button" className="ti-text-btn" onClick={() => { pushOne(); pushOne(); applyEml(); dismissCard(); }}>Try 1, 1, EML</button>
+              <button type="button" className="ti-text-btn" onClick={() => { compute("2*2"); dismissCard(); }}>Try 2*2</button>
+              <button type="button" className="ti-text-btn" onClick={dismissCard}>Skip</button>
+            </div>
+          </div>
+        ) : null}
         <div className="ti-top">
           <div>
             <h1 className="ti-wordmark">EML and One</h1>
@@ -47,8 +91,7 @@ export function CalculatorView(props: CalculatorModel) {
         <div className="ti-bezel">
           <div className="ti-lcd" role="region" aria-label="Calculator screen">
             <p className="ti-lcd-status">
-              <span>{mode === "exact" ? "exact" : "hardware view"}</span>
-              <span>x older · y on top</span>
+              <span>{mode === "exact" ? "exact mode · 120 digits" : "float (hardware)"}</span>
             </p>
             <div className="ti-lcd-stack">
               {buried.map((item, index) => (
@@ -57,8 +100,9 @@ export function CalculatorView(props: CalculatorModel) {
                 </p>
               ))}
             </div>
-            <p className="ti-lcd-result" aria-live="polite">
+            <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite">
               {readout}
+              {fieldError && top ? " previous" : ""}
             </p>
             <p className="ti-lcd-caption">
               {top ? top.caption : "Press 1, then 1, then EML. That is e."}
@@ -66,26 +110,54 @@ export function CalculatorView(props: CalculatorModel) {
             </p>
             {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
             {top && shownSingular(top) ? <p className="ti-lcd-flag">{shownSingular(top)}</p> : null}
-            {model.note ? (
-              <div className="ti-lcd-note">
-                <span title={fullNumber ?? undefined}>{model.note}</span>
-                {fullNumber ? <CopyNumber text={fullNumber} /> : null}
-              </div>
-            ) : null}
+            {pressLine ? <p className="ti-press">{pressLine}</p> : null}
+            <details className="ti-fold">
+              <summary>Details</summary>
+              {model.note ? <p className="ti-lcd-note"><span title={fullNumber ?? undefined}>{model.note}</span></p> : null}
+              {preview?.full ? <p className="ti-press-meta">bits {preview.full}</p> : null}
+              <p className="ti-press-meta">1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</p>
+              {fullNumber ? <CopyNumber text={fullNumber} /> : null}
+            </details>
             {model.error ? <p className="ti-lcd-error">{model.error}</p> : null}
-            <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
             {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
         </div>
+
+        {twoButtons ? null : (
+          <form
+            className="ti-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              compute(expr);
+            }}
+          >
+            <label className="ti-label" htmlFor="expression">
+              Expression
+              <input
+                id="expression"
+                value={expr}
+                onChange={(event) => setExpr(event.target.value)}
+                className="ti-field"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </label>
+            <button type="submit" className="ti-text-btn ti-text-btn-strong" aria-label="Compute">
+              =
+            </button>
+            {fieldError ? <p className="ti-field-error" role="alert">{fieldError}</p> : null}
+          </form>
+        )}
 
         <div className="ti-modes">
           <button
             type="button"
             aria-pressed={twoButtons}
             onClick={() => writeTwoButtons(!twoButtons)}
-            className={twoButtons ? "ti-btn ti-btn-2nd is-down" : "ti-btn ti-btn-2nd"}
+            className={twoButtons ? "ti-btn ti-btn-2nd is-on" : "ti-btn ti-btn-2nd is-off"}
           >
             Two buttons only
+            <span className="ti-mode-sub">{twoButtons ? "on" : "off"}</span>
           </button>
           <div role="radiogroup" aria-label="Evaluation" className="ti-radio">
             <button
@@ -103,7 +175,7 @@ export function CalculatorView(props: CalculatorModel) {
               }}
               className={mode === "float" ? "ti-btn ti-btn-alpha is-down" : "ti-btn ti-btn-alpha"}
             >
-              hardware
+              float (hardware)
             </button>
             <button
               type="button"
@@ -120,7 +192,7 @@ export function CalculatorView(props: CalculatorModel) {
               }}
               className={mode === "exact" ? "ti-btn ti-btn-alpha is-down" : "ti-btn ti-btn-alpha"}
             >
-              exact
+              exact mode · 120 digits
             </button>
           </div>
           {model.stack.some((item) => item.pendingExact) ? (
@@ -129,12 +201,14 @@ export function CalculatorView(props: CalculatorModel) {
             </button>
           ) : null}
         </div>
-        <p className="ti-case-note">
-          {mode === "exact"
-            ? "Exact value of this circuit. Cancel stops a long one, and the previous number comes down."
-            : "Hardware view: the raw 64-bit float value of these gates. A disagreement is flagged, with the exact value beside it."}
-        </p>
-          {twoButtons ? null : (
+        {model.stack.some((item) => item.pendingExact) || model.note === "Computing…" || model.note === "computing" ? (
+          <p className="ti-case-note">
+            {mode === "exact"
+              ? "Exact value of this circuit. Cancel stops a long one, and the previous number comes down."
+              : "Hardware view: the raw 64-bit float value of these gates. A disagreement is flagged, with the exact value beside it."}
+          </p>
+        ) : null}
+          {twoButtons || !freeInput ? null : (
           <div className="ti-fields">
             <label className="ti-label">
               x
@@ -160,53 +234,40 @@ export function CalculatorView(props: CalculatorModel) {
           )}
 
           <div className="ti-prime">
-            <KeyButton tone="one" secondary="const" onClick={pushOne} title="Push the constant 1. This is one press: 1" ariaLabel="Push the constant 1. This is one press: 1">
+            <KeyButton tone="one" secondary="const" hot={lightOne} onClick={pushOne} title="Push the constant 1. This is one press: 1" ariaLabel="1">
               1
             </KeyButton>
-            <KeyButton tone="eml" secondary="exp − ln" onClick={applyEml} title="The EML key. One press, written 0. exp(x) − ln(y)" ariaLabel="The EML key. One press, written 0. exp(x) − ln(y)">
+            <KeyButton tone="eml" secondary="exp − ln" hot={lightEml} disabled={!freeInput && model.stack.length < 2} onClick={applyEml} title="EML. exp(x) − ln(y)" ariaLabel="EML">
               EML
             </KeyButton>
           </div>
-          <p className="ti-caption">Every other key is a shortcut that presses these two for you.</p>
+          {!freeInput && model.stack.length < 2 ? <p className="ti-caption">EML needs two values. Press 1 first.</p> : null}
+          <p className="ti-caption">Keyboard: 1 · E · Backspace · Enter computes</p>
+          {twoButtons ? null : <p className="ti-caption">Every other key is a shortcut that presses these two for you.</p>}
 
           {twoButtons ? null : (
           <div className="ti-block">
-          <div className="ti-keys">
-            <KeyButton onClick={() => pushScalar(xText, "x")} title="Push the value of x" onReveal={setHeldShortcut}>
-              push x
-            </KeyButton>
-            <KeyButton onClick={() => pushScalar(yText, "y")} title="Push the value of y" onReveal={setHeldShortcut}>
-              push y
-            </KeyButton>
-            <KeyButton onClick={swap} title="Swap the top two values" onReveal={setHeldShortcut}>
-              swap
-            </KeyButton>
-            <KeyButton onClick={drop} title="Drop the top value" onReveal={setHeldShortcut}>
-              drop
-            </KeyButton>
-          </div>
-
-          <form
-            className="ti-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              compute(expr);
-            }}
-          >
+          <details className="ti-fold">
+            <summary>Advanced stack</summary>
             <label className="ti-label">
-              Expression, compiled into EML
-              <input
-                value={expr}
-                onChange={(event) => setExpr(event.target.value)}
-                className="ti-field"
-                spellCheck={false}
-                autoComplete="off"
-              />
+              <input type="checkbox" checked={freeInput} onChange={(event) => setFreeInput(event.target.checked)} />
+              {" "}free input
             </label>
-            <button type="submit" className="ti-text-btn ti-text-btn-strong">
-              Compute
-            </button>
-          </form>
+            <div className="ti-keys">
+              <KeyButton onClick={() => pushScalar(xText, "x")} title="Push the value of x" onReveal={setHeldShortcut}>
+                push x
+              </KeyButton>
+              <KeyButton onClick={() => pushScalar(yText, "y")} title="Push the value of y" onReveal={setHeldShortcut}>
+                push y
+              </KeyButton>
+              <KeyButton onClick={swap} title="Swap the top two values" onReveal={setHeldShortcut}>
+                swap
+              </KeyButton>
+              <KeyButton onClick={drop} title="Drop the top value" onReveal={setHeldShortcut}>
+                drop
+              </KeyButton>
+            </div>
+          </details>
           <div className="ti-chips">
             {EXAMPLES.map((example) => (
               <button
@@ -272,7 +333,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>One value</h2>
             <div className="ti-keys">
               {UNARY_KEYS.map((key) => (
-                <KeyButton key={key.id} onClick={() => applyUnary(key.id, key.label)} title={expansions[key.id]} secondary={costs[key.id]} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} onClick={() => applyUnary(key.id, key.label)} title={`${expansions[key.id] ?? ""} if you press this now, with x = ${xText} and y = ${yText}`} secondary={costs[key.id]} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}
@@ -283,7 +344,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>Two values · older x, top y</h2>
             <div className="ti-keys">
               {BINARY_KEYS.map((key) => (
-                <KeyButton key={key.id} title={expansions[key.id] ?? key.hint} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} title={`${expansions[key.id] ?? key.hint} if you press this now, with x = ${xText} and y = ${yText}`} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}

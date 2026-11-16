@@ -130,7 +130,7 @@ async function main() {
   const buttonByText = (label: string) =>
     [...view.document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
   const undo = buttonByText("Undo");
-  const exact = buttonByText("exact");
+  const exact = buttonByText("exact mode · 120 digits");
   if (!(undo instanceof view.HTMLButtonElement) || !(exact instanceof view.HTMLButtonElement)) {
     console.error("missing undo or exact");
     failed = true;

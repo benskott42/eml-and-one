@@ -70,6 +70,7 @@ export function KeyButton({
   tone = "plain",
   secondary,
   onReveal,
+  hot = false,
 }: {
   children: ReactNode;
   onClick: () => void;
@@ -79,6 +80,7 @@ export function KeyButton({
   tone?: "plain" | "one" | "eml";
   secondary?: string;
   onReveal?: (text: string) => void;
+  hot?: boolean;
 }) {
   const revealed = useRef(false);
   return (
@@ -92,7 +94,7 @@ export function KeyButton({
         type="button"
         title={title}
         aria-label={ariaLabel}
-        aria-disabled={disabled || undefined}
+        disabled={disabled || undefined}
         onClick={() => {
           if (revealed.current) {
             revealed.current = false;
@@ -121,7 +123,7 @@ export function KeyButton({
           window.addEventListener("pointerup", end, { once: true });
           window.addEventListener("pointercancel", end, { once: true });
         }}
-        className={disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}
+        className={`${disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}${hot ? " is-tutorial" : ""}`}
       >
         {children}
       </button>
