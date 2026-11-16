@@ -1,6 +1,6 @@
 # Minimality of 0, −1, and 2
 
-0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, where the imaginary part of the logarithm lies in [−π, π), with ln 0 = −∞. Every other record in this project is shortest known.
+0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. Every other record in this project is shortest known.
 
 A program is an RPN word on the alphabet {1, E}. A word with n leaves has length K = 2n − 1, so only odd lengths occur. "K ≤ n" means every odd length up to n. Each program was generated directly and decided on its own. Programs were not grouped by value, so it does not matter whether two forms are the same.
 

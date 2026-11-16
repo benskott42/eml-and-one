@@ -886,6 +886,31 @@ function markShell(root: Node, operands: Node[]): Node {
   return root;
 }
 
+/** Imaginary interval, or null when the range does not prove one. */
+function imagSpan(node: Node): { lo: number; hi: number } | null {
+  const im = rangeOf(node).im;
+  if (!im || !Number.isFinite(im.lo) || !Number.isFinite(im.hi)) return null;
+  return im;
+}
+
+/**
+ * The raw add word equals x + y only for Im(x + y) in (−π, π].
+ * After the power-of-ten lift that sum can leave the strip, so the short word is refused.
+ */
+function inAddStrip(lo: number, hi: number): boolean {
+  return lo > -Math.PI && hi <= Math.PI;
+}
+
+function scaledSumInAddStrip(a: Node, b: Node, k: number): boolean {
+  const ia = imagSpan(a);
+  const ib = imagSpan(b);
+  const scale = 10 ** k;
+  if (!ia || !ib || !Number.isFinite(scale)) return false;
+  // The raw add wraps when either scaled imaginary part leaves (−π, π], and when their sum does.
+  if (!inAddStrip(ia.lo * scale, ia.hi * scale) || !inAddStrip(ib.lo * scale, ib.hi * scale)) return false;
+  return inAddStrip((ia.lo + ib.lo) * scale, (ia.hi + ib.hi) * scale);
+}
+
 function scaledTiny(a: Node, b: Node, k: number): Node {
   const scale = tenPow(k);
   return markTwoScaled(markShell(rawDiv(rawAdd(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
@@ -896,7 +921,12 @@ function scaledTinySub(a: Node, b: Node): Node | null {
   if (nearCut(rangeOf(a)) || nearCut(rangeOf(b))) return null;
   const mag = maxMag(a, b);
   if (mag === null || !(mag > 0 && mag < TINY_MAG)) return null;
-  const scale = tenPow(liftExponent(mag));
+  const k = liftExponent(mag);
+  const ib = imagSpan(b);
+  const scaleFactor = 10 ** k;
+  // The short sub word is exact for Im y in [−π, π). The lift can push a tiny imaginary past that.
+  if (!ib || !Number.isFinite(scaleFactor) || !(ib.lo * scaleFactor >= -Math.PI && ib.hi * scaleFactor < Math.PI)) return null;
+  const scale = tenPow(k);
   return markTwoScaled(markShell(rawDiv(naiveSub(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
 }
 
@@ -912,7 +942,9 @@ export function domainAdd(a: Node, b: Node): Node {
   const bothReal = pureReal(a) && pureReal(b);
   const cut = nearCut(rangeOf(a)) || nearCut(rangeOf(b));
   if (mag !== null && mag > 0 && mag < TINY_MAG && !cut) {
-    node = scaledTiny(a, b, liftExponent(mag));
+    const k = liftExponent(mag);
+    // A scaled imaginary sum outside (−π, π] is not the raw add word. rotSub is.
+    node = scaledSumInAddStrip(a, b, k) ? scaledTiny(a, b, k) : domainSub(a, safeNeg(b));
   } else if (mag !== null && mag < SHORT_MAG && !cut && (bothReal || axisAligned(a, b))) {
     node = rawAdd(a, b);
   } else if (mag !== null && mag < SHORT_MAG) node = domainSub(a, safeNeg(b));

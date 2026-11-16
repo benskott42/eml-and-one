@@ -22,13 +22,13 @@ The log-as-floor device is due to Cappallo, arXiv:2609.10592, [https://arxiv.org
 
 ## Records
 
-K is the RPN length: one token for each leaf and each eml. 0, −1, and 2 are proved minimal, as summarized in [docs/minimality.md](docs/minimality.md). Everything else below is shortest known. A record that uses ln 0 = −∞ says so. No record here depends on Schanuel's conjecture.
+K is the RPN length: one token for each leaf and each eml. Every record below is on the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. 0, −1, and 2 are proved minimal, as summarized in [docs/minimality.md](docs/minimality.md). Everything else below is shortest known. A record that uses ln 0 = −∞ says so. No record here depends on Schanuel's conjecture.
 
 These lengths were already public. They are not claimed as first discoveries. The search in this project also finds them, under the ln 0 policy named with each one.
 
 - ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is shortest known at K 21, and without ln 0, +iπ on this cut is shortest known at K 23. Unresolved tower trees remain, so neither length is proven minimal.
 - 3 at K 29 ties Kaseorg's code-golf answer.
-- 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proved minimal on the lower cut, towers included. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proved minimal and uses ln 0. Without ln 0, −1 is proved minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17.
+- 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proved minimal on the lower cut, Arg in [−π, π), towers included, with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proved minimal and uses ln 0. Without ln 0, −1 is proved minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17.
 
 Ours, labelled as above:
 
@@ -37,7 +37,8 @@ Ours, labelled as above:
 | −2 | 25 | shortest known, with ln 0 = −∞. Unresolved tower trees remain. Without that value, K 27 is shortest known. |
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
-| −iπ on the lower cut | 45 | shortest known, not proven minimal, with ln 0 = −∞. Not the K 21 word. |
+| −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
+| −iπ on the lower cut | 55 | shortest known, not proven minimal, without ln 0 |
 | 4 | 39 | shortest known, not proven minimal |
 | 2/3 | 39 | shortest known, not proven minimal |
 | −1/3 | 41 | shortest known, not proven minimal |
@@ -47,7 +48,7 @@ Ours, labelled as above:
 | scaled subtraction | 565 | shortest known construction, with ln 0 = −∞ |
 | scaled addition | 655 | shortest known construction, with ln 0 = −∞ |
 
-The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
+The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 55 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
 
 ## Encoding
 
@@ -55,7 +56,15 @@ The ranking of programs is the classical ranking of binary trees and prefix code
 
 ## Prior art
 
-[pmocz/two_button_calculator](https://github.com/pmocz/two_button_calculator) is prior art for a two-button calculator. This project uses the idea only. It does not use that code.
+[pmocz/two_button_calculator](https://github.com/pmocz/two_button_calculator) and [LeaderOnePro](https://eml-calculator.vercel.app/) are earlier two-button calculators. This project drew on those ideas only. None of their code was used.
+
+## References
+
+The algebraic structure, and the raw subtraction word, are from Stachowiak, arXiv:2604.23893. rotSub, the subtraction this calculator uses away from that word's strip, is a construction of this project.
+
+Carney, arXiv:2605.01636, is cited here only for the fact that every EML value is computable.
+
+An independent K 19 tree for 2 is due to Lopez Montoya, Zenodo record 21469737.
 
 ## Known limitations
 

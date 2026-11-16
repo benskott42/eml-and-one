@@ -562,6 +562,7 @@ const checkRecord = (id: string, k: number, re: Decimal.Value, im: Decimal.Value
   }
 };
 checkRecord("-ipi", 45, 0, storedPi.neg(), true);
+checkRecord("-ipi-strict", 55, 0, storedPi.neg(), false);
 checkRecord("4", 39, 4, 0, false);
 checkRecord("2/3", 39, third.mul(2), 0, false);
 checkRecord("-1/3", 41, third.neg(), 0, false);
@@ -2803,6 +2804,64 @@ failed += runPropertyChecks();
   closeTo("ln(1+10^(-300))", "1e-300");
   closeTo("ln(1+3*10^(-300))", "3e-300");
   closeTo("log(1+3*1e-300)", "3e-300");
+  // From p = 112 the negative imaginary part falls off 120 digits and the composed
+  // log would certify +π. The value is ln 2 − iπ, or the result stays unverified.
+  const lnBelow = (source: string) => {
+    const report = workerReport(source);
+    if (report.unverified) return;
+    const wantRe = exactParts("0.6931471805599453").re;
+    const wantIm = exactParts(Math.PI).re.neg();
+    const badRe = report.value.re.sub(wantRe).abs().div(wantRe.abs()).gt("1e-9");
+    const badIm = report.value.im.isPos() || report.value.im.sub(wantIm).abs().div(wantIm.abs()).gt("1e-9");
+    if (badRe || badIm) {
+      failed += 1;
+      console.log("FAIL ln below the cut", source, formatExact(report.value));
+    }
+  };
+  lnBelow("ln(-2-10^(-110)*i)");
+  lnBelow("ln(-2-10^(-112)*i)");
+  lnBelow("ln(-2-10^(-115)*i)");
+  lnBelow("ln(-2-10^(-130)*i)");
+  // Scaled tiny adds stay on the raw add word only while the lifted imaginary parts
+  // and their sum sit in (−π, π]. These are the cases that leave that strip.
+  const bothModes = (source: string, re: string, im: string) => {
+    const node = compileExpression(source, {});
+    const packed = packCircuit(node);
+    const rebuilt = unpackCircuit(packed.tokens, packed.root);
+    const exact = exactReport(rebuilt, {}, { maxNodes: 200_000 });
+    const floated = evaluate(rebuilt, {}, { maxNodes: 200_000 });
+    const wantRe = exactParts(re).re;
+    const wantIm = exactParts(im).re;
+    const off = (got: Decimal, want: Decimal, tol: string) => {
+      if (want.isZero()) return got.abs().gt("1e-12");
+      return got.sub(want).abs().div(want.abs()).gt(tol);
+    };
+    const floatRe = exactParts(floated.re).re;
+    const floatIm = exactParts(floated.im).re;
+    if (
+      exact.unverified ||
+      off(exact.value.re, wantRe, "1e-9") ||
+      off(exact.value.im, wantIm, "1e-9") ||
+      off(floatRe, wantRe, "1e-8") ||
+      off(floatIm, wantIm, "1e-8")
+    ) {
+      failed += 1;
+      console.log("FAIL both modes", source, exact.unverified ? "unverified" : formatExact(exact.value), floated);
+    }
+  };
+  bothModes("0.00005*i+0.00005*i", "0", "0.0001");
+  bothModes("0.00006103*i+0.00006103*i", "0", "0.00012206");
+  bothModes("sinh(0.00005*i)", "0", "0.00005");
+  bothModes("tanh(1e-10*i)", "0", "1e-10");
+  bothModes("tanh(1e-16*i)", "0", "1e-16");
+  bothModes("cosh(0.00005*i)", "0.99999999875", "0");
+  bothModes("3.1*i+0.04", "0.04", "3.1");
+  bothModes("4*i+0.5*i", "0", "4.5");
+  bothModes("-4*i+1", "1", "-4");
+  bothModes("0.00005*i+4*i", "0", "4.00005");
+  bothModes("6*i+(-6*i)", "0", "0");
+  bothModes("(2+3*i)+(-1+0.2*i)", "1", "3.2");
+  bothModes("(3.141592653589793*i)+(-0.0001*i)", "0", "3.141492653589793");
   closeTo("(exp(1e-50)-1)-1e-50", "5e-101");
   closeTo("ln(1+1e-50)-1e-50", "-5e-101");
   closeTo("(sqrt(1+1e-50)-1)-5e-51", "-1.25e-101");
@@ -2862,6 +2921,48 @@ failed += runPropertyChecks();
   ) {
     failed += 1;
     console.log("FAIL minimality labels", zero, neg15, neg17, two);
+  }
+}
+
+{
+  // A same-process unpack reuses the nodes that still hold the float range.
+  // The screen's worker is a fresh realm, so the tiny known value has to cross the wire.
+  const sources = [
+    "ln(1+10^(-130))",
+    "log(1+10^(-130))",
+    "log(1+10^(-200))",
+    "ln(1+10^(-300))",
+    "ln(1+3*10^(-300))",
+  ];
+  const jobs = sources.map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const fresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
+    cwd: rootDir,
+    input: JSON.stringify(jobs),
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  if (fresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh exact process", fresh.status, fresh.stderr);
+  } else {
+    const rows = JSON.parse(fresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+    const want: Record<string, string> = {
+      "ln(1+10^(-130))": "1×10^−130",
+      "log(1+10^(-130))": "1×10^−130",
+      "log(1+10^(-200))": "1×10^−200",
+      "ln(1+10^(-300))": "1×10^−300",
+      "ln(1+3*10^(-300))": "3×10^−300",
+    };
+    for (const row of rows) {
+      if (row.unverified || row.text !== want[row.source]) {
+        failed += 1;
+        console.log("FAIL fresh ln", row.source, row.unverified ? "unverified" : row.text);
+      }
+    }
   }
 }
 

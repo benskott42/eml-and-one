@@ -1729,7 +1729,7 @@ export function EmlCalculator() {
           <p>
             Hardware view shows what the raw 64-bit float gates do. It is not patched toward
             the exact value. One shared rule lifts a tiny add and a tiny subtract, real or complex, by
-            the same power of two, up to 2^1022, because those short gates only have about
+            the same power of ten, up to 10^307, because those short gates only have about
             10^(−16) of absolute accuracy. When the float disagrees with the exact value of
             the same circuit beyond what float can claim, the float stays on screen and a flag
             says float differs from exact, with the exact value beside it. A float 0 from
@@ -1748,8 +1748,8 @@ export function EmlCalculator() {
             flagged because float π cannot reduce them. A long float sum can be off in the
             last digit. An add of unknown magnitude whose result is below about 10^(−8), and
             asinh of an unknown value below about 10^(−12), are flagged low absolute
-            precision. A known tiny add or subtraction is scaled by a power of two inside
-            the circuit, up to 2^1022. A variable at ±1 is ±π/2 in both modes. A variable just off the cut, with |x| &gt; 1 and |eps/x| ≤ 10^(−15), can still be wrong in float. Those points are not given a second formula, and the flag shows the exact value. Float transcendentals can differ by a few ulps across engines.
+            precision. A known tiny add or subtraction is scaled by a power of ten inside
+            the circuit, up to 10^307. A variable at ±1 is ±π/2 in both modes. A variable just off the cut, with |x| &gt; 1 and |eps/x| ≤ 10^(−15), can still be wrong in float. Those points are not given a second formula, and the flag shows the exact value. Float transcendentals can differ by a few ulps across engines.
             Anything else unfinished is listed in docs/known-limitations.md and does not block this version.
             Rebuilding a circuit from its press string drops the low-precision flag, which
             is stored beside the node. A subtrahend with a real part around 1.3×10^154 or larger overflows the

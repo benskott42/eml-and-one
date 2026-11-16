@@ -1,4 +1,4 @@
-import { decadeOf, inScaledShell, isTwoScaled, markTwoScaled, noteDecade, noteScaledShell } from "./lowering";
+import { decadeOf, inScaledShell, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
 import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
@@ -6,7 +6,27 @@ export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
   | { i: number; k: "in"; re: number; im: number; label: string }
-  | { i: number; k: "E"; a: number; b: number; pole?: number; trig?: number; lift?: 1; dec?: number; lead?: 1; shell?: 1 };
+  | {
+      i: number;
+      k: "E";
+      a: number;
+      b: number;
+      pole?: number;
+      trig?: number;
+      lift?: 1;
+      dec?: number;
+      lead?: 1;
+      shell?: 1;
+      /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
+      kr?: number;
+      ki?: number;
+    };
+
+/** True when a known component is below the 120-digit floor and must travel with the circuit. */
+function tinyPoint(re: number, im: number): boolean {
+  const take = (part: number) => Number.isFinite(part) && part !== 0 && Math.floor(Math.log10(Math.abs(part))) <= -90;
+  return take(re) || take(im);
+}
 
 export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
   const tokens: Wire[] = [];
@@ -44,6 +64,11 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     if (isSeriesShortcut(frame.n)) token.lead = 1;
     const decade = decadeOf(frame.n);
     if (decade !== undefined) token.dec = decade;
+    const known = knownValue(frame.n);
+    if (known && tinyPoint(known.re, known.im)) {
+      token.kr = known.re;
+      token.ki = known.im;
+    }
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -67,6 +92,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.shell) noteScaledShell(node);
       if (tok.lead) markSeriesShortcut(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
+      if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
     }
   }
   const node = nodes[root];

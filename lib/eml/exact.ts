@@ -395,6 +395,17 @@ function hiddenComponent(value: Z): boolean {
   return Math.max(value.re.e, value.im.e) > D.precision - 24;
 }
 
+/**
+ * Imaginary part sitting on ±π. A tiny imaginary input that fell off the
+ * working precision chooses this bank, so the result is not certified there
+ * until that input fits.
+ */
+function nearCut(part: Decimal): boolean {
+  if (!part.isFinite() || part.isZero()) return false;
+  const pi = D.acos(-1);
+  return part.abs().sub(pi).abs().lt("1e-6");
+}
+
 function present(report: ExactReport): ExactReport {
   return { ...report, value: scrubDust(report.value) };
 }
@@ -564,6 +575,19 @@ export function exactReport(
   }
   settled = settleResidue(settled, root, env, budget);
   if (settled.unverified) return settled;
+  // ln(−2 − 10^(−p) i) collapses onto the cut once p passes the working
+  // precision, and the composed log then certifies +π. The point is still
+  // below the axis. Raise precision until the known power is visible, or
+  // refuse to certify once that would pass 480 digits.
+  if (nearCut(settled.value.im)) {
+    const hinted = demandedTinyDigits(root, env);
+    const digits = settled.digits ?? D.precision;
+    if (hinted > digits) {
+      if (hinted > PRECISION_CAP) return certifyZero(settled);
+      settled = atPrecision(hinted, root, env, budget);
+      if (settled.unverified) return settled;
+    }
+  }
   return confirmDust(present(settled), root, env, budget);
 }
 

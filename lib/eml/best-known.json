@@ -37,25 +37,26 @@
     "-1/3": "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE",
     "-3": "11111111EEE1EE11EE1EEE11E1E1EEE11EE",
     "1/3": "111E111111E1EEEE11EEE11E1E1EE1EEE1E",
-    "1/3-strict": "111E111111EEE1EE11E1EEE11E1E1EE1EEE1E"
+    "1/3-strict": "111E111111EEE1EE11E1EEE11E1E1EE1EEE1E",
+    "-ipi-strict": "111111111EEE1EE11E1EEEE1EE1111111EEE1EE11E1EEE1EEE1EE1E"
   },
   "domains": {
     "minus": "exact for Im y in [-pi, pi) on this cut; the calculator uses rotSub elsewhere",
     "sub": "exact for Im y in [-pi, pi) on this cut; the calculator uses rotSub elsewhere",
-    "add": "exact for Im y in [-pi, pi) on this cut; the calculator uses rotSub elsewhere",
-    "sqrt": "branch follows the lower cut; differs from principal on the negative real axis",
-    "pow": "branch follows the lower cut; differs from principal on the negative real axis"
+    "add": "exact for Im(x+y) in (−π, π]; add(0, −iπ) = +iπ. The calculator uses rotSub elsewhere",
+    "sqrt": "principal value; sqrt(−1) = +i",
+    "pow": "principal value, the same branch as sqrt; (−1)^(1/2) = +i"
   },
   "records": {
-    "0": "K 7, proven minimal. All programs with K ≤ 5 are excluded. Lower cut, towers included, with or without ln 0 = −∞. See docs/minimality.md.",
-    "-1": "K 15, proven minimal (uses ln 0). All programs with K ≤ 13 are excluded. Without ln 0, K 17 is proven minimal. See docs/minimality.md.",
-    "2": "K 19, proven minimal. All 2056 programs with K ≤ 17 are decided. The word does not use ln 0. See docs/minimality.md.",
-    "ipi": "K 21, shortest known. Under this cut (lower bank) this word is +iπ; under the principal log it is −iπ. Without ln 0 = −∞, +iπ on this cut (−iπ principal) is shortest known at K 23. Unresolved tower trees remain, so neither length is proven minimal. No −iπ on this cut (+iπ principal) is known with K ≤ 29, with or without ln 0 = −∞; unresolved trees remain from K 23, so no lower bound beyond K 21 is proven. The shortest known −iπ on this cut is K 45.",
+    "0": "K 7, proven minimal. All programs with K ≤ 5 are excluded. Lower cut, Arg in [−π, π), towers included, with or without ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. See docs/minimality.md.",
+    "-1": "K 15, proven minimal (uses ln 0). All programs with K ≤ 13 are excluded. Without ln 0, K 17 is proven minimal. Lower cut, Arg in [−π, π), ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. See docs/minimality.md.",
+    "2": "K 19, proven minimal. All 2056 programs with K ≤ 17 are decided. The word does not use ln 0. Lower cut, Arg in [−π, π), ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. See docs/minimality.md.",
+    "ipi": "K 21, shortest known. Lower cut, Arg in [−π, π), ln 0 = −∞. Under this cut (lower bank) this word is +iπ; under the principal log it is −iπ. On this cut −iπ becomes +iπ under the principal Log. Without ln 0 = −∞, +iπ on this cut (−iπ principal) is shortest known at K 23. Unresolved tower trees remain, so neither length is proven minimal. No −iπ on this cut (+iπ principal) is known with K ≤ 29, with or without ln 0 = −∞; unresolved trees remain from K 23, so no lower bound beyond K 21 is proven. The shortest known −iπ on this cut is K 45 with ln 0, and K 55 without ln 0.",
     "-2": "K 25, shortest known. Depends on ln 0 = −∞. Unresolved tower trees remain, so the length is not proven minimal. Without that value, K 27 is the shortest known (exhaustive search with unresolved cases).",
     "-1/2": "K 29, shortest known (exhaustive search with unresolved cases). Depends on ln 0 = −∞. Without that value, K 31 is the shortest known (not proven): 1111111EEE1EE11E1EEE11E1E1EEE1E. It does not need ln 0 = −∞, and it is exactly −1/2 under both conventions.",
     "1/2": "K 29, shortest known (exhaustive search with unresolved cases). Depends on ln 0 = −∞.",
     "1/2-strict": "K 31, shortest known (not proven). Does not need ln 0 = −∞. A second exact 1/2 word of the same length, also without ln 0, is 1111111E1E1EEE1EE11E1E1EE1EEE1E. −2, ±1/2, and 3 have the same value under both branch conventions. i (K 57), π (K 93), √2 (K 61), and ln 2 (K 25) are constructions, not search records.",
-    "-iπ-lower": "K 45 on the lower cut, shortest known, not proven minimal. Depends on ln 0 = −∞. Not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. The stored word is -ipi.",
+    "-iπ-lower": "K 45 on the lower cut, shortest known, not proven minimal. Depends on ln 0 = −∞. Not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. The stored word is -ipi. Without ln 0, K 55 is shortest known, not proven minimal. The stored word is -ipi-strict.",
     "4": "K 39, shortest known, not proven minimal. Does not use ln 0. The stored word is 4.",
     "2/3": "K 39, shortest known, not proven minimal. Does not use ln 0. The stored word is 2/3.",
     "-1/3": "K 41, shortest known, not proven minimal. Does not use ln 0. The stored word is -1/3. A shorter float hit is not this value.",
@@ -78,6 +79,7 @@
     { "value": "−1/2", "k": 31, "label": "shortest known (not proven)", "note": "does not need ln 0 = −∞" },
     { "value": "1/2", "k": 31, "label": "shortest known (not proven)", "note": "does not need ln 0 = −∞; a second word of this length is 1111111E1E1EEE1EE11E1E1EE1EEE1E" },
     { "value": "−iπ on the lower cut", "k": 45, "label": "shortest known", "note": "not proven minimal; depends on ln 0 = −∞; not the K 21 word, which is +iπ on this cut" },
+    { "value": "−iπ on the lower cut", "k": 55, "label": "shortest known", "note": "not proven minimal; does not use ln 0" },
     { "value": "4", "k": 39, "label": "shortest known", "note": "not proven minimal; does not use ln 0" },
     { "value": "2/3", "k": 39, "label": "shortest known", "note": "not proven minimal; does not use ln 0" },
     { "value": "−1/3", "k": 41, "label": "shortest known", "note": "not proven minimal; does not use ln 0" },
