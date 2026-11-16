@@ -37,7 +37,8 @@ import {
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "./twoButtons";
 import { useExactScheduler } from "./useExactScheduler";
 
-const MAX_WORD_PRESSES = 100_001;
+const MAX_WORD_PRESSES = 50_001;
+const WORD_TOO_LONG = "Too long: words are limited to 50,001 presses.";
 
 function isPressWhitespace(code: number): boolean {
   return code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32
@@ -79,6 +80,7 @@ export function useCalculatorModel() {
   const [yText, setYText] = useState("2");
   const [expr, setExpr] = useState("sin(pi/6)");
   const [programField, setProgramField] = useState("");
+  const oversizedProgram = useRef(false);
   const [mode, setMode] = useState<Mode>("exact");
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
   const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
@@ -697,9 +699,22 @@ export function useCalculatorModel() {
     })();
   }, []);
 
+  const setProgramDraft = useCallback((value: string) => {
+    // A paste can be hundreds of thousands of characters. Counting it is cheap;
+    // keeping it in state makes the next render paint the whole string.
+    if (wordExceedsPressLimit(value)) {
+      oversizedProgram.current = true;
+      fail(WORD_TOO_LONG);
+      return;
+    }
+    oversizedProgram.current = false;
+    setProgramField(value);
+  }, [fail]);
+
   const loadProgramText = useCallback((source: string) => {
-    if (wordExceedsPressLimit(source)) {
-      fail("Too long: words are limited to 100,001 presses.");
+    if (oversizedProgram.current || wordExceedsPressLimit(source)) {
+      oversizedProgram.current = false;
+      fail(WORD_TOO_LONG);
       return;
     }
     try {
@@ -833,7 +848,7 @@ export function useCalculatorModel() {
     expr,
     setExpr,
     programField,
-    setProgramField,
+    setProgramField: setProgramDraft,
     mode,
     twoButtons,
     heldShortcut,

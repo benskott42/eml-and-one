@@ -62,8 +62,19 @@ export function CopyChip({
 export function displayedCopy(shown: string): { text: string; approximate: boolean } {
   const trimmed = shown.trim();
   const approximate = trimmed.startsWith("≈") || trimmed.endsWith("≈");
-  const text = trimmed.replace(/^≈\s*/, "").replace(/\s*≈$/, "");
+  const text = machineNumber(trimmed.replace(/^≈\s*/, "").replace(/\s*≈$/, ""));
   return { text, approximate };
+}
+
+/** Display text uses ×10^ and a unicode minus. A paste uses e and ASCII '-'. */
+function machineNumber(shown: string): string {
+  const plain = shown
+    .replace(/[\u200b\u2009\u200a\u202f\u00a0]/g, "")
+    .replaceAll("×10^−", "e-")
+    .replaceAll("×10^+", "e")
+    .replaceAll("×10^", "e")
+    .replaceAll("−", "-");
+  return plain.replace(/(\d)\s*([+-])\s*(?=\d|i)/g, "$1$2");
 }
 
 export function CopyValue({ shown, onError }: { shown: string; onError?: (message: string) => void }) {

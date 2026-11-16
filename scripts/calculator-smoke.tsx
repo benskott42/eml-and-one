@@ -61,7 +61,7 @@ async function main() {
     console.error("calculator css is missing the font, focus ring, or reduced motion");
     failed = true;
   }
-  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 8.25rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh") || !css.includes("overflow-y: auto")) {
+  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 9.5rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh") || !css.includes("overflow-y: auto")) {
     console.error("phone display cap or landscape layout is missing");
     failed = true;
   }
@@ -557,18 +557,62 @@ async function main() {
       failed = true;
     }
   }
+  const bareDash = () => {
+    const text = uiResult().replace(/\s+/g, " ").trim();
+    if (text !== "—") return;
+    if (!uiAlert().trim()) {
+      console.error("a result was a bare dash with no reason");
+      failed = true;
+    }
+  };
   const fortyThousand = `${"1 ".repeat(20_001)}${"E ".repeat(20_000)}`;
   await setUiProgram(fortyThousand);
   await loadUi();
   const fortyScreen = uiView.document.querySelector("[aria-label='Calculator screen']")?.textContent ?? "";
-  if (uiAlert().includes("100,001") || !fortyScreen.includes("40001 presses")) {
+  if (uiAlert().includes("Too long") || !fortyScreen.includes("40001 presses")) {
     console.error("a 40,001-press word with spaces did not load", uiAlert(), fortyScreen.slice(0, 240));
     failed = true;
   }
-  await setUiProgram("1".repeat(100_003));
+  const clearLoaded = uiButton("Clear");
+  if (clearLoaded instanceof uiView.HTMLButtonElement) {
+    await act(async () => {
+      clearLoaded.click();
+    });
+  }
+  await setUiProgram(`${"1".repeat(25_001)}${"E".repeat(25_000)}`);
   await loadUi();
-  if (uiAlert() !== "Too long: words are limited to 100,001 presses.") {
-    console.error("a 100,003-press word was not refused with the limit", uiAlert());
+  const waitComputed = async (mode: string) => {
+    let text = "";
+    let alert = "";
+    for (let i = 0; i < 800; i += 1) {
+      text = uiResult().replace(/\s+/g, " ").trim();
+      alert = uiAlert().trim();
+      bareDash();
+      if (text && text !== "computing" && !text.startsWith("Stack empty") && (text !== "—" || alert)) break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+    }
+    if (!text || text === "computing" || text.startsWith("Stack empty") || (text === "—" && !alert)) {
+      console.error(`a 50,001-press word did not compute in ${mode}`, text, alert);
+      failed = true;
+    }
+  };
+  await waitComputed("exact mode");
+  const floatMode = uiButton("float (hardware)");
+  if (!(floatMode instanceof uiView.HTMLButtonElement)) {
+    console.error("missing float mode");
+    failed = true;
+  } else {
+    await act(async () => {
+      floatMode.click();
+    });
+    await waitComputed("float mode");
+  }
+  await setUiProgram("1".repeat(50_003));
+  await loadUi();
+  if (uiAlert() !== "Too long: words are limited to 50,001 presses.") {
+    console.error("a 50,003-press word was not refused with the limit", uiAlert());
     failed = true;
   }
   const paste = "1".repeat(400_000);
@@ -576,8 +620,13 @@ async function main() {
   const pasteStarted = performance.now();
   await loadUi();
   const pasteMs = performance.now() - pasteStarted;
-  if (uiAlert() !== "Too long: words are limited to 100,001 presses." || pasteMs > 100) {
+  if (uiAlert() !== "Too long: words are limited to 50,001 presses." || pasteMs > 100) {
     console.error("a 400k paste was not rejected quickly", pasteMs, uiAlert());
+    failed = true;
+  }
+  const storedProgram = uiView.document.querySelector("input[placeholder='#110, 110, or 11E']");
+  if (storedProgram instanceof uiView.HTMLInputElement && storedProgram.value.length > 50_001) {
+    console.error("an oversized word stayed in the program field", storedProgram.value.length);
     failed = true;
   }
   const expression = uiView.document.querySelector("#expression");
@@ -729,8 +778,13 @@ async function main() {
     });
   }
   const limitNote = limitView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
+  const limitResult = (limitView.document.querySelector(".ti-lcd-result")?.textContent ?? "").replace(/\s+/g, " ").trim();
   if (!limitText.includes("too large") || limitNote.includes("cancelled") || limitText.toLowerCase().includes("cancelled")) {
     console.error("an exact error was labelled cancelled", limitText, limitNote);
+    failed = true;
+  }
+  if (limitResult === "—" && !limitText.trim()) {
+    console.error("an exact dash had no reason", limitResult, limitText);
     failed = true;
   }
   await act(async () => {
@@ -753,10 +807,30 @@ async function main() {
     failed = true;
   }
   const { displayedCopy } = await import("../components/calculator/chrome");
-  const marked = displayedCopy("1.25×10^16 ≈");
-  const plain = displayedCopy("1");
-  if (marked.text !== "1.25×10^16" || !marked.approximate || plain.text !== "1" || plain.approximate) {
-    console.error("copy value kept the approximation mark", marked, plain);
+  const { runNode, resultError } = await import("../components/calculator/screen");
+  const { nodeFromRpn } = await import("../lib/eml/node");
+  const copyCases: { shown: string; text: string; approximate: boolean }[] = [
+    { shown: "1.25×10^16 ≈", text: "1.25e16", approximate: true },
+    { shown: "1×10^−8 ≈", text: "1e-8", approximate: true },
+    { shown: "−1×10^−40", text: "-1e-40", approximate: false },
+    { shown: "1.414213562373 − 0.000314159265i", text: "1.414213562373-0.000314159265i", approximate: false },
+    { shown: "1 + 0.000314159265i ≈", text: "1+0.000314159265i", approximate: true },
+    { shown: "−2.5", text: "-2.5", approximate: false },
+    { shown: "1", text: "1", approximate: false },
+    { shown: `1${"\u200b"}000`, text: "1000", approximate: false },
+  ];
+  for (const sample of copyCases) {
+    const got = displayedCopy(sample.shown);
+    if (got.text !== sample.text || got.approximate !== sample.approximate) {
+      console.error("copy formatter mismatch", sample, got);
+      failed = true;
+    }
+  }
+  const limitNode = nodeFromRpn(`${"1".repeat(80)}${"E".repeat(79)}`.split(""));
+  const limited = runNode(limitNode, "float", { maxNodes: 1 });
+  const limitedReason = resultError({ ...limited, node: limitNode, caption: "limit" });
+  if (limited.text !== "—" || limited.notice !== "too large to evaluate in float" || limitedReason !== "too large to evaluate in float") {
+    console.error("float limit did not explain the dash", limited.text, limited.notice, limitedReason);
     failed = true;
   }
 

@@ -904,7 +904,9 @@ html.ti-two-buttons .ti-btn-eml {
 
   .ti-lcd {
     min-height: 0;
-    max-height: 8.25rem;
+    /* A two-line value plus the Copy chip needs a little more than 8.25rem.
+       1 and EML still fit on a 568px screen. */
+    max-height: 9.5rem;
   }
 
   /* Firefox wraps these one line further than Chromium once a scrollbar

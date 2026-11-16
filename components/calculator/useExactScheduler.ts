@@ -224,7 +224,7 @@ export function useExactScheduler(input: {
     for (const item of stack) {
       if (item.watch === undefined || followedRef.current.has(item.watch)) continue;
       const fill = item.pendingExact === true && item.cancelled !== true && item.watch === topFill;
-      const compare = item.mode === "float" && item.floatDiffers !== true && item.pendingExact !== true && item.notice !== "couldn't verify";
+      const compare = item.mode === "float" && item.floatDiffers !== true && item.pendingExact !== true && item.text !== "—" && item.notice !== "couldn't verify";
       if (!fill && !compare) {
         if (!(item.pendingExact === true && item.cancelled !== true)) followedRef.current.add(item.watch);
         continue;
