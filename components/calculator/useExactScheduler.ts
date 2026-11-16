@@ -9,7 +9,7 @@ import { failure, noteFor, resultError, type Entry, type Model } from "./screen"
 type JobKind = "fill" | "compare";
 
 type ExactPayload =
-  | { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean }
+  | { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean; cutHits?: number }
   | { error: string };
 
 /**
@@ -75,7 +75,7 @@ export function useExactScheduler(input: {
         return;
       }
       if (payload.unverified) {
-        publishWatch(job.watch, { ...current, pendingExact: false, text: "—", value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify" });
+        publishWatch(job.watch, { ...current, pendingExact: false, text: "—", value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify", cutHits: payload.cutHits });
         return;
       }
       if (!current.pendingExact) return;
@@ -86,6 +86,7 @@ export function useExactScheduler(input: {
         text: payload.text,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
+        cutHits: payload.cutHits,
       });
     },
     [modelRef, publishWatch],
@@ -135,12 +136,13 @@ export function useExactScheduler(input: {
           touchedLn0: report.touchedLn0,
           underflowedExact: exactUnderflowsFloat(report.value),
           unverified: report.unverified === true,
+          cutHits: report.cutHits,
         });
       } catch (err) {
         finishExact(request, { error: failure(err) });
       }
     };
-    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; message?: string }) => {
+    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; cutHits?: number; message?: string }) => {
       if (data.request === undefined || !exactJobs.current.has(data.request)) return;
       inflight.current.fill.delete(data.request);
       inflight.current.compare.delete(data.request);
@@ -156,6 +158,7 @@ export function useExactScheduler(input: {
         touchedLn0: data.touchedLn0 === true,
         underflowedExact: data.underflowedExact === true,
         unverified: data.unverified === true,
+        cutHits: data.cutHits,
       });
     };
     const onStack = (watch: number) => stack.some((item) => item.watch === watch);

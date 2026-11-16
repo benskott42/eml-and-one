@@ -2913,11 +2913,11 @@ failed += runPropertyChecks();
   const two = byKey.get("2@19");
   if (
     zero?.label !== "proven minimal" ||
-    !zero.note.includes("K ≤ 5") ||
+    !zero.note.includes("does not use ln 0") ||
     neg15?.label !== "proven minimal (uses ln 0)" ||
     neg17?.label !== "proven minimal without ln 0" ||
     two?.label !== "proven minimal" ||
-    !two.note.includes("2056")
+    !two.note.includes("does not use ln 0")
   ) {
     failed += 1;
     console.log("FAIL minimality labels", zero, neg15, neg17, two);

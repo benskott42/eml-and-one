@@ -27,6 +27,7 @@ export type Entry = {
   exactBeside?: string;
   notice?: string | null;
   watch?: number;
+  cutHits?: number;
 };
 
 export type Model = {

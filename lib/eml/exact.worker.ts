@@ -24,6 +24,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
       touchedLn0: report.touchedLn0,
       underflowedExact: exactUnderflowsFloat(report.value),
       unverified: report.unverified === true,
+      cutHits: report.cutHits,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Exact evaluation failed.";

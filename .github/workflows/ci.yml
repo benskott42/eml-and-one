@@ -486,6 +486,8 @@ jobs:
           }
           process.exit(failures.length ? 1 : 0);
           END
+      - name: Count page
+        run: npm run count:e2e
       - name: Upload the tested site
         if: inputs.upload-site
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

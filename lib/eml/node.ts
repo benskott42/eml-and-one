@@ -1,4 +1,5 @@
 import { type C, C1, eml } from "./complex";
+import { noteFloatGate, onNegativeCutF } from "./cut";
 
 /**
  * A circuit in the grammar S → 1 | var | input | eml(S, S).
@@ -212,6 +213,8 @@ export type EvalReport = {
   underflowed: boolean;
   /** The float result landed on the branch cut, or within a few ulps of it. */
   nearCut: boolean;
+  /** Logarithms of a negative real, counted at each log call. A shared child adds its stored count once per use. */
+  cutHits: number;
 };
 
 function zeroC(v: C): boolean {
@@ -251,6 +254,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
   const overflowed = new Map<Node, boolean>();
   const underflowed = new Map<Node, boolean>();
   const rangeBorn = new Map<Node, boolean>();
+  const cuts = new Map<Node, number>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let steps = 0;
@@ -277,6 +281,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       overflowed.set(n, false);
       underflowed.set(n, false);
       rangeBorn.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
     if (n.type === "input") {
@@ -286,6 +291,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       overflowed.set(n, false);
       underflowed.set(n, false);
       rangeBorn.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
     if (n.type === "var") {
@@ -300,6 +306,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       overflowed.set(n, false);
       underflowed.set(n, false);
       rangeBorn.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
 
@@ -323,6 +330,9 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     const childUnder = underflowed.get(n.a) === true || underflowed.get(n.b) === true;
     // The value is this gate. Nothing here is replaced from a side table.
     const value = eml(a, b);
+    const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (onNegativeCutF(b.re, b.im) ? 1 : 0);
+    cuts.set(n, cutHits);
+    noteFloatGate(n, b);
     const nan = Number.isNaN(value.re) || Number.isNaN(value.im);
     // Logging 0 at this gate is a real pole. An infinity born from two finite
     // inputs that are not that pole is float overflow, even if some other
@@ -365,6 +375,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     overflowed: overflowed.get(root) === true,
     underflowed: underflowed.get(root) === true,
     nearCut: nearBranchCut(out),
+    cutHits: cuts.get(root) ?? 0,
   };
 }
 
