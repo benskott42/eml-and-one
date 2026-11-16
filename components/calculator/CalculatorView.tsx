@@ -47,6 +47,8 @@ export function CalculatorView(props: CalculatorModel) {
   const liveY = model.stack.length >= 2 ? model.stack[model.stack.length - 1]?.text ?? null : freeInput ? yText : null;
   const liveTip = (action: string) =>
     liveX !== null && liveY !== null ? `${action} if you press this now, with x = ${liveX} and y = ${liveY}` : action;
+  const needsValue = !freeInput && model.stack.length < 1;
+  const needsPair = !freeInput && model.stack.length < 2;
   const [showCard, setShowCard] = useState(false);
   useEffect(() => {
     let open = false;
@@ -250,11 +252,12 @@ export function CalculatorView(props: CalculatorModel) {
             <KeyButton tone="one" secondary="const" hot={lightOne} onClick={pushOne} title="Push the constant 1. This is one press: 1" ariaLabel="1">
               1
             </KeyButton>
-            <KeyButton tone="eml" secondary="exp − ln" hot={lightEml} disabled={!freeInput && model.stack.length < 2} onClick={applyEml} title="EML. exp(x) − ln(y)" ariaLabel="EML">
+            <KeyButton tone="eml" secondary="exp − ln" hot={lightEml} disabled={needsPair} describedBy={needsPair ? "gate-two" : undefined} onClick={applyEml} title={needsPair ? "EML needs two values. Press 1 first." : "EML. exp(x) − ln(y)"} ariaLabel="EML">
               EML
             </KeyButton>
           </div>
-          {!freeInput && model.stack.length < 2 ? <p className="ti-caption">EML needs two values. Press 1 first.</p> : null}
+          {needsValue ? <p id="gate-one" className="ti-caption">Needs a value. Press 1 first.</p> : null}
+          {needsPair ? <p id="gate-two" className="ti-caption">EML needs two values. Press 1 first.</p> : null}
           <p className="ti-caption">Keyboard: 1 · E · Backspace · Enter computes</p>
           {twoButtons ? null : <p className="ti-caption">Every other key is a shortcut that presses these two for you.</p>}
 
@@ -346,7 +349,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>One value</h2>
             <div className="ti-keys">
               {UNARY_KEYS.map((key) => (
-                <KeyButton key={key.id} onClick={() => applyUnary(key.id, key.label)} title={liveTip(key.label)} secondary={costs[key.id]} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} disabled={needsValue} describedBy={needsValue ? "gate-one" : undefined} onClick={() => applyUnary(key.id, key.label)} title={needsValue ? "Needs a value. Press 1 first." : liveTip(key.label)} secondary={costs[key.id]} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}
@@ -357,7 +360,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>Two values · older x, top y</h2>
             <div className="ti-keys">
               {BINARY_KEYS.map((key) => (
-                <KeyButton key={key.id} title={liveTip(key.hint)} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} disabled={needsPair} describedBy={needsPair ? "gate-two" : undefined} title={needsPair ? "EML needs two values. Press 1 first." : liveTip(key.hint)} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}

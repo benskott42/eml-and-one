@@ -388,7 +388,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-btn.is-down,
-.ti-btn:active:not(:disabled) {
+.ti-btn:active:not(:disabled):not([aria-disabled="true"]) {
   transform: translateY(3px);
   box-shadow:
     0 1px 0 var(--edge),
@@ -396,6 +396,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-btn:disabled,
+.ti-btn[aria-disabled="true"],
 .ti-chip:disabled,
 .ti-text-btn:disabled {
   cursor: not-allowed;
@@ -691,7 +692,7 @@ html.ti-two-buttons .ti-btn-eml {
     transition: none;
   }
 
-  .ti-btn:active:not(:disabled),
+  .ti-btn:active:not(:disabled):not([aria-disabled="true"]),
   .ti-chip:active:not(:disabled),
   .ti-text-btn:active:not(:disabled) {
     transform: none;

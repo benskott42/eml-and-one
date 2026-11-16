@@ -66,6 +66,7 @@ export function KeyButton({
   onClick,
   title,
   ariaLabel,
+  describedBy,
   disabled = false,
   tone = "plain",
   secondary,
@@ -76,6 +77,7 @@ export function KeyButton({
   onClick: () => void;
   title?: string;
   ariaLabel?: string;
+  describedBy?: string;
   disabled?: boolean;
   tone?: "plain" | "one" | "eml";
   secondary?: string;
@@ -94,13 +96,17 @@ export function KeyButton({
         type="button"
         title={title}
         aria-label={ariaLabel}
-        disabled={disabled || undefined}
+        aria-describedby={describedBy}
+        aria-disabled={disabled || undefined}
         onClick={() => {
           if (revealed.current) {
             revealed.current = false;
             return;
           }
-          if (disabled) return;
+          // The disabled flag is the previous paint. 1, then 1, then EML in
+          // one turn has already updated the stack, and a native disabled
+          // attribute would drop EML before that paint. The handler reads
+          // the live stack and shows the gate message when it is still short.
           onClick();
         }}
         onPointerDown={() => {
