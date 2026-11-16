@@ -946,7 +946,10 @@ html.ti-two-buttons .ti-btn-eml {
   }
 
   .ti-lcd-stack {
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: 1.15rem;
+    max-height: 1.15rem;
+    overflow: auto;
   }
 
   .ti-lcd-result {

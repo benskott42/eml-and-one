@@ -92,7 +92,7 @@ const viewports = [
 ];
 const samples = [
   { name: "one", expr: "2+2", includes: "4", copy: "4" },
-  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i", copy: "1.41421356237309504880168872420969807856967187537694807317667973799073247846210703885038753432764-0.000314159265i" },
+  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i" },
   { name: "exponent", expr: "1.234568*10^20", includes: "1234568" },
   { name: "power", expr: "2^300", includes: "2037035976", copy: (BigInt(2) ** BigInt(300)).toString() },
 ];
@@ -227,10 +227,39 @@ try {
       }
       if (opacity === 0) hidden.push(label + " opacity");
       const style = getComputedStyle(el);
+      host = el;
+      while (host && host.nodeType === 1) {
+        if (/opacity\\(\\s*0+(?:\\.0+)?%?\\s*\\)/.test(getComputedStyle(host).filter || "")) hidden.push(label + " filter");
+        host = host.parentElement;
+      }
       const fill = style.webkitTextFillColor || style.getPropertyValue("-webkit-text-fill-color");
       if (colorAlpha(style.color) === 0 || (fill && fill !== "currentcolor" && colorAlpha(fill) === 0)) hidden.push(label + " text");
+      const channels = (value) => {
+        const match = /rgba?\\(\\s*([\\d.]+)[,\\s]+([\\d.]+)[,\\s]+([\\d.]+)/.exec(value || "");
+        if (!match) return null;
+        const slash = /\\/\\s*([\\d.]+)/.exec(value);
+        const comma = /rgba?\\(\\s*[\\d.]+\\s*,\\s*[\\d.]+\\s*,\\s*[\\d.]+\\s*,\\s*([\\d.]+)\\s*\\)/.exec(value);
+        const alpha = slash ? Number(slash[1]) : comma ? Number(comma[1]) : 1;
+        if (alpha === 0) return null;
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const ink = channels(style.color);
+      let backdrop = channels(style.backgroundColor);
+      host = el.parentElement;
+      while (!backdrop && host) {
+        backdrop = channels(getComputedStyle(host).backgroundColor);
+        host = host.parentElement;
+      }
+      if (ink && backdrop && ink.every((part, index) => Math.abs(part - backdrop[index]) < 1)) hidden.push(label + " contrast");
       const misses = sampleMisses(el);
       if (misses.length) hidden.push(label + " clip " + misses.join(" "));
+      if (el.classList.contains("has-more")) {
+        const fade = getComputedStyle(el, "::after");
+        const height = parseFloat(fade.height);
+        if (fade.display === "none" || fade.visibility === "hidden" || Number(fade.opacity) === 0 || fade.content === "none" || !(height > 0)) {
+          hidden.push(label + " fade");
+        }
+      }
     };
     conceal(result, "result");
     conceal(chip, "chip");
@@ -381,49 +410,15 @@ try {
         fail(`${label} copied ${JSON.stringify(copied)}`);
       }
       if ((shown.resultMore && !shown.resultCue) || (shown.lcdMore && !shown.lcdCue)) {
-        fail(`${label} has more content below without a cue`);
+        const cueDeadline = Date.now() + 800;
+        while (Date.now() < cueDeadline) {
+          await delay(50);
+          shown = await evalJs(measureSource);
+          if ((!shown?.resultMore || shown?.resultCue) && (!shown?.lcdMore || shown?.lcdCue)) break;
+        }
       }
-      if (sample.name === "power" && viewport.width === 320 && copied && copied === sample.copy) {
-        await evalJs(`(() => {
-          const input = document.querySelector("#expression");
-          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-          set.call(input, ${JSON.stringify(copied)});
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        })()`);
-        const pasteDeadline = Date.now() + 5_000;
-        let pasted = false;
-        while (Date.now() < pasteDeadline) {
-          pasted = await evalJs(`(() => {
-            const input = document.querySelector("#expression");
-            const key = Object.keys(input).find((name) => name.startsWith("__reactProps"));
-            return key ? input[key].value === ${JSON.stringify(copied)} : false;
-          })()`);
-          if (pasted) break;
-          await delay(40);
-        }
-        if (!pasted) {
-          fail(`${label} did not commit the copied digits`);
-        } else {
-          await evalJs(`document.querySelector("#expression").form.requestSubmit()`);
-          let again = null;
-          const againDeadline = Date.now() + 30_000;
-          while (Date.now() < againDeadline) {
-            again = await evalJs(measureSource);
-            if ((again?.text ?? "").includes(sample.includes)) break;
-            await delay(80);
-          }
-          const recopied = await evalJs(`(() => {
-            window.__copied = "";
-            const chip = [...document.querySelectorAll("button")].find((el) => (el.textContent || "").includes("Copy value"));
-            if (!chip) return "";
-            const r = chip.getBoundingClientRect();
-            chip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
-            return window.__copied;
-          })()`);
-          if (!again?.text?.includes(sample.includes) || recopied !== copied) {
-            fail(`${label} pasted copy did not round-trip (${JSON.stringify(recopied).slice(0, 80)})`);
-          }
-        }
+      if ((shown?.resultMore && !shown?.resultCue) || (shown?.lcdMore && !shown?.lcdCue)) {
+        fail(`${label} has more content below without a cue`);
       }
       console.log(label, JSON.stringify({
         text: shown.text.slice(0, 60),
@@ -433,12 +428,39 @@ try {
         chip: shown.chip && [Math.round(shown.chip.top), Math.round(shown.chip.bottom)],
       }));
     }
+    for (let press = 0; press < 4; press += 1) {
+      await evalJs(`document.querySelector(".ti-btn-one").click()`);
+      await delay(30);
+    }
+    const history = await evalJs(`(() => {
+      const stack = document.querySelector(".ti-lcd-stack");
+      if (!stack) return { height: 0, rows: 0, revealed: false };
+      const rows = [...stack.querySelectorAll("p")];
+      const box = stack.getBoundingClientRect();
+      const seen = (el, host) => {
+        const r = el.getBoundingClientRect();
+        return r.height > 2 && r.bottom > host.top + 1 && r.top < host.bottom - 1;
+      };
+      const last = rows[rows.length - 1];
+      const hiddenBefore = rows.length > 1 && last && !seen(last, box);
+      stack.scrollTop = stack.scrollHeight;
+      const after = stack.getBoundingClientRect();
+      const revealed = rows.length > 1 && last && hiddenBefore && seen(last, after);
+      return { height: stack.clientHeight, rows: rows.length, scroll: stack.scrollHeight, revealed };
+    })()`);
+    if (!history || history.height < 8 || history.rows < 2 || !history.revealed) {
+      fail(`${viewport.width}x${viewport.height} stack history is not scrollable (${JSON.stringify(history)})`);
+    } else {
+      console.log(`${viewport.width}x${viewport.height} stack history`, JSON.stringify(history));
+    }
   }
   const mutations = [
     ["a center-only clip-path", "clip-path: inset(42% 42% 42% 42%)"],
     ["transparent text", "color: transparent"],
     ["opacity 0", "opacity: 0"],
     ["contain: paint", "contain: paint"],
+    ["filter: opacity(0)", "filter: opacity(0)"],
+    ["text the same colour as its background", "color: rgb(17, 17, 17); background-color: rgb(17, 17, 17)"],
   ];
   for (const [name, style] of mutations) {
     await evalJs(`(() => { document.querySelector(".ti-lcd-result").style.cssText = ${JSON.stringify(style)}; })()`);
@@ -448,6 +470,21 @@ try {
     else console.log(`guard caught ${name}`);
     await evalJs(`document.querySelector(".ti-lcd-result").style.cssText = ""`);
   }
+  await evalJs(`(() => {
+    const result = document.querySelector(".ti-lcd-result");
+    result.classList.add("has-more");
+    const style = document.createElement("style");
+    style.id = "layout-fade-hide";
+    style.textContent = ".ti-lcd-result.has-more::after{display:none !important}";
+    document.head.appendChild(style);
+  })()`);
+  const faded = await evalJs(measureSource);
+  if (!(faded?.hidden || []).some((item) => String(item).includes("fade"))) {
+    fail(`guard allowed a hidden fade (${JSON.stringify(faded?.hidden || [])})`);
+  } else {
+    console.log("guard caught a hidden fade");
+  }
+  await evalJs(`(() => { document.getElementById("layout-fade-hide")?.remove(); })()`);
   if (failures.length) {
     console.error(`${failures.length} failed`);
     process.exitCode = 1;

@@ -2,9 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
-import { resolveExactCopy } from "@/lib/eml/exact";
 import { type C } from "@/lib/eml/complex";
-import { type Node } from "@/lib/eml/node";
+import { provenInteger, type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 
 function clipboardError(err: unknown): string {
@@ -100,60 +99,114 @@ function floatPart(n: number): string {
   return n.toString().replace("e+", "e");
 }
 
-/** Every significant digit the double holds. A stray imaginary −0 is not part of a real. */
-export function floatRoundTrip(value: C): string {
-  const reNeg = Object.is(value.re, -0);
-  const imNeg = Object.is(value.im, -0);
-  const reZero = value.re === 0 || reNeg;
-  const imZero = value.im === 0 || imNeg;
-  if (reZero && imZero) return reNeg ? "-0" : "0";
-  if (imZero) return floatPart(value.re);
-  if (reZero) {
-    const imag = floatPart(value.im);
-    if (imag === "1") return "i";
-    if (imag === "-1") return "-i";
-    return `${imag}i`;
+function mantissaDigits(text: string): number {
+  const mantissa = text.split(/e/i)[0] ?? text;
+  return mantissa.match(/\d/g)?.length ?? 0;
+}
+
+/** Real and imaginary pieces actually printed, in machine form. */
+function shownParts(text: string): { re?: string; im?: string } {
+  if (text === "undefined" || text === "NaN") return { re: "NaN" };
+  if (text === "i") return { im: "1" };
+  if (text === "-i") return { im: "-1" };
+  if (text === "Infinity" || text === "-Infinity") return { re: text };
+  const number = String.raw`[+-]?(?:\d+(?:\.\d+)?(?:e[+-]?\d+)?|Infinity|NaN)`;
+  const imagOnly = new RegExp(`^(${number})i$`).exec(text);
+  if (imagOnly?.[1]) return { im: imagOnly[1] };
+  const both = new RegExp(`^(${number})([+-]${number})i$`).exec(text);
+  if (both?.[1] && both[2]) return { re: both[1], im: both[2] };
+  return { re: text };
+}
+
+/**
+ * A scientific abbreviation, or a full-width plain decimal, is the raw double
+ * printed shorter. A short plain decimal that is a different number, such as
+ * 0.5 for sin(pi/6), is the snapped value on the screen.
+ */
+function copyShownPart(printed: string, raw: number): { text: string; expanded: boolean } {
+  if (printed === "NaN" || Number.isNaN(raw)) return { text: "NaN", expanded: false };
+  if (printed === "Infinity" || printed === "-Infinity") return { text: printed, expanded: false };
+  if (printed === "-0") return { text: "-0", expanded: false };
+  if (printed === "0") return { text: "0", expanded: false };
+  const parsed = Number(printed);
+  if (Number.isFinite(parsed) && parsed === raw) return { text: floatPart(raw), expanded: false };
+  const scientific = /e/i.test(printed);
+  const digits = mantissaDigits(printed);
+  if (scientific || digits >= 12) {
+    const text = floatPart(raw);
+    return { text, expanded: text !== printed };
   }
-  const re = floatPart(value.re);
-  const imAbs = floatPart(Math.abs(value.im));
-  const sign = value.im < 0 || imNeg ? "-" : "+";
-  const imag = imAbs === "1" ? "i" : `${imAbs}i`;
-  return `${re}${sign}${imag}`;
+  return { text: printed, expanded: false };
+}
+
+/**
+ * Exact integers held as a bigint copy every digit. Every other exact value
+ * copies the screen. A float copies the round-trip of the parts on screen,
+ * or the snapped screen text when that is a different short value.
+ */
+export function copiedValue(input: {
+  shown: string;
+  node?: Node | null;
+  value?: C | null;
+  overflowed?: boolean;
+}): { text: string; copiedLabel: string } {
+  const display = displayedCopy(input.shown);
+  if (input.node && input.value == null) {
+    const whole = provenInteger(input.node);
+    if (whole !== undefined) return { text: whole.toString(), copiedLabel: "Copied" };
+    const digits = mantissaDigits(display.text);
+    return { text: display.text, copiedLabel: `Copied as shown (${digits} digits)` };
+  }
+  const value = input.value ?? { re: Number.NaN, im: Number.NaN };
+  const parts = shownParts(display.text);
+  if ((parts.re === "NaN" || Number.isNaN(value.re) || Number.isNaN(value.im)) && parts.im === undefined) {
+    return { text: "NaN", copiedLabel: input.overflowed || display.approximate ? "Copied · ≈ not certified" : "Copied" };
+  }
+  let expanded = false;
+  let text = "";
+  if (parts.re !== undefined && parts.im === undefined) {
+    const part = copyShownPart(parts.re, value.re);
+    text = part.text;
+    expanded = part.expanded;
+  } else if (parts.im !== undefined && parts.re === undefined) {
+    const part = copyShownPart(parts.im, value.im);
+    const body = part.text;
+    text = body === "1" ? "i" : body === "-1" ? "-i" : `${body}i`;
+    expanded = part.expanded;
+  } else {
+    const re = copyShownPart(parts.re ?? "0", value.re);
+    const im = copyShownPart(parts.im ?? "0", value.im);
+    const negative = im.text.startsWith("-");
+    const abs = im.text.replace(/^-/, "");
+    const imag = abs === "1" ? "i" : `${abs}i`;
+    text = `${re.text}${negative ? "-" : "+"}${imag}`;
+    expanded = re.expanded || im.expanded;
+  }
+  const uncertified = display.approximate || input.overflowed === true || expanded;
+  return { text, copiedLabel: uncertified ? "Copied · ≈ not certified" : "Copied" };
 }
 
 export function CopyValue({
   shown,
   node,
   value,
-  bound,
+  overflowed,
   onError,
 }: {
   shown: string;
   node?: Node | null;
   value?: C | null;
-  bound?: Record<string, C>;
+  overflowed?: boolean;
   onError?: (message: string) => void;
 }) {
-  const copy = displayedCopy(shown);
-  const copiedLabel = copy.approximate ? "Copied · ≈ not certified" : "Copied";
+  const prepared = copiedValue({ shown, node, value, overflowed });
   return (
     <CopyChip
-      text={copy.text}
+      text={prepared.text}
       label="Copy value"
       ariaLabel="Copy displayed value"
-      copiedLabel={copiedLabel}
-      prepare={node ? () => {
-        try {
-          const exact = resolveExactCopy(node, bound ?? {});
-          return {
-            text: exact.text,
-            copiedLabel: exact.complete ? "Copied" : `Copied as shown (${exact.digits} digits)`,
-          };
-        } catch {
-          const digits = copy.text.match(/\d/g)?.length ?? 0;
-          return { text: copy.text, copiedLabel: `Copied as shown (${digits} digits)` };
-        }
-      } : value ? () => ({ text: floatRoundTrip(value), copiedLabel }) : undefined}
+      copiedLabel={prepared.copiedLabel}
+      prepare={() => copiedValue({ shown, node, value, overflowed })}
       onError={onError}
     />
   );

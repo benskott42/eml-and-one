@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -91,9 +91,11 @@ export function CalculatorView(props: CalculatorModel) {
     }
     for (const key of queued) {
       if (key === "1") pushOne();
+      else if (key === "B") undo();
+      else if (key === "Enter") compute(expr);
       else applyEml();
     }
-  }, [applyEml, dismissCard, pushOne]);
+  }, [applyEml, compute, dismissCard, expr, pushOne, undo]);
   useEffect(() => {
     let open = false;
     try {
@@ -132,6 +134,18 @@ export function CalculatorView(props: CalculatorModel) {
   }, [heldShortcut, setHeldShortcut]);
   useEffect(() => {
     const lcd = document.querySelector(".ti-lcd");
+    if (!(lcd instanceof HTMLElement)) return;
+    const onWheel = (event: WheelEvent) => {
+      const dy = event.deltaY;
+      const atTop = lcd.scrollTop <= 0;
+      const atBottom = lcd.scrollTop + lcd.clientHeight >= lcd.scrollHeight - 1;
+      if ((dy < 0 && atTop) || (dy > 0 && atBottom)) event.preventDefault();
+    };
+    lcd.addEventListener("wheel", onWheel, { passive: false });
+    return () => lcd.removeEventListener("wheel", onWheel);
+  }, []);
+  useLayoutEffect(() => {
+    const lcd = document.querySelector(".ti-lcd");
     const result = document.querySelector(".ti-lcd-result");
     if (!(lcd instanceof HTMLElement) || !(result instanceof HTMLElement)) return;
     result.scrollTop = 0;
@@ -147,12 +161,16 @@ export function CalculatorView(props: CalculatorModel) {
       lcd.classList.toggle("has-more", lcdMore);
     };
     mark();
+    const schedule = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn: () => void) => window.setTimeout(fn, 0);
+    const cancel = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : (id: number) => window.clearTimeout(id);
+    const frame = schedule(mark);
     lcd.addEventListener("scroll", mark);
     result.addEventListener("scroll", mark);
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(mark);
     observer?.observe(lcd);
     observer?.observe(result);
     return () => {
+      cancel(frame);
       lcd.removeEventListener("scroll", mark);
       result.removeEventListener("scroll", mark);
       observer?.disconnect();
@@ -216,7 +234,7 @@ export function CalculatorView(props: CalculatorModel) {
               </p>
               <div className="ti-lcd-copies">
                 {canCopyValue && top ? (
-                  <CopyValue key={top.text} shown={top.text} node={top.mode === "exact" ? top.node : null} value={top.mode === "float" ? top.value : null} bound={top.bound} onError={reportError} />
+                  <CopyValue key={top.text} shown={top.text} node={top.mode === "exact" ? top.node : null} value={top.mode === "float" ? top.value : null} overflowed={top.overflowed} onError={reportError} />
                 ) : null}
                 {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
               </div>

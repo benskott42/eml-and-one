@@ -839,30 +839,57 @@ async function main() {
     failed = true;
   }
   const { compileExpression } = await import("../lib/eml/parse");
-  const { floatRoundTrip } = await import("../components/calculator/chrome");
-  const floatPower = runNode(compileExpression("2^300", {}), "float");
-  const floatCopied = floatRoundTrip(floatPower.value);
+  const { copiedValue } = await import("../components/calculator/chrome");
+  const floatOf = (expr: string) => {
+    const row = runNode(compileExpression(expr, {}), "float");
+    return { row, copied: copiedValue({ shown: row.text, value: row.value, overflowed: row.overflowed }) };
+  };
+  const floatPower = floatOf("2^300");
   if (
-    floatCopied === "2.037036e90" ||
-    Number(floatCopied) !== floatPower.value.re ||
-    !floatCopied.includes("e") ||
-    floatCopied.startsWith("-")
+    floatPower.copied.text.includes("i") ||
+    Number(floatPower.copied.text) !== floatPower.row.value.re ||
+    !floatPower.copied.copiedLabel.includes("≈ not certified")
   ) {
-    console.error("float 2^300 copy was not the full double", floatCopied, floatPower.value.re, floatPower.text);
+    console.error("float 2^300 copy was not the shown double", floatPower.copied, floatPower.row.value.re, floatPower.row.text);
     failed = true;
   }
-  const underflowed = runNode(compileExpression("10^(-400)", {}), "float");
-  const underflowCopy = floatRoundTrip(underflowed.value);
-  const positiveReal = !Object.is(underflowed.value.re, -0) && !(underflowed.value.re < 0);
-  if (underflowed.text !== "0 ≈" || underflowCopy !== "0" || !positiveReal || !underflowed.underflowed) {
-    console.error("float 10^(-400) kept a spurious minus", underflowed.text, underflowCopy, underflowed.value);
+  const tiny = floatOf("10^(-8)");
+  if (tiny.copied.text.includes("i") || Number(tiny.copied.text) !== tiny.row.value.re) {
+    console.error("float 10^(-8) copied a hidden imaginary part", tiny.copied, tiny.row.value);
     failed = true;
   }
-  const negativeUnder = runNode(compileExpression("(0-1)*tan(10^(-5000))", {}), "float");
-  const negativeCopy = floatRoundTrip(negativeUnder.value);
-  const negativeReal = Object.is(negativeUnder.value.re, -0) || negativeUnder.value.re < 0 || Object.is(1 / negativeUnder.value.re, -Infinity);
-  if (!negativeReal || negativeUnder.text !== "−0 ≈" || negativeCopy !== "-0") {
-    console.error("a negative underflow lost its sign", negativeUnder.text, negativeCopy, negativeUnder.value.re, 1 / negativeUnder.value.re);
+  const half = floatOf("sin(pi/6)");
+  if (half.copied.text !== "0.5") {
+    console.error("sin(pi/6) did not copy the snapped 0.5", half.copied, half.row.text);
+    failed = true;
+  }
+  const underflowed = floatOf("10^(-400)");
+  const positiveReal = !Object.is(underflowed.row.value.re, -0) && !(underflowed.row.value.re < 0);
+  if (
+    underflowed.row.text !== "0 ≈" ||
+    underflowed.copied.text !== "0" ||
+    Number(underflowed.copied.text) !== underflowed.row.value.re ||
+    !positiveReal ||
+    !underflowed.row.underflowed ||
+    !underflowed.copied.copiedLabel.includes("≈ not certified")
+  ) {
+    console.error("float 10^(-400) kept a spurious minus", underflowed.row.text, underflowed.copied, underflowed.row.value);
+    failed = true;
+  }
+  const negativeUnder = floatOf("(0-1)*exp(-1000)");
+  const negativeReal = Object.is(negativeUnder.row.value.re, -0) || negativeUnder.row.value.re < 0 || Object.is(1 / negativeUnder.row.value.re, -Infinity);
+  if (!negativeReal || negativeUnder.row.text !== "−0 ≈" || negativeUnder.copied.text !== "-0") {
+    console.error("a negative underflow lost its sign", negativeUnder.row.text, negativeUnder.copied, negativeUnder.row.value.re);
+    failed = true;
+  }
+  const overflow = floatOf("exp(710)");
+  if (overflow.copied.text !== "Infinity" || !overflow.copied.copiedLabel.includes("≈ not certified") || !overflow.row.overflowed) {
+    console.error("an overflowed infinity was copied as certified", overflow.copied, overflow.row.text, overflow.row.overflowed);
+    failed = true;
+  }
+  const nan = floatOf("0/0");
+  if (nan.copied.text !== "NaN" || nan.copied.text.includes("i")) {
+    console.error("NaN copied a hidden imaginary part", nan.copied, nan.row.text);
     failed = true;
   }
   const signedZero = runNode(compileExpression("-0", {}), "float");
@@ -870,28 +897,32 @@ async function main() {
     console.error("a real negative zero was rewritten", signedZero.text);
     failed = true;
   }
-  const { resolveExactCopy } = await import("../lib/eml/exact");
-  const seventh = resolveExactCopy(compileExpression("1/7", {}));
-  if (!seventh.complete || !seventh.text.startsWith("0.142857142857") || seventh.text.includes("e") || seventh.text.length < 40) {
-    console.error("1/7 copy was not the full fraction", seventh);
+  const sparseNode = compileExpression("10^130+1", {});
+  const sparseStarted = performance.now();
+  const sparseCopy = copiedValue({ shown: "1×10^130", node: sparseNode });
+  const sparseMs = performance.now() - sparseStarted;
+  const sparseWant = (BigInt(10) ** BigInt(130) + BigInt(1)).toString();
+  if (sparseCopy.text !== sparseWant || !sparseCopy.text.endsWith("1") || sparseCopy.copiedLabel !== "Copied" || sparseMs > 50) {
+    console.error("10^130+1 did not copy the proven integer", sparseCopy.text.slice(-4), sparseCopy.copiedLabel, sparseMs);
     failed = true;
   }
-  const near = resolveExactCopy(compileExpression("10^20+10^(-10)", {}));
-  if (!near.complete || near.text.includes("e") || !near.text.includes("100000000000000000000.0000000001")) {
-    console.error("10^20+10^(-10) copy collapsed", near.text);
+  const expCopy = copiedValue({ shown: "1.942426395241×10^130", node: compileExpression("exp(300)", {}) });
+  if (expCopy.copiedLabel !== "Copied as shown (13 digits)" || expCopy.text !== "1.942426395241e130" || /^\d{20,}$/.test(expCopy.text)) {
+    console.error("exp(300) copied a rounded integer", expCopy);
     failed = true;
   }
-  const powerCopy = resolveExactCopy(compileExpression("2^300", {}));
-  const powerAgain = resolveExactCopy(compileExpression(powerCopy.text, {}));
-  if (!powerCopy.complete || powerCopy.text !== digits || powerAgain.text !== powerCopy.text) {
-    console.error("2^300 copy did not paste back", powerCopy.text.length, powerAgain.text.length);
+  const halfPower = copiedValue({ shown: "1.071508607186×10^301", node: compileExpression("2^1000+0.5", {}) });
+  if (
+    !halfPower.copiedLabel.startsWith("Copied as shown") ||
+    halfPower.text === (BigInt(2) ** BigInt(1000)).toString() ||
+    /^\d{20,}$/.test(halfPower.text)
+  ) {
+    console.error("2^1000+0.5 copied a rounded integer", halfPower);
     failed = true;
   }
-  const thousand = (BigInt(2) ** BigInt(1000)).toString();
-  const thousandCopy = resolveExactCopy(compileExpression("2^1000", {}));
-  const thousandAgain = resolveExactCopy(compileExpression(thousandCopy.text, {}));
-  if (!thousandCopy.complete || thousandCopy.text !== thousand || thousandAgain.text !== thousandCopy.text) {
-    console.error("2^1000 copy was not every digit", thousandCopy.complete, thousandCopy.text.length, thousandAgain.text.length);
+  const exactPower = copiedValue({ shown: "2.037036×10^90", node: compileExpression("2^300", {}) });
+  if (exactPower.text !== digits || exactPower.copiedLabel !== "Copied") {
+    console.error("exact 2^300 did not copy the proven integer", exactPower.text.length, exactPower.copiedLabel);
     failed = true;
   }
   const limitNode = nodeFromRpn(`${"1".repeat(80)}${"E".repeat(79)}`.split(""));
@@ -947,6 +978,38 @@ async function main() {
     });
   }
   earlyView.close();
+  const editDom = new JSDOM("<!doctype html><html><body><button class=\"ti-btn-one\">1</button><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const editView = editDom.window;
+  globals.window = editView;
+  globals.self = editView;
+  globals.document = editView.document;
+  globals.HTMLElement = editView.HTMLElement;
+  editView.eval(EARLY_KEY_SCRIPT);
+  editView.document.querySelector(".ti-btn-one")?.dispatchEvent(new editView.MouseEvent("click", { bubbles: true, cancelable: true }));
+  editView.document.dispatchEvent(new editView.KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+  editView.document.dispatchEvent(new editView.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const editMount = editView.document.getElementById("root");
+  if (!editMount) {
+    console.error("missing early edit root");
+    failed = true;
+  } else {
+    const editRoot = createRoot(editMount);
+    await act(async () => {
+      editRoot.render(<EmlCalculator />);
+    });
+    const edited = editView.document.querySelector(".ti-lcd-result")?.textContent?.trim();
+    if (edited !== "computing") {
+      console.error("an early Backspace and Enter were not replayed", edited);
+      failed = true;
+    }
+    await act(async () => {
+      editRoot.unmount();
+    });
+  }
+  editView.close();
   globals.window = uiView;
   globals.self = uiView;
   globals.document = uiView.document;

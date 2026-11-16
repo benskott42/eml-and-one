@@ -9,7 +9,6 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
-  exactLiteralOf,
   precisionMessage,
 } from "./node";
 import { decadeOf, inScaledShell, knownValue } from "./lowering";
@@ -634,8 +633,7 @@ function exactReportOnce(
       continue;
     }
     if (n.type === "input") {
-      const literal = exactLiteralOf(n);
-      const leaf = literal !== undefined ? z(literal) : z(n.value.re, n.value.im);
+      const leaf = z(n.value.re, n.value.im);
       memo.set(n, leaf);
       noteSeen(leaf);
       why.set(n, null);
@@ -897,90 +895,6 @@ export function beyondFloatBound(got: C, exact: C): boolean {
     return Math.abs(left - right) > 5e-12 * mag;
   };
   return part(got.re, exact.re) || part(got.im, exact.im);
-}
-
-export type ExactCopy = { text: string; digits: number; complete: boolean };
-
-function shownDigits(text: string): number {
-  const mantissa = text.split("e")[0] ?? text;
-  const digits = mantissa.match(/\d/g);
-  return digits ? digits.length : 0;
-}
-
-/** Every stored digit, in ASCII. A rounded integer does not grow fake zeros. */
-function plainPart(d: Decimal): ExactCopy {
-  if (d.isNaN()) return { text: "NaN", digits: 0, complete: true };
-  if (!d.isFinite()) return { text: d.isNeg() ? "-Infinity" : "Infinity", digits: 0, complete: true };
-  if (d.isZero()) return { text: d.isNeg() ? "-0" : "0", digits: 1, complete: true };
-  const sign = d.isNeg() ? "-" : "";
-  const abs = d.abs();
-  const rounded = abs.round();
-  const gap = abs.sub(rounded).abs();
-  const scale = D.max(abs, new D(1));
-  const dust = scale.mul(new D(10).pow(-(D.precision - 24)));
-  if (gap.eq(0) || gap.lte(dust)) {
-    const places = rounded.e + 1;
-    const known = abs.sd();
-    if (known >= D.precision - 1 && places > known) {
-      const exp = abs.toExponential(12).replace(/\.?0+e/, "e").replace("e+", "e");
-      const text = sign + exp;
-      return { text, digits: shownDigits(text), complete: false };
-    }
-    const body = rounded.toFixed(0);
-    return { text: sign + body, digits: body.length, complete: true };
-  }
-  // A full 120-digit run keeps about 24 digits of construction dust.
-  // 1/7 still copies the repeating digits; 0.000314159265 does not grow a tail of 9s.
-  let trimmed = abs;
-  if (abs.sd() >= D.precision - 1) {
-    const keep = Math.max(12, abs.sd() - 24);
-    trimmed = abs.toSignificantDigits(keep);
-  }
-  const places = Math.min(trimmed.decimalPlaces(), 4_000);
-  const body = trimmed.toFixed(places).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
-  return { text: sign + body, digits: shownDigits(body), complete: true };
-}
-
-/** Paste text for an exact value. Display rounding stays in formatExact. */
-export function copyExact(v: Z): ExactCopy {
-  if (v.re.isNaN() || v.im.isNaN()) return { text: "undefined", digits: 0, complete: true };
-  if (v.re.isZero() && v.im.isZero()) {
-    return { text: v.re.isNeg() || v.im.isNeg() ? "-0" : "0", digits: 1, complete: true };
-  }
-  if (v.im.isZero()) return plainPart(v.re);
-  if (v.re.isZero()) {
-    const imag = plainPart(v.im);
-    const text = imag.text === "1" ? "i" : imag.text === "-1" ? "-i" : `${imag.text}i`;
-    return { ...imag, text };
-  }
-  const re = plainPart(v.re);
-  const im = plainPart(v.im.abs());
-  const sign = v.im.isNeg() ? "-" : "+";
-  const imag = im.text === "1" ? "i" : `${im.text}i`;
-  return {
-    text: `${re.text}${sign}${imag}`,
-    digits: re.digits + im.digits,
-    complete: re.complete && im.complete,
-  };
-}
-
-/**
- * Copy the exact value. When the working precision rounded an integer, one
- * higher-precision pass recovers the missing digits, up to 4,000 of them.
- */
-export function resolveExactCopy(node: Node, env: Record<string, C> = {}): ExactCopy {
-  const report = exactReport(node, env, { maxNodes: 80_000 });
-  const first = copyExact(report.value);
-  if (first.complete) return first;
-  const exp = Math.max(report.value.re.isFinite() ? report.value.re.e : 0, report.value.im.isFinite() ? report.value.im.e : 0);
-  const need = exp + 8;
-  if (!Number.isFinite(need) || need <= D.precision || need > 4_000) return first;
-  try {
-    const lifted = copyExact(exactValueAt(node, need, env));
-    return lifted.complete ? lifted : first;
-  } catch {
-    return first;
-  }
 }
 
 /** Display an exact value. Each component is printed on its own; float tidy is not applied. */

@@ -88,21 +88,6 @@ export function provenInteger(node: Node): bigint | undefined {
 }
 
 /**
- * Digits of a literal that is too long to build as a circuit of 1s.
- * Exact evaluation reads this. The float leaf stays the nearest double.
- */
-const exactLiterals = new WeakMap<Node, string>();
-
-export function noteExactLiteral(node: Node, text: string): Node {
-  exactLiterals.set(node, text);
-  return node;
-}
-
-export function exactLiteralOf(node: Node): string | undefined {
-  return exactLiterals.get(node);
-}
-
-/**
  * Float64 rotSub leaves the exact strip outside (−71π, 71π).
  * The top end underflows: [71π, 73π) is barely subnormal and [73π, 75π)
  * is degraded. Past 75π the rotated exponential underflows to 0.

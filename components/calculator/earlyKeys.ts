@@ -22,8 +22,15 @@ document.addEventListener("keydown", function (event) {
   if (window.__emlLive) return;
   if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
   var target = event.target;
-  if (target && target.closest && target.closest("input, textarea")) return;
+  var inField = target && target.closest && target.closest("input, textarea");
+  if (event.key === "Enter") {
+    if (inField && target.id !== "expression") return;
+    emlQueue("Enter", event);
+    return;
+  }
+  if (inField) return;
   if (event.key === "1") emlQueue("1", event);
   else if (event.key === "e" || event.key === "E") emlQueue("E", event);
+  else if (event.key === "Backspace") emlQueue("B", event);
 }, true);
 `;

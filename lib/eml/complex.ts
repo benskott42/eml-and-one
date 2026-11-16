@@ -62,8 +62,7 @@ function reducedTrig(im: number): { re: number; im: number } {
   const cosine = delta === 0 ? 1 : Math.cos(delta);
   const axis = ((steps % 4) + 4) % 4;
   if (axis === 0) return { re: cosine, im: sine };
-  // −sin(+0) is −0. An angle sitting on the positive imaginary axis is not a negative real.
-  if (axis === 1) return { re: -sine === 0 ? 0 : -sine, im: cosine };
+  if (axis === 1) return { re: -sine, im: cosine };
   if (axis === 2) return { re: -cosine, im: -sine };
   return { re: sine, im: -cosine };
 }
