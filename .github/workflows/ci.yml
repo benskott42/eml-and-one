@@ -1,0 +1,212 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main, v1.1]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run eml:smoke
+      - run: npm run eml:check
+      - run: npm run build
+        env:
+          PAGES_BASE_PATH: /eml-and-one
+      - name: Headless Chrome regression
+        run: |
+          set -euo pipefail
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || true)
+          if [ -z "$CHROME" ]; then
+            sudo apt-get update
+            sudo apt-get install -y google-chrome-stable
+            CHROME=$(command -v google-chrome || command -v google-chrome-stable)
+          fi
+          mkdir -p /tmp/eml-site
+          ln -sfn "$PWD/out" /tmp/eml-site/eml-and-one
+          python3 -m http.server 4173 --directory /tmp/eml-site >/tmp/eml-site.log 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -sf -o /dev/null http://127.0.0.1:4173/eml-and-one/ && break
+            sleep 0.2
+          done
+          SITE=http://127.0.0.1:4173/eml-and-one/ CHROME="$CHROME" node --input-type=module <<'END'
+          import { spawn } from "node:child_process";
+          import { setTimeout as delay } from "node:timers/promises";
+          import { mkdtempSync } from "node:fs";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+
+          const site = process.env.SITE || "http://127.0.0.1:4173/eml-and-one/";
+          const port = 9412;
+          const chromeBin = process.env.CHROME || "google-chrome";
+          const profile = mkdtempSync(join(tmpdir(), "ci-chrome-"));
+          const chrome = spawn(chromeBin, [
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            `--remote-debugging-port=${port}`,
+            `--user-data-dir=${profile}`,
+            "about:blank",
+          ], { stdio: "ignore" });
+
+          let ws;
+          let id = 0;
+          const pending = new Map();
+          const failures = [];
+
+          function fail(message) {
+            failures.push(message);
+            console.error(`FAIL ${message}`);
+          }
+
+          async function connect() {
+            for (let i = 0; i < 50; i++) {
+              try {
+                const version = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json());
+                ws = new WebSocket(version.webSocketDebuggerUrl);
+                await new Promise((resolve, reject) => {
+                  ws.addEventListener("open", resolve);
+                  ws.addEventListener("error", reject);
+                });
+                ws.addEventListener("message", (event) => {
+                  const message = JSON.parse(event.data);
+                  if (message.id && pending.has(message.id)) {
+                    pending.get(message.id)(message);
+                    pending.delete(message.id);
+                  }
+                });
+                return;
+              } catch {
+                await delay(150);
+              }
+            }
+            throw new Error("chrome did not open a debugging port");
+          }
+
+          function send(method, params = {}, sessionId) {
+            const messageId = ++id;
+            return new Promise((resolve) => {
+              pending.set(messageId, resolve);
+              ws.send(JSON.stringify({ id: messageId, method, params, sessionId }));
+            });
+          }
+
+          await connect();
+          const target = await send("Target.createTarget", { url: "about:blank" });
+          const session = await send("Target.attachToTarget", { targetId: target.result.targetId, flatten: true });
+          const sessionId = session.result.sessionId;
+          await send("Page.enable", {}, sessionId);
+          await send("Runtime.enable", {}, sessionId);
+          await send("Emulation.setDeviceMetricsOverride", {
+            width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
+          }, sessionId);
+          await send("Page.navigate", { url: site }, sessionId);
+          await delay(800);
+
+          async function evalJs(expression) {
+            const result = await send("Runtime.evaluate", {
+              expression,
+              returnByValue: true,
+              awaitPromise: true,
+            }, sessionId);
+            if (result.result?.exceptionDetails) {
+              throw new Error(result.result.exceptionDetails.text || "evaluate failed");
+            }
+            return result.result?.result?.value;
+          }
+
+          const boot = await evalJs(`({
+            screen: !!document.querySelector('[aria-label="Calculator screen"]'),
+            one: !!document.querySelector(".ti-btn-one"),
+            eml: !!document.querySelector(".ti-btn-eml"),
+            result: document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "",
+          })`);
+          if (!boot.screen) fail("calculator screen is missing");
+          if (!boot.one || !boot.eml) fail("1 or EML key is missing");
+          console.log("boot", JSON.stringify(boot));
+
+          await evalJs(`document.querySelector(".ti-btn-one").click(); document.querySelector(".ti-btn-one").click(); document.querySelector(".ti-btn-eml").click();`);
+          const e = await evalJs(`(async () => {
+            const start = Date.now();
+            while (Date.now() - start < 15000) {
+              const text = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
+              if (text.includes("2.718")) return text;
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
+          })()`);
+          if (!String(e).includes("2.718")) fail(`1, 1, EML result was ${JSON.stringify(e)}`);
+          else console.log("e", e);
+
+          async function compute(source, ready) {
+            return evalJs(`(async () => {
+              const input = document.querySelector("#expression")
+                || [...document.querySelectorAll("label")].find((label) => /^\\s*Expression/i.test(label.textContent || ""))?.querySelector("input");
+              if (!input || !input.form) return { error: "no expression field" };
+              const before = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
+              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              set.call(input, ${JSON.stringify(source)});
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              const tasks = [];
+              const observer = new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) tasks.push(Math.round(entry.duration));
+              });
+              observer.observe({ type: "longtask", buffered: false });
+              input.form.requestSubmit();
+              const start = Date.now();
+              let text = before;
+              let note = "";
+              let error = "";
+              const accept = ${ready};
+              while (Date.now() - start < 25000) {
+                text = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
+                note = document.querySelector(".ti-lcd-note")?.textContent?.trim() ?? "";
+                error = document.querySelector(".ti-lcd-error")?.textContent?.trim() ?? "";
+                const shown = text + " " + note + " " + error;
+                if (text !== before && text !== "computing" && accept(shown)) {
+                  observer.disconnect();
+                  return { text, note, error, tasks, chips: document.querySelectorAll(".ti-press-chip").length, hidden: document.querySelectorAll('[aria-hidden="true"] [tabindex="0"]').length };
+                }
+                await new Promise((resolve) => setTimeout(resolve, 40));
+              }
+              observer.disconnect();
+              return { text, note, error: error || "timeout", tasks, chips: document.querySelectorAll(".ti-press-chip").length, hidden: document.querySelectorAll('[aria-hidden="true"] [tabindex="0"]').length };
+            })()`);
+          }
+
+          const two = await compute("2*2", "(shown) => shown.trim().startsWith(\"4\")");
+          console.log("2*2", JSON.stringify(two));
+          if (two.text !== "4") fail(`2*2 result was ${JSON.stringify(two.text)}`);
+
+          const ln = await compute("ln(-1)", "(shown) => /iπ|3\\.14159/.test(shown)");
+          console.log("ln(-1)", JSON.stringify(ln));
+          if (!/iπ|3\.14159/.test(`${ln.text} ${ln.note}`)) fail(`ln(-1) result was ${JSON.stringify(ln.text)}`);
+
+          const tan = await compute("tan(10^(-5000))", "(shown) => shown.includes(\"—\") || /couldn.t verify/i.test(shown)");
+          console.log("tan", JSON.stringify(tan));
+          const tanShown = `${tan.text} ${tan.note}`;
+          if (!tanShown.includes("—") && !/couldn.t verify/i.test(tanShown)) fail(`tan(10^(-5000)) result was ${JSON.stringify(tan)}`);
+          const long = (tan.tasks || []).filter((duration) => duration > 50);
+          if (long.length) fail(`tan(10^(-5000)) long tasks ${JSON.stringify(tan.tasks)}`);
+          if (tan.chips) fail(`collapsed view rendered ${tan.chips} chips`);
+          if (tan.hidden) fail(`aria-hidden contains ${tan.hidden} tab stops`);
+
+          chrome.kill();
+          if (failures.length) {
+            console.error(`${failures.length} failed`);
+            process.exit(1);
+          }
+          console.log("chrome regression passed");
+          END
