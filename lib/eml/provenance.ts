@@ -102,6 +102,7 @@ export type Outline = {
   name: string;
   opaque: boolean;
   repeat: boolean;
+  record: Label | null;
   children: Outline[];
 };
 
@@ -149,6 +150,7 @@ function relative(node: Node, seen: Set<number>): Outline {
     hole: null,
     name: displayName(label),
     opaque: label?.opaque === true,
+    record: labelsOf(node).find((item) => item.kind === "record") ?? null,
     repeat,
     children,
   };
@@ -195,13 +197,18 @@ function bubble(node: Node, seen: Set<number>): Outline[] {
 }
 
 function place(source: Outline, offset: bigint, hole: string | null, repeat: boolean): Outline {
+  const moved = shiftBy(source, offset - source.start);
+  return { ...moved, hole: hole ?? source.hole, repeat: repeat || source.repeat };
+}
+
+/** Every start in a subtree shares one coordinate system, so a move is one delta. */
+function shiftBy(source: Outline, shift: bigint): Outline {
+  if (shift === BigInt(0)) return source;
   return {
     ...source,
-    start: offset,
-    end: offset + source.length,
-    hole: hole ?? source.hole,
-    repeat: repeat || source.repeat,
-    children: source.children.map((child) => place(child, offset + child.start, child.hole, child.repeat)),
+    start: source.start + shift,
+    end: source.end + shift,
+    children: source.children.map((child) => shiftBy(child, shift)),
   };
 }
 
@@ -283,34 +290,64 @@ function shortest(label: Label | null): string | null {
  * calculator's own text, never a name guessed from the digits.
  * A displayed 0 is not narrated.
  */
-export function explainCircuit(node: Node, typed: string, result: string): { full: string; line: string } {
-  const view = pressSpans(node);
-  const root = view.root;
+export function explainOutline(root: Outline, presses: bigint, typed: string, result: string): { full: string; line: string } {
   const gadget = root.gadgetId;
-  const presses = view.presses.toString();
-  const safeResult = result.trim() === "0" || result.trim() === "−0" ? null : result.trim();
-  const childNotes = root.children.slice(0, 2).map((child) => {
-    const record = child.label?.kind === "record" ? child.label : labelsOf(child.node).find((item) => item.kind === "record") ?? null;
+  const count = presses.toString();
+  const trimmed = result.trim();
+  const safeResult = !trimmed || trimmed === "0" || trimmed === "−0" || trimmed === "computing" || trimmed === "—" ? null : trimmed;
+  const substantial = root.children.filter((child) => child.length > BigInt(1));
+  const noted = (substantial.length ? substantial : root.children).slice(0, 2);
+  const childNotes = noted.map((child) => {
+    const record = child.record ?? (child.label?.kind === "record" ? child.label : null);
     const short = shortest(record);
     const count = child.length.toString();
     return short ? `${child.name} from 1s (${count} presses, ${short})` : `${child.name} (${count} presses)`;
   });
   const sameTwice = root.children.length === 2 && root.children[0]?.name === root.children[1]?.name && root.children[1]?.repeat;
-  const glue = sameTwice ? view.presses - root.children[0]!.length - root.children[1]!.length : null;
+  const glue = sameTwice ? presses - root.children[0]!.length - root.children[1]!.length : null;
   const op = gadget === "mul" ? "×" : gadget === "add" ? "+" : gadget === "sub" ? "−" : gadget === "div" ? "÷" : gadget;
   const fullParts = [`You typed ${typed || root.name}.`];
-  if (op && sameTwice && childNotes[0]) {
+  if (root.opaque) {
+    fullParts.push(`This is one ${root.name} block of ${count} presses.`);
+  } else if (op && sameTwice && childNotes[0]) {
     const gadgetName = gadget === "mul" ? "multiply" : gadget === "add" ? "add" : gadget === "sub" ? "subtract" : gadget === "div" ? "divide" : gadget;
-    fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML: it built ${childNotes[0]}, did that twice, and wrapped both in a ${gadgetName} gadget${glue !== null ? ` (${glue.toString()} more presses)` : ""}.`);
+    const article = /^[aeiou]/i.test(gadgetName ?? "") ? "an" : "a";
+    fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML: it built ${childNotes[0]}, did that twice, and wrapped both in ${article} ${gadgetName} gadget${glue !== null ? ` (${glue.toString()} more presses)` : ""}.`);
   } else if (op) {
     fullParts.push(`The calculator has no ${op} key, so it rewrote it using only 1 and EML${childNotes.length ? `: ${childNotes.join("; ")}` : ""}.`);
-  } else if (root.opaque) {
-    fullParts.push(`This is one ${root.name} block of ${presses} presses.`);
   } else if (childNotes.length) {
     fullParts.push(`It is built from ${childNotes.join("; ")}.`);
   }
-  fullParts.push(safeResult ? `That's ${presses} presses in total, and the result is ${safeResult}.` : `That's ${presses} presses in total.`);
+  fullParts.push(safeResult ? `That's ${count} presses in total, and the result is ${safeResult}.` : `That's ${count} presses in total.`);
   const full = fullParts.join(" ");
-  const line = safeResult ? `${typed || root.name} → ${safeResult} in ${presses} presses.` : `${typed || root.name} in ${presses} presses.`;
+  const line = safeResult ? `${typed || root.name} → ${safeResult} in ${count} presses.` : `${typed || root.name} in ${count} presses.`;
   return { full, line };
+}
+
+export function explainCircuit(node: Node, typed: string, result: string): { full: string; line: string } {
+  const view = pressSpans(node);
+  return explainOutline(view.root, view.presses, typed, result);
+}
+
+export type SequenceSnapshot = {
+  oneE: string;
+  bits: string;
+  presses: string;
+  copyable: boolean;
+  tooLong: boolean;
+  outline: Outline;
+};
+
+/** Call while the builder labels are still in place. A later isolate drops them. */
+export function snapshotSequence(node: Node): SequenceSnapshot {
+  const word = pressWord(node);
+  const spans = pressSpans(node);
+  return {
+    oneE: word.oneE,
+    bits: word.bits,
+    presses: word.presses.toString(),
+    copyable: word.copyable,
+    tooLong: spans.tooLong,
+    outline: spans.root,
+  };
 }

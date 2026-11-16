@@ -71,6 +71,7 @@ import {
 } from "./programIndex";
 import { encodePresses, previewPresses, pressPreviewForNode } from "./presses";
 import { agreementNote, compileExpression, referenceExpression } from "./parse";
+import { explainCircuit, pressSpans, pressWord, spanCovers, type Outline } from "./provenance";
 import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
@@ -2964,6 +2965,93 @@ failed += runPropertyChecks();
       }
     }
   }
+}
+
+function spansTile(outline: Outline, word: string | null): boolean {
+  if (!spanCovers(outline)) return false;
+  if (word === null) return outline.children.every((child) => spansTile(child, null));
+  let cursor = Number(outline.start);
+  let built = word.slice(cursor, cursor);
+  for (const child of outline.children) {
+    built += word.slice(cursor, Number(child.start));
+    built += word.slice(Number(child.start), Number(child.end));
+    if (!spansTile(child, word)) return false;
+    cursor = Number(child.end);
+  }
+  built += word.slice(cursor, Number(outline.end));
+  return built === word.slice(Number(outline.start), Number(outline.end));
+}
+
+function expectSpan(label: string, ok: boolean) {
+  if (!ok) {
+    failed += 1;
+    console.log("FAIL span", label);
+  }
+}
+
+{
+  const twoTimes = compileExpression("2*2", {});
+  const twoWord = pressWord(twoTimes);
+  const twoSpans = pressSpans(twoTimes);
+  expectSpan("2*2 word", twoWord.oneE === "1111111111EEE1EE11EE1EEEE1EE111111EEE1EE11EE1EEE1EE1E");
+  expectSpan("2*2 bits", twoWord.bits === "11111111110001001100100001001111110001001100100010010");
+  expectSpan("2*2 mul", twoSpans.root.name === "mul" && twoSpans.root.gadgetId === "mul");
+  expectSpan("2*2 not sqr", !/sqr/.test(twoSpans.root.name));
+  const [left, right] = twoSpans.root.children;
+  expectSpan("2*2 x range", left?.hole === "x" && left.start === BigInt(4) && left.end === BigInt(23));
+  expectSpan("2*2 y range", right?.hole === "y" && right.start === BigInt(28) && right.end === BigInt(47) && right.repeat);
+  expectSpan("2*2 tiles", spansTile(twoSpans.root, twoWord.oneE));
+  const twoTold = explainCircuit(twoTimes, "2*2", "4");
+  expectSpan("2*2 told", twoTold.full === "You typed 2*2. The calculator has no × key, so it rewrote it using only 1 and EML: it built 2 from 1s (19 presses, the shortest possible (lower cut, ln 0 = −∞ where used)), did that twice, and wrapped both in a multiply gadget (15 more presses). That's 53 presses in total, and the result is 4.");
+  expectSpan("2*2 no proven", !/proven|verified|✓/.test(twoTold.full));
+
+  const twoAdd = compileExpression("2+2", {});
+  const addSpans = pressSpans(twoAdd);
+  const addWord = pressWord(twoAdd);
+  expectSpan("2+2 y first", addSpans.root.children[0]?.hole === "y" && addSpans.root.children[0]?.start === BigInt(4) && addSpans.root.children[1]?.hole === "x");
+  expectSpan("2+2 tiles", spansTile(addSpans.root, addWord.oneE));
+  const addTold = explainCircuit(twoAdd, "2+2", "4");
+  expectSpan("2+2 told", addTold.full.includes("an add gadget") && addTold.full.includes("the shortest possible (lower cut, ln 0 = −∞ where used)") && !/proven|verified|✓/.test(addTold.full));
+
+  const twoThree = compileExpression("2*3", {});
+  const mulWord = pressWord(twoThree);
+  expectSpan("2*3 tiles", spansTile(pressSpans(twoThree).root, mulWord.oneE) && mulWord.presses === BigInt(63));
+
+  const bound = compileExpression("x*y", { x: integerNode(2), y: integerNode(3) });
+  const boundSpans = pressSpans(bound);
+  const boundWord = pressWord(bound);
+  expectSpan("x*y holes", boundSpans.root.children[0]?.hole === "x" && boundSpans.root.children[0]?.end === BigInt(23) && boundSpans.root.children[1]?.hole === "y");
+  expectSpan("x*y tiles", spansTile(boundSpans.root, boundWord.oneE) && boundWord.oneE === mulWord.oneE);
+
+  const sine = compileExpression("sin(pi/6)", {});
+  const sineWord = pressWord(sine);
+  const sineSpans = pressSpans(sine);
+  expectSpan("sin tiles", sineSpans.presses === BigInt(1239) && spansTile(sineSpans.root, sineWord.oneE));
+  const sineTold = explainCircuit(sine, "sin(pi/6)", "");
+  expectSpan("sin told", sineTold.full.startsWith("You typed sin(pi/6).") && sineTold.full.includes("1239 presses") && !/proven|verified|✓/.test(sineTold.full));
+
+  const near = compileExpression("ln(1+10^(-300))", {});
+  const nearSpans = pressSpans(near);
+  const nearWord = pressWord(near);
+  expectSpan("ln tiles", nearSpans.presses === BigInt(951) && spansTile(nearSpans.root, nearWord.oneE));
+  const nearTold = explainCircuit(near, "ln(1+10^(-300))", "");
+  expectSpan("ln told", nearTold.full.includes("add (945 presses)") && !nearTold.full.includes("the result is"));
+
+  const series = compileExpression("tan(10^(-40))-10^(-40)", {});
+  const seriesSpans = pressSpans(series);
+  const seriesWord = pressWord(series);
+  expectSpan("series opaque", seriesSpans.root.opaque && seriesSpans.root.name === "scaledTinySub" && seriesSpans.root.children.length === 0);
+  expectSpan("series length", seriesSpans.presses === BigInt(129865) && seriesSpans.tooLong && !seriesWord.copyable && seriesWord.oneE === "");
+  expectSpan("series covers", spanCovers(seriesSpans.root));
+  const seriesTold = explainCircuit(series, "tan(10^(-40))-10^(-40)", "");
+  expectSpan("series told", seriesTold.full.includes("one scaledTinySub block of 129865 presses") && !/proven|verified|✓/.test(seriesTold.full));
+
+  const tiny = compileExpression("0.00005i+0.00005i", {});
+  const tinySpans = pressSpans(tiny);
+  const tinyWord = pressWord(tiny);
+  const opaqueChild = tinySpans.root.children.find((child) => child.opaque);
+  expectSpan("tiny tiles", spansTile(tinySpans.root, tinyWord.oneE));
+  expectSpan("tiny opaque", opaqueChild?.name === "subOfExp" && opaqueChild.opaque && opaqueChild.children.length === 0);
 }
 
 if (failed) {

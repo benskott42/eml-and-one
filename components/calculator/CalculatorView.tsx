@@ -9,6 +9,7 @@ import { agreementNote } from "@/lib/eml/parse";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programIndexDigits } from "@/lib/eml/programIndex";
 import { CopyNumber, GolfPanel, KeyButton } from "./chrome";
+import { SequencePanel } from "./SequencePanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
@@ -33,7 +34,7 @@ export function CalculatorView(props: CalculatorModel) {
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "Stack empty. Press 1.";
-  const named = top && !fieldError ? captionName(top.text, top.value, top.caption) : null;
+  const named = top && !fieldError && top.text !== "0" && top.text !== "−0" ? captionName(top.text, top.value, top.caption) : null;
   const preview = top ? pressPreviewForNode(top.node) : null;
   const agreement = top && top.notice !== "couldn't verify" ? agreementNote(top.caption, top.value, top.bound ?? {}, top.text) : null;
   const pressCount = preview?.presses.toString();
@@ -120,9 +121,10 @@ export function CalculatorView(props: CalculatorModel) {
               {fieldError && top ? " previous" : ""}
             </p>
             <p className="ti-lcd-caption">
-              {top ? top.caption : "Press 1, then 1, then EML. That is e."}
+              {top ? (top.caption.length > 80 ? `${preview?.presses.toString() ?? "many"} presses` : top.caption) : "Press 1, then 1, then EML. That is e."}
               {named ? ` · ${named}` : ""}
             </p>
+            {top?.sequence ? <SequencePanel sequence={top.sequence} typed={top.caption.length > 80 || /^\d+ presses$/.test(top.caption) ? "a loaded word" : top.caption} result={top.text} /> : null}
             {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
             {top && shownSingular(top) ? <p className="ti-lcd-flag">{shownSingular(top)}</p> : null}
             {pressLine ? <p className="ti-press">{pressLine}</p> : null}

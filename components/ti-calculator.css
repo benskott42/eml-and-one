@@ -544,6 +544,67 @@ html.ti-two-buttons .ti-btn-eml {
   text-transform: uppercase;
 }
 
+.ti-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 4px 0;
+}
+
+.ti-press-chip {
+  min-width: 1.6rem;
+  padding: 1px 3px;
+  border: 1px solid var(--lcd-ink);
+  font-size: 0.85rem;
+}
+
+.ti-press-chip.is-group {
+  margin-left: 6px;
+}
+
+.ti-press-chip:focus {
+  outline: 2px solid var(--lcd-ink);
+  outline-offset: 1px;
+}
+
+.ti-glue {
+  opacity: 0.55;
+  margin: 2px 0 2px 12px;
+}
+
+.ti-outline {
+  margin-left: 10px;
+}
+
+.ti-outline-row,
+.ti-flat-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  min-height: 44px;
+  padding: 4px 0;
+}
+
+.ti-pill {
+  border: 1px solid var(--lcd-ink);
+  border-radius: 99px;
+  padding: 0 6px;
+}
+
+.ti-flat-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
 .ti-chip:active:not(:disabled),
 .ti-text-btn:active:not(:disabled) {
   transform: translateY(2px);
