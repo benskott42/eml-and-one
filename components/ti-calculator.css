@@ -94,7 +94,7 @@ html.ti-two-buttons .ti-btn-eml {
   outline-offset: 3px;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) {
   .ti-home {
     display: inline-flex;
     align-items: center;
@@ -102,6 +102,7 @@ html.ti-two-buttons .ti-btn-eml {
     min-width: 44px;
     min-height: 44px;
     padding: 0 8px;
+    box-sizing: border-box;
   }
 }
 

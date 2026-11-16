@@ -446,6 +446,12 @@ try {
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }, sessionId);
   const steppedBack = await waitFor(exactProbe(7), 180_000);
   report("body ArrowLeft steps 8 to 7 and shows exactly 7", steppedBack === "ok", String(steppedBack));
+  await evalJs(`document.querySelector("a.ti-home")?.focus()`);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 }, sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 }, sessionId);
+  await delay(200);
+  const linkHeld = await evalJs(`document.getElementById("nbig")?.textContent || ""`);
+  report("arrow keys ignore a focused link", linkHeld === "7", String(linkHeld));
 
   await evalJs(`document.getElementById("mfloat").click()`);
   const pressed = await evalJs(`({
@@ -641,6 +647,14 @@ try {
     })()`, 10_000);
     report("bad address " + bad + " shows an error", rejected === "ok", String(rejected));
   }
+  await evalJs(`location.hash = "#nope"`);
+  const nope = await waitFor(`(() => {
+    const error = document.getElementById("n-error")?.textContent || "";
+    const shown = document.getElementById("nbig")?.textContent || "";
+    const wordmark = document.querySelector("h1")?.textContent || "";
+    return error.includes("−50") && shown === "—" && location.hash === "#nope" && wordmark.includes("EML") ? "ok" : error + "|" + shown + "|" + location.hash;
+  })()`, 10_000);
+  report("bad address #nope shows an error", nope === "ok", String(nope));
   await evalJs(`location.hash = "#n=-5"`);
   await waitFor(`document.getElementById("nbig")?.textContent === "−5" ? "ok" : ""`);
 
@@ -744,29 +758,57 @@ try {
 
   await evalJs(`document.querySelector("a.ti-home")?.click()`);
   const onCalc = await waitFor(`document.body.innerText.includes("a two-button calculator") ? "yes" : ""`, 20_000);
-  const focused = await evalJs(`document.activeElement?.tagName || ""`);
-  report("page change moves focus to the heading", onCalc === "yes" && focused === "H1", focused);
+  const focused = await waitFor(`document.activeElement?.tagName === "H1" ? "H1" : ""`, 5_000);
+  report("page change moves focus to the heading", onCalc === "yes" && focused === "H1", String(focused));
+  await evalJs(`(() => {
+    const input = document.getElementById("expr");
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "1+1");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    [...document.querySelectorAll("button")].find((item) => item.getAttribute("aria-label")?.startsWith("Push the constant 1"))?.click();
+  })()`);
+  const stacked = await waitFor(`(() => {
+    const tape = document.querySelector(".ti-footer .ti-tape")?.textContent || "";
+    const result = document.querySelector(".ti-lcd-result")?.textContent || "";
+    const expr = document.getElementById("expr")?.value || "";
+    return tape.includes("1") && result.trim() === "1" && expr === "1+1" ? "ok" : "";
+  })()`);
+  const lengthBefore = await evalJs(`history.length`);
   await evalJs(`([...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n") || {}).click()`);
   const onCount = await waitFor(`document.getElementById("nbig")?.textContent ? "yes" : ""`, 20_000);
-  await delay(900);
-  const lengthReady = await evalJs(`history.length`);
   await evalJs(`document.querySelector("[aria-label='n plus 1']")?.click()`);
-  await delay(200);
-  const lengthOne = await evalJs(`history.length`);
-  const shownOne = await evalJs(`document.getElementById("nbig")?.textContent || ""`);
-  await delay(900);
   await evalJs(`document.querySelector("[aria-label='n plus 1']")?.click()`);
-  await delay(200);
-  const lengthTwo = await evalJs(`history.length`);
-  const shownTwo = await evalJs(`document.getElementById("nbig")?.textContent || ""`);
-  report(
-    "n changes push one history entry per pause",
-    onCount === "yes" && lengthOne === lengthReady + 1 && lengthTwo === lengthOne + 1,
-    `${lengthReady} -> ${lengthOne} -> ${lengthTwo}`,
-  );
+  await delay(100);
+  const lengthAfter = await evalJs(`history.length`);
+  report("n updates do not add history entries", onCount === "yes" && lengthAfter === lengthBefore + 1, `${lengthBefore} -> ${lengthAfter}`);
   await evalJs(`history.back()`);
-  const previousN = await waitFor(`document.getElementById("nbig")?.textContent === ${JSON.stringify(String(shownOne))} ? "ok" : ""`, 10_000);
-  report("Back returns to the previous n", previousN === "ok" && shownTwo !== shownOne, `${shownTwo} -> ${shownOne}`);
+  const oneBack = await waitFor(`(() => {
+    const calc = document.body.innerText.includes("a two-button calculator");
+    const count = location.pathname.includes("/count");
+    return calc && !count ? "ok" : "";
+  })()`, 20_000);
+  report("one Back leaves Count to n", oneBack === "ok", String(oneBack));
+  const kept = await waitFor(`(() => {
+    const tape = document.querySelector(".ti-footer .ti-tape")?.textContent || "";
+    const result = document.querySelector(".ti-lcd-result")?.textContent || "";
+    const expr = document.getElementById("expr")?.value || "";
+    return tape.includes("1") && result.trim() === "1" && expr === "1+1" ? "ok" : "";
+  })()`);
+  report("calculator stack, tape, and expression survive the header", stacked === "ok" && kept === "ok", `${stacked} ${kept}`);
+
+  await evalJs(`([...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n") || {}).click()`);
+  await waitFor(`document.getElementById("nbig")?.textContent ? "yes" : ""`, 20_000);
+  await evalJs(`location.hash = "#n=20"`);
+  const edited = await waitFor(`document.getElementById("nbig")?.textContent === "20" ? "ok" : ""`);
+  await evalJs(`document.querySelector("a.ti-home")?.click()`);
+  await waitFor(`document.body.innerText.includes("a two-button calculator") ? "yes" : ""`, 20_000);
+  await evalJs(`history.back()`);
+  const returned = await waitFor(`(() => {
+    const model = document.querySelector(".ti-model")?.textContent || "";
+    const shown = document.getElementById("nbig")?.textContent || "";
+    return location.pathname.includes("/count") && model.includes("count to n") && shown === "20" ? "ok" : "";
+  })()`, 20_000);
+  report("Back after an edited address shows the count page", edited === "ok" && returned === "ok", `${edited} ${returned}`);
 
   const calcLoaded = waitEvent("Page.loadEventFired");
   await send("Page.navigate", { url: `http://127.0.0.1:${port}/eml-and-one/` }, sessionId);
@@ -779,6 +821,16 @@ try {
     return link ? link.href : "";
   })()`, 20000);
   report("calculator links to the count page", typeof calcLink === "string" && calcLink.includes("/count"), String(calcLink));
+  await send("Emulation.setDeviceMetricsOverride", { width: 844, height: 390, deviceScaleFactor: 1, mobile: true }, sessionId);
+  await delay(200);
+  const countToN = await evalJs(`(() => {
+    const link = [...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n");
+    if (!link) return null;
+    const rect = link.getBoundingClientRect();
+    return { w: Math.round(rect.width), h: Math.round(rect.height) };
+  })()`);
+  report("landscape Count to n link is at least 44px", Boolean(countToN) && countToN.h >= 44 && countToN.w >= 44, JSON.stringify(countToN));
+  await send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
   const calcTitle = await evalJs(`document.title`);
   report("calculator title stays distinct", calcTitle === "EML and One", String(calcTitle));
 

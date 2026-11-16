@@ -31,29 +31,31 @@ function clamp(n: number): number {
 }
 
 const hashListeners = new Set<() => void>();
-let lastPush = -1e9;
+let routeState: unknown = null;
 
 function notifyHash(): void {
   for (const onStoreChange of hashListeners) onStoreChange();
 }
 
-function urlFor(hash: string): string {
+function hasRouteState(state: unknown): boolean {
+  return Boolean(state && typeof state === "object" && "__NA" in state && (state as { __NA?: unknown }).__NA);
+}
+
+function rememberRouteState(): void {
+  if (hasRouteState(window.history.state)) routeState = window.history.state;
+}
+
+/** Replace the current entry. Pushing a hash makes Back show the wrong page. */
+function replaceUrl(hash: string): void {
+  rememberRouteState();
+  const state = hasRouteState(window.history.state) ? window.history.state : routeState;
+  if (!state) return;
   const params = new URLSearchParams(window.location.search);
   params.delete("back");
   const search = params.toString();
-  return `${window.location.pathname}${search ? `?${search}` : ""}${hash}`;
-}
-
-/** Push one entry per pause. Replace only to correct the current entry. */
-function commitHash(hash: string, how: "push" | "replace"): void {
-  const next = urlFor(hash);
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (current !== next) {
-    if (how === "push") history.pushState(null, "", next);
-    else history.replaceState(null, "", next);
-  }
-  rememberCountHash(hash);
-  notifyHash();
+  const suffix = `${search ? `?${search}` : ""}${hash}`;
+  if (`${window.location.search}${window.location.hash}` === suffix && hasRouteState(window.history.state)) return;
+  History.prototype.replaceState.call(window.history, state, "", `${window.location.pathname}${suffix}`);
 }
 
 type Parsed = { n: number | null; mode: Mode; error: string | null; raw: string | null };
@@ -61,7 +63,11 @@ type Parsed = { n: number | null; mode: Mode; error: string | null; raw: string 
 function parseHash(hash: string): Parsed {
   const mode: Mode = /noln0/.test(hash) ? "strict" : "ln0";
   const match = /(?:^|#|&)n=([^&]*)/.exec(hash);
-  if (!match) return { n: null, mode, error: null, raw: null };
+  if (!match) {
+    const bare = hash.replace(/^#/, "");
+    if (bare === "") return { n: null, mode, error: null, raw: null };
+    return { n: null, mode, error: N_ERROR, raw: bare };
+  }
   let token = match[1];
   try {
     token = decodeURIComponent(token);
@@ -78,7 +84,13 @@ function parseHash(hash: string): Parsed {
 function useLocationHash(): string | null {
   const [hash, setHash] = useState<string | null>(() => (typeof window === "undefined" ? null : window.location.hash));
   useLayoutEffect(() => {
-    const read = () => setHash(window.location.hash);
+    const read = () => {
+      rememberRouteState();
+      if (!hasRouteState(window.history.state) && routeState) {
+        History.prototype.replaceState.call(window.history, routeState, "", window.location.hash);
+      }
+      setHash(window.location.hash);
+    };
     hashListeners.add(read);
     read();
     window.addEventListener("hashchange", read);
@@ -92,15 +104,18 @@ function useLocationHash(): string | null {
   return hash;
 }
 
-function writeHash(n: number, mode: Mode, how?: "push" | "replace"): void {
+function writeHash(n: number, mode: Mode): void {
   const hash = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
-  const now = performance.now();
-  let method = how;
-  if (!method) {
-    method = now - lastPush > 800 ? "push" : "replace";
-    if (method === "push") lastPush = now;
+  replaceUrl(hash);
+  if (window.location.hash !== hash) {
+    window.setTimeout(() => {
+      rememberRouteState();
+      replaceUrl(hash);
+      notifyHash();
+    }, 0);
   }
-  commitHash(hash, method);
+  rememberCountHash(hash);
+  notifyHash();
 }
 
 function principalSentence(choice: CountChoice, agrees: boolean): string {
@@ -163,16 +178,18 @@ export function CountApp() {
     const returning = new URLSearchParams(window.location.search).get("back") === "1";
     const saved = readCountHash();
     if (returning && saved) {
-      commitHash(saved, "replace");
+      replaceUrl(saved);
+      if (window.location.hash !== saved) window.location.hash = saved;
+      notifyHash();
       return;
     }
     if (hash === "") {
-      writeHash(7, "ln0", "replace");
+      writeHash(7, "ln0");
       return;
     }
     if (parsed.error || n === null) return;
     const canonical = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
-    if (hash !== canonical) writeHash(n, mode, "replace");
+    if (hash !== canonical) writeHash(n, mode);
     else rememberCountHash(canonical);
   }, [hash, n, mode, parsed.error]);
 
@@ -217,9 +234,11 @@ export function CountApp() {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      const inText = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range");
+      const inField = target instanceof Element && Boolean(target.closest("a, button, input, textarea, select"));
       const stepKey = event.key === "ArrowRight" || event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "ArrowDown";
       if (!stepKey) return;
+      if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && inField) return;
+      const inText = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range");
       if (inText && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       if (n === null) return;
       event.preventDefault();
