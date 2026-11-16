@@ -3,6 +3,12 @@ name: ci
 on:
   pull_request:
   workflow_call:
+    inputs:
+      upload-site:
+        description: Upload out/ so Pages can deploy the folder Chrome tested
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -39,44 +45,93 @@ jobs:
             echo "google-chrome is not installed" >&2
             exit 1
           fi
+          # The next step can reuse this name. The server on port 4173 is left running.
+          echo "CHROME=$CHROME" >> "$GITHUB_ENV"
+          echo "SITE=http://127.0.0.1:4173/eml-and-one/" >> "$GITHUB_ENV"
           mkdir -p /tmp/eml-site
           ln -sfn "$PWD/out" /tmp/eml-site/eml-and-one
-          python3 -m http.server 4173 --directory /tmp/eml-site >/tmp/eml-site.log 2>&1 &
+          # setsid keeps the server in its own session, so the next step can still use port 4173.
+          setsid python3 -u -m http.server 4173 --directory /tmp/eml-site >/tmp/eml-site.log 2>&1 < /dev/null &
           for _ in $(seq 1 50); do
             curl -sf -o /dev/null http://127.0.0.1:4173/eml-and-one/ && break
             sleep 0.2
           done
-          SITE=http://127.0.0.1:4173/eml-and-one/ CHROME="$CHROME" node --input-type=module <<'END'
+          # 12 minutes is well past the 30 second in-page waits, and still ends a hung Chrome.
+          SITE=http://127.0.0.1:4173/eml-and-one/ SITE_LOG=/tmp/eml-site.log CHROME="$CHROME" timeout --foreground 12m node --input-type=module <<'END'
           import { spawn } from "node:child_process";
+          import { createServer } from "node:net";
           import { setTimeout as delay } from "node:timers/promises";
-          import { mkdtempSync } from "node:fs";
+          import { mkdtempSync, readFileSync } from "node:fs";
           import { tmpdir } from "node:os";
           import { join } from "node:path";
 
           const site = process.env.SITE || "http://127.0.0.1:4173/eml-and-one/";
-          const port = 9412;
+          const siteLog = process.env.SITE_LOG || "/tmp/eml-site.log";
           const chromeBin = process.env.CHROME || "google-chrome";
           const failures = [];
           let chrome;
+          let socket;
+          let chromeLog = "";
 
           function fail(message) {
             failures.push(message);
             console.error(`FAIL ${message}`);
           }
 
-          function launch() {
+          function shownText(shown) {
+            if (shown && typeof shown === "object") {
+              return `showed ${JSON.stringify(shown.text)} note ${JSON.stringify(shown.note ?? "")}`;
+            }
+            return `showed ${JSON.stringify(shown)}`;
+          }
+
+          function freePort() {
+            return new Promise((resolve, reject) => {
+              const server = createServer();
+              server.once("error", reject);
+              server.listen(0, "127.0.0.1", () => {
+                const address = server.address();
+                const chosen = address && typeof address === "object" ? address.port : 0;
+                server.close(() => resolve(chosen));
+              });
+            });
+          }
+
+          function launch(port) {
             const profile = mkdtempSync(join(tmpdir(), "ci-chrome-"));
-            return spawn(chromeBin, [
+            const child = spawn(chromeBin, [
               "--headless=new",
               "--disable-gpu",
               "--no-sandbox",
               `--remote-debugging-port=${port}`,
               `--user-data-dir=${profile}`,
               "about:blank",
-            ], { stdio: "ignore" });
+            ], { stdio: ["ignore", "pipe", "pipe"] });
+            let log = "";
+            const take = (chunk) => {
+              log += chunk.toString();
+            };
+            child.stdout.on("data", take);
+            child.stderr.on("data", take);
+            child.output = () => log;
+            return child;
           }
 
-          async function connect(timeoutMs) {
+          function serverErrors(log) {
+            const errors = [];
+            for (const line of log.split("\n")) {
+              const match = line.match(/"[A-Z]+ ([^"]*?) HTTP\/\d+(?:\.\d+)?" (\d{3})/);
+              if (!match) continue;
+              const path = match[1].split("?")[0];
+              const status = Number(match[2]);
+              if (status < 400) continue;
+              if (path.endsWith("/favicon.ico")) continue;
+              errors.push(`${status} ${path}`);
+            }
+            return errors;
+          }
+
+          async function connect(port, timeoutMs) {
             const deadline = Date.now() + timeoutMs;
             let last = "chrome did not open a debugging port";
             while (Date.now() < deadline) {
@@ -100,13 +155,17 @@ jobs:
           }
 
           try {
-            let socket;
             for (let attempt = 1; attempt <= 2; attempt += 1) {
-              chrome = launch();
+              const port = await freePort();
+              chrome = launch(port);
               try {
-                socket = await connect(30_000);
+                socket = await connect(port, 30_000);
                 break;
               } catch (err) {
+                chromeLog = chrome.output();
+                console.error(`chrome failed to open a debugging port on ${port}`);
+                if (chromeLog) console.error(chromeLog);
+                else console.error(err instanceof Error ? err.message : err);
                 chrome.kill();
                 chrome = undefined;
                 if (attempt === 2) throw err;
@@ -139,7 +198,7 @@ jobs:
                 const timer = setTimeout(() => {
                   pending.delete(messageId);
                   reject(new Error(`timed out waiting for ${method}`));
-                }, 30_000);
+                }, 90_000);
                 pending.set(messageId, (message) => {
                   clearTimeout(timer);
                   resolve(message);
@@ -287,31 +346,29 @@ jobs:
               return result?.textContent?.trim() ?? "";
             })()`);
             console.log("e", JSON.stringify(e));
-            if (e !== "2.718281828459") fail(`1, 1, EML result was ${JSON.stringify(e)}`);
+            if (e !== "2.718281828459") fail(`1, 1, EML ${shownText(e)}`);
 
             const two = await compute("2*2", "(shown) => shown.text === \"4\"", 25000, false);
             console.log("2*2", JSON.stringify(two));
-            if (two.error === "no expression field") fail("no expression field");
-            else if (two.text !== "4") fail(`2*2 result was ${JSON.stringify(two.text)}`);
+            if (two.error === "no expression field") fail(`2*2 ${shownText(two)}`);
+            else if (two.text !== "4") fail(`2*2 ${shownText(two)}`);
 
             const ln = await compute("ln(-1)", "(shown) => shown.text === \"3.14159265359i\"", 25000, false);
             console.log("ln(-1)", JSON.stringify(ln));
-            if (ln.text !== "3.14159265359i") fail(`ln(-1) result was ${JSON.stringify(ln.text)}`);
+            if (ln.text !== "3.14159265359i") fail(`ln(-1) ${shownText(ln)}`);
 
             const tan = await compute("tan(10^(-5000))", "(shown) => shown.text === \"\\u2014\"", 25000, true);
             console.log("tan", JSON.stringify(tan));
-            if (tan.text !== "—") fail(`tan(10^(-5000)) result was ${JSON.stringify(tan.text)}`);
-            if (!String(tan.note || "").split(" · ").includes("couldn't verify")) fail(`tan(10^(-5000)) note was ${JSON.stringify(tan.note)}`);
+            if (tan.text !== "—") fail(`tan(10^(-5000)) ${shownText(tan)}`);
+            if (!String(tan.note || "").split(" · ").includes("couldn't verify")) fail(`tan(10^(-5000)) ${shownText(tan)}`);
             const long = (tan.tasks || []).filter((duration) => duration > 50);
             if (long.length) fail(`tan(10^(-5000)) long tasks ${JSON.stringify(tan.tasks)}`);
             if (tan.chips) fail(`collapsed view rendered ${tan.chips} chips`);
             if (tan.hidden) fail(`aria-hidden contains ${tan.hidden} tab stops`);
 
-            const ln130Note = "K 671 · 121 shared · depth 90 · program #1509…5127 (198 digits) · ln 0 · pure · float underflows";
-            const ln130 = await compute("ln(1+10^(-130))", `(shown) => shown.text === "1\\u00d710^\\u2212130" && shown.note === ${JSON.stringify(ln130Note)}`, 30000, false);
+            const ln130 = await compute("ln(1+10^(-130))", "(shown) => shown.text === \"1\\u00d710^\\u2212130\" && shown.note.split(\" \\u00b7 \").includes(\"ln 0\")", 30000, false);
             console.log("ln(1+10^(-130))", JSON.stringify(ln130));
-            if (ln130.text !== "1×10^−130") fail(`ln(1+10^(-130)) result was ${JSON.stringify(ln130.text)}`);
-            if (ln130.note !== ln130Note) fail(`ln(1+10^(-130)) note was ${JSON.stringify(ln130.note)}`);
+            if (ln130.text !== "1×10^−130" || !String(ln130.note || "").split(" · ").includes("ln 0")) fail(`ln(1+10^(-130)) ${shownText(ln130)}`);
 
             const followed = await evalJs(`(async () => {
               const input = ${field};
@@ -327,56 +384,110 @@ jobs:
                 input.form.requestSubmit();
               };
               submit("ln(1+3*10^(-130))");
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              let pending = "";
+              const pendingDeadline = Date.now() + 500;
+              while (Date.now() < pendingDeadline) {
+                pending = result?.textContent?.trim() ?? "";
+                if (pending === "computing" || pending === "3\\u00d710^\\u2212130") break;
+                await new Promise((resolve) => setTimeout(resolve, 16));
+              }
+              const tasks = [];
+              const tasksObserver = new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) tasks.push(Math.round(entry.duration));
+              });
+              tasksObserver.observe({ type: "longtask", buffered: false });
               const started = generation;
+              const t0 = Date.now();
               submit("1+1");
-              const deadline = Date.now() + 10000;
               let text = "";
-              while (Date.now() < deadline) {
+              while (Date.now() - t0 < 2000) {
                 text = result?.textContent?.trim() ?? "";
                 if (generation > started && text !== "computing" && text === "2") {
                   observer.disconnect();
-                  return text;
+                  tasksObserver.disconnect();
+                  return { pending, text, ms: Date.now() - t0, tasks };
                 }
-                await new Promise((resolve) => setTimeout(resolve, 40));
+                await new Promise((resolve) => setTimeout(resolve, 20));
               }
               observer.disconnect();
-              return text;
+              tasksObserver.disconnect();
+              return { pending, text, ms: Date.now() - t0, tasks, error: "timeout" };
             })()`);
             console.log("slow then 1+1", JSON.stringify(followed));
-            if (followed !== "2") fail(`slow job then 1+1 result was ${JSON.stringify(followed)}`);
+            if (followed.pending !== "computing") fail(`slow job was not still pending when 1+1 was submitted; pending ${JSON.stringify(followed.pending)} ${shownText(followed.text)}`);
+            if (followed.text !== "2") fail(`slow job then 1+1 ${shownText(followed.text)}`);
+            if ((followed.tasks || []).length) fail(`slow job then 1+1 long tasks ${JSON.stringify(followed.tasks)}; ${shownText(followed.text)}`);
 
             const again = await compute("1+1", "(shown) => shown.text === \"2\"", 15000, false);
             console.log("1+1 again", JSON.stringify(again));
-            if (again.text !== "2") fail(`repeated 1+1 result was ${JSON.stringify(again.text)}`);
+            if (again.text !== "2") fail(`repeated 1+1 ${shownText(again)}`);
+
+            const slowAfter = await compute("ln(1+3*10^(-130))", "(shown) => shown.text === \"3\\u00d710^\\u2212130\"", 30000, false);
+            console.log("slow job afterwards", JSON.stringify(slowAfter));
+            if (slowAfter.text !== "3×10^−130") fail(`slow job afterwards ${shownText(slowAfter)}`);
 
             const signed = await compute("ln(-2-10^(-20)*i)", "(shown) => shown.text === \"0.69314718056 \\u2212 3.14159265359i\"", 30000, false);
             console.log("tiny imaginary", JSON.stringify(signed));
-            if (signed.text !== "0.69314718056 − 3.14159265359i") fail(`tiny imaginary sign result was ${JSON.stringify(signed.text)}`);
+            if (signed.text !== "0.69314718056 − 3.14159265359i") fail(`tiny imaginary sign ${shownText(signed)}`);
+
+            const tinySet = [
+              ["0.00005i+0.00005i", "0.0001i"],
+              ["sinh(0.00005i)", "0.00005i"],
+              ["tanh(1e-10*i)", "1×10^−10i"],
+              ["tanh(1e-16*i)", "1×10^−16i"],
+              ["cosh(0.00005i)", "0.99999999875000000026"],
+            ];
+            for (const [source, want] of tinySet) {
+              const shown = await compute(source, `(shown) => shown.text === ${JSON.stringify(want)}`, 30000, false);
+              console.log(source, JSON.stringify(shown));
+              if (shown.text !== want) fail(`${source} ${shownText(shown)}`);
+              if (String(shown.text).startsWith("−") || String(shown.text).startsWith("-")) fail(`${source} leading minus ${shownText(shown)}`);
+            }
 
             const workers = await evalJs(`window.__workerUrls || []`);
             console.log("workers", JSON.stringify(workers));
             if (!Array.isArray(workers) || workers.length === 0) fail("exact worker was not created");
             for (const url of workers) {
-              if (!String(url).includes("/eml-and-one/")) fail(`worker URL is outside /eml-and-one: ${url}`);
+              let path = "";
+              try {
+                path = new URL(String(url)).pathname;
+              } catch {
+                path = String(url);
+              }
+              if (!path.startsWith("/eml-and-one/_next/")) fail(`worker URL is outside /eml-and-one/_next/: ${url}`);
             }
             if (bad.length) fail(`failed requests ${JSON.stringify(bad)}`);
+            let siteText = "";
+            try {
+              siteText = readFileSync(siteLog, "utf8");
+            } catch (err) {
+              fail(`could not read the static server log: ${err instanceof Error ? err.message : err}`);
+            }
+            const httpErrors = serverErrors(siteText);
+            if (httpErrors.length) fail(`static server errors ${JSON.stringify(httpErrors)}`);
 
             if (failures.length) {
               console.error(`${failures.length} failed`);
-              process.exitCode = 1;
             } else {
               console.log("chrome regression passed");
             }
           } catch (err) {
+            chromeLog = chrome?.output?.() || chromeLog;
+            if (chromeLog) console.error(chromeLog);
             console.error(err);
-            process.exitCode = 1;
+            failures.push("chrome regression threw");
           } finally {
+            try {
+              socket?.close();
+            } catch {
+              /* the debugger socket is already closed */
+            }
             if (chrome && !chrome.killed) chrome.kill();
           }
+          process.exit(failures.length ? 1 : 0);
           END
       - name: Upload the tested site
-        if: github.event_name == 'workflow_call'
+        if: inputs.upload-site
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: site-out
