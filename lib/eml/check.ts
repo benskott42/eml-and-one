@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
+import Decimal from "decimal.js";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
-import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
@@ -2962,6 +2964,87 @@ failed += runPropertyChecks();
         failed += 1;
         console.log("FAIL fresh ln", row.source, row.unverified ? "unverified" : row.text);
       }
+    }
+  }
+}
+
+{
+  // Long literals cross the worker as text. This process is new, so a WeakMap
+  // from the builder cannot be what supplies the digits.
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const tsxCli = createRequire(path.join(repoRoot, "package.json")).resolve("tsx/cli");
+  const pasted = (BigInt(2) ** BigInt(300)).toString();
+  const wide = Decimal.clone({ precision: 1200, minE: -9e15, maxE: 9e15 });
+  const oraclePow = new wide(2).pow(300).toFixed(0);
+  const threes = `0.${"3".repeat(200)}`;
+  const oracleThrees = new wide(threes).times(3).minus(1).toFixed();
+  const long = `1${"0".repeat(3998)}1`;
+  const sources: Record<string, string> = {
+    pow: pasted,
+    diff: `(${pasted}+1)-${pasted}`,
+    threes: `${threes}*3-1`,
+    long,
+  };
+  if (oraclePow !== pasted) {
+    failed += 1;
+    console.log("FAIL 1200-digit 2^300 oracle");
+  }
+  const jobs = Object.entries(sources).map(([id, source]) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { id, tokens: packed.tokens, root: packed.root };
+  });
+  const powToken = jobs.find((job) => job.id === "pow")?.tokens.find((token) => token.k === "in");
+  const longToken = jobs.find((job) => job.id === "long")?.tokens.find((token) => token.k === "in");
+  if (!powToken || powToken.k !== "in" || powToken.lit !== 1 || powToken.label !== pasted) {
+    failed += 1;
+    console.log("FAIL 2^300 wire label");
+  }
+  if (!longToken || longToken.k !== "in" || longToken.lit !== 1 || longToken.re !== null || longToken.label !== long) {
+    failed += 1;
+    console.log("FAIL 4000-digit wire", longToken && longToken.k === "in" ? longToken.re : "missing");
+  }
+  const child = spawnSync(process.execPath, [tsxCli, path.join(repoRoot, "scripts/fresh-literal.ts")], {
+    cwd: repoRoot,
+    input: JSON.stringify(jobs),
+    encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 32 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (child.status !== 0 || !child.stdout) {
+    failed += 1;
+    console.log("FAIL fresh literal process", child.status, child.stderr?.slice(0, 500));
+  } else {
+    const rows = JSON.parse(child.stdout) as Array<{
+      id: string;
+      text?: string;
+      re?: string;
+      literal?: string | null;
+      unverified?: boolean;
+      ms?: number;
+      error?: string;
+    }>;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const pow = byId.get("pow");
+    const diff = byId.get("diff");
+    const third = byId.get("threes");
+    const big = byId.get("long");
+    if (!pow || pow.error || pow.unverified || pow.re !== oraclePow || pow.literal !== pasted) {
+      failed += 1;
+      console.log("FAIL pasted 2^300", pow?.error ?? pow?.text, pow?.literal?.length);
+    }
+    if (!diff || diff.error || diff.unverified || diff.re !== "1") {
+      failed += 1;
+      console.log("FAIL (2^300+1)-2^300", diff?.error ?? diff?.text, diff?.re);
+    }
+    if (!third || third.error || third.unverified || third.re !== oracleThrees) {
+      failed += 1;
+      console.log("FAIL 200 threes", third?.error ?? third?.text, third?.re, "oracle", oracleThrees);
+    }
+    const longMs = big?.ms ?? Number.POSITIVE_INFINITY;
+    if (!big || big.error || big.literal !== long || longMs > 2_000) {
+      failed += 1;
+      console.log("FAIL 4000-digit literal", big?.error ?? big?.text, big?.literal?.length, longMs);
     }
   }
 }

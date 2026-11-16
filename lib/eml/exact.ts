@@ -9,6 +9,7 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  exactLiteralOf,
   precisionMessage,
 } from "./node";
 import { decadeOf, inScaledShell, knownValue } from "./lowering";
@@ -525,6 +526,25 @@ function settleResidue(
   return residueParts(current).length === 0 ? current : certifyZero(current);
 }
 
+/** Significant digits of any pasted literal in this circuit. */
+function literalSpan(root: Node): number {
+  let span = 0;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (n.type === "input") {
+      const text = exactLiteralOf(n);
+      if (text) span = Math.max(span, text.replace(/[^0-9]/g, "").replace(/^0+/, "").length);
+    } else if (n.type === "eml" && n.a && n.b) {
+      stack.push(n.a, n.b);
+    }
+  }
+  return span;
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -538,6 +558,18 @@ export function exactReport(
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
   lossGap = 0;
+  // A pasted literal can be longer than the working precision. Evaluate it
+  // where those digits fit, up to the same 480-digit cap as every other retry.
+  if (pass === 0) {
+    const span = literalSpan(root);
+    if (span > D.precision && span + 16 <= PRECISION_CAP) {
+      // Cancellation can spend the whole literal, so keep a full working precision past it.
+      let lifted = atPrecision(Math.min(PRECISION_CAP, span + PRECISION + 32), root, env, budget);
+      lifted = settleResidue(lifted, root, env, budget);
+      if (lifted.unverified) return lifted;
+      return confirmDust(present(lifted), root, env, budget);
+    }
+  }
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
   if (vanished(report.value)) {
@@ -633,7 +665,8 @@ function exactReportOnce(
       continue;
     }
     if (n.type === "input") {
-      const leaf = z(n.value.re, n.value.im);
+      const literal = exactLiteralOf(n);
+      const leaf = literal !== undefined ? z(literal) : z(n.value.re, n.value.im);
       memo.set(n, leaf);
       noteSeen(leaf);
       why.set(n, null);

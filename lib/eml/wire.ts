@@ -1,11 +1,11 @@
 import { decadeOf, inScaledShell, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, type Node } from "./node";
+import { E, ONE, V, exactLiteralOf, input, isSeriesShortcut, markSeriesShortcut, noteExactLiteral, notePrecision, precisionNoteOf, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string }
+  | { i: number; k: "in"; re: number | null; im: number | null; label: string; lit?: 1 }
   | {
       i: number;
       k: "E";
@@ -41,7 +41,14 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       idOf.set(frame.n, i);
       if (frame.n.type === "one") tokens.push({ i, k: "1" });
       else if (frame.n.type === "var") tokens.push({ i, k: "v", n: frame.n.name });
-      else if (frame.n.type === "input") tokens.push({ i, k: "in", re: frame.n.value.re, im: frame.n.value.im, label: frame.n.label });
+      else if (frame.n.type === "input") {
+        const literal = exactLiteralOf(frame.n);
+        const re = Number.isFinite(frame.n.value.re) ? frame.n.value.re : null;
+        const im = Number.isFinite(frame.n.value.im) ? frame.n.value.im : null;
+        const token: Wire = { i, k: "in", re, im, label: frame.n.label };
+        if (literal !== undefined) token.lit = 1;
+        tokens.push(token);
+      }
       continue;
     }
     if (!frame.seen) {
@@ -79,7 +86,17 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
   for (const tok of tokens) {
     if (tok.k === "1") nodes[tok.i] = ONE;
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
-    else if (tok.k === "in") nodes[tok.i] = input({ re: tok.re, im: tok.im }, tok.label);
+    else if (tok.k === "in") {
+      const re =
+        typeof tok.re === "number" && Number.isFinite(tok.re)
+          ? tok.re
+          : tok.label.trim().startsWith("-")
+            ? Number.NEGATIVE_INFINITY
+            : Number.POSITIVE_INFINITY;
+      const im = typeof tok.im === "number" && Number.isFinite(tok.im) ? tok.im : 0;
+      const node = input({ re, im }, tok.label);
+      nodes[tok.i] = tok.lit ? noteExactLiteral(node, tok.label) : node;
+    }
     else {
       const a = nodes[tok.a];
       const b = nodes[tok.b];

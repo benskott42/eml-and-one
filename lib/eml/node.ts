@@ -87,6 +87,18 @@ export function provenInteger(node: Node): bigint | undefined {
   return provenBig.get(node);
 }
 
+const exactLiterals = new WeakMap<Node, string>();
+
+/** The decimal text a long literal was parsed from. The float value drops digits past 2^53. */
+export function noteExactLiteral(node: Node, text: string): Node {
+  exactLiterals.set(node, text);
+  return node;
+}
+
+export function exactLiteralOf(node: Node): string | undefined {
+  return exactLiterals.get(node);
+}
+
 /**
  * Float64 rotSub leaves the exact strip outside (−71π, 71π).
  * The top end underflows: [71π, 73π) is barely subnormal and [73π, 75π)
