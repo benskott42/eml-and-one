@@ -592,14 +592,16 @@ function sumComplement(subtrahend: Node, minuend: Node): Node | null {
   return null;
 }
 
-/** a − (a − c) = c, (a − c) − a = −c, and (a − c) − c = a. */
+/**
+ * a − (a − c) = c and (a − c) − a = −c, when both parts are finite.
+ * (a − c) − c is a − 2c. Folding that arm back to a cancels one subtraction.
+ */
 function subComplement(minuend: Node, subtrahend: Node): Node | null {
   const inner = realSub.get(subtrahend);
   if (inner && provenFinite(inner.left) && provenFinite(inner.right) && inner.left === minuend) return inner.right;
   const outer = realSub.get(minuend);
   if (!outer || !provenFinite(outer.left) || !provenFinite(outer.right)) return null;
   if (outer.left === subtrahend) return domainNeg(outer.right);
-  if (outer.right === subtrahend) return outer.left;
   return null;
 }
 
