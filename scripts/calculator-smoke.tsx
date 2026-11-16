@@ -65,6 +65,11 @@ async function main() {
     console.error("phone display cap or landscape layout is missing");
     failed = true;
   }
+  const resultRule = css.match(/\.ti-lcd-result\s*\{[^}]*\}/)?.[0] ?? "";
+  if (/ellipsis|nowrap/.test(resultRule) || !resultRule.includes("white-space: normal")) {
+    console.error("the result must wrap instead of ellipsizing", resultRule);
+    failed = true;
+  }
   if (!font.includes("SIL Open Font License")) {
     console.error("VT323 license is not the SIL Open Font License");
     failed = true;
@@ -123,6 +128,18 @@ async function main() {
     return resultText();
   };
   await waitResult();
+  const resultNode = view.document.querySelector(".ti-lcd-result");
+  if (!(resultNode instanceof view.HTMLElement)) {
+    console.error("missing result element");
+    failed = true;
+  } else {
+    const style = view.getComputedStyle(resultNode);
+    const clips = (style.overflow === "hidden" || style.overflowX === "hidden") && resultNode.scrollWidth > resultNode.clientWidth + 1;
+    if (style.textOverflow === "ellipsis" || style.whiteSpace === "nowrap" || clips) {
+      console.error("the result ellipsizes a value", resultNode.textContent, style.textOverflow, style.whiteSpace, resultNode.scrollWidth, resultNode.clientWidth);
+      failed = true;
+    }
+  }
   const built = screenText();
   if (!resultText().includes("2.718") || !built.includes("110")) {
     console.error("pressing 1, 1, EML did not build e", built);

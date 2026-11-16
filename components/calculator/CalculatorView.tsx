@@ -13,6 +13,26 @@ import { SequencePanel } from "./SequencePanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
+/** Keep a real part, its sign, and an imaginary part each on one line. */
+function ResultText({ shown }: { shown: string }) {
+  const approx = shown.endsWith(" ≈");
+  const body = approx ? shown.slice(0, -2) : shown;
+  const match = body.match(/^(.*?)(\s+[+\u2212]\s+)(.+)$/);
+  const mark = approx ? <span className="ti-lcd-term">≈</span> : null;
+  if (!match) {
+    return approx ? <>{body} {mark}</> : shown;
+  }
+  const sign = match[2].trim();
+  return (
+    <>
+      <span className="ti-lcd-term">{match[1]}</span>
+      {" "}
+      <span className="ti-lcd-term">{sign} {match[3]}</span>
+      {approx ? <> {mark}</> : null}
+    </>
+  );
+}
+
 const EXAMPLES = [
   { label: "e", expr: "e" },
   { label: "π", expr: "pi" },
@@ -139,7 +159,7 @@ export function CalculatorView(props: CalculatorModel) {
             <div className="ti-lcd-stack" tabIndex={0} aria-label="Stack history">
               {buried.map((item, index) => (
                 <p key={`${item.caption}-${index}`}>
-                  {item.text}
+                  <ResultText shown={item.text} />
                   <span className="ti-lcd-sep"> · </span>
                   {item.caption}
                 </p>
@@ -148,7 +168,7 @@ export function CalculatorView(props: CalculatorModel) {
             <div className="ti-lcd-pin">
             <div className="ti-lcd-readout">
               <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite" title={readout}>
-                {readout}
+                <ResultText shown={readout} />
                 {fieldError && top ? " previous" : ""}
               </p>
               <div className="ti-lcd-copies">

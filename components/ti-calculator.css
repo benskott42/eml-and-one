@@ -165,9 +165,8 @@ html.ti-two-buttons .ti-btn-eml {
 
 .ti-lcd-stack p {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
 }
 
 .ti-lcd-readout {
@@ -192,12 +191,20 @@ html.ti-two-buttons .ti-btn-eml {
   min-width: 0;
   max-width: 100%;
   margin: 0.25rem 0 0.15rem;
-  font-size: clamp(1.8rem, 8vw, 2.8rem);
-  line-height: 0.95;
+  /* Wrap on the spaces between a real part, its sign, and an imaginary
+     part. Digits stay together; the screen scrolls if a value is still
+     taller than the cap. */
+  font-size: clamp(1.35rem, 6.5vw, 2.4rem);
+  line-height: 1.05;
   letter-spacing: 0.01em;
-  overflow: hidden;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: normal;
+  text-overflow: clip;
+}
+
+.ti-lcd-term {
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .ti-lcd-sep {
@@ -800,6 +807,25 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-prime,
   .ti-form {
     margin-top: 4px;
+  }
+}
+
+/* 1280×800 is tall enough for the screen to grow past the keys. Cap the
+   screen and scroll inside it so 1 and EML stay on the first page. */
+@media (min-width: 641px) and (max-height: 900px) {
+  .ti-stage {
+    padding: 12px 16px 16px;
+  }
+
+  .ti-lcd {
+    max-height: 15rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .ti-lcd-stack {
+    max-height: 3.4rem;
+    overflow: auto;
   }
 }
 
