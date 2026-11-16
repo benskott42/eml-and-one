@@ -839,8 +839,7 @@ html.ti-two-buttons .ti-btn-eml {
   }
 
   .ti-lcd-pin {
-    min-height: 0;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
   }
 
   .ti-lcd-result {
@@ -901,8 +900,7 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-lcd-pin {
     display: flex;
     flex-direction: column;
-    min-height: 0;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
   }
 
   .ti-lcd-readout {

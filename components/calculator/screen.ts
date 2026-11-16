@@ -90,9 +90,13 @@ export function runNode(node: Node, mode: Mode, budget?: { maxNodes?: number }):
   }
   try {
     const report = evaluateReport(node, {}, { maxNodes: budget?.maxNodes ?? 80_000 });
+    let text = formatC(report.value);
+    // 10^(-400) underflows to a zero whose imaginary part is −0, and the
+    // formatter prints that as −0. The value is not negative. Show 0, flagged.
+    if (report.underflowed && (text === "−0" || text === "-0")) text = "0 ≈";
     return {
       value: report.value,
-      text: formatC(report.value),
+      text,
       singular: report.singular,
       mode,
       touchedLn0: report.touchedLn0,

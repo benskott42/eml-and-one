@@ -56,9 +56,10 @@ const viewports = [
   { width: 1280, height: 800 },
 ];
 const samples = [
-  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i" },
+  { name: "one", expr: "2+2", includes: "4", copy: "4" },
+  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i", copy: "1.414213562373-0.000314159265i" },
   { name: "exponent", expr: "1.234568*10^20", includes: "1234568" },
-  { name: "power", expr: "2^300", includes: "2037035976" },
+  { name: "power", expr: "2^300", includes: "2037035976", copy: (BigInt(2) ** BigInt(300)).toString() },
 ];
 
 try {
@@ -152,6 +153,15 @@ try {
     const inside = (inner, outer) => !!inner && inner.top >= outer.top - 1 && inner.left >= outer.left - 1 && inner.bottom <= outer.bottom + 1 && inner.right <= outer.right + 1 && inner.height > 8;
     const resultMore = !!result && result.scrollHeight > result.clientHeight + 1;
     const lcdMore = !!lcd && lcd.scrollHeight > lcd.clientHeight + lcd.scrollTop + 1;
+    const hit = (el) => {
+      if (!el) return "missing";
+      const r = el.getBoundingClientRect();
+      const node = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!node) return "none";
+      if (node.closest(".ti-sequence")) return "sequence";
+      if (el === node || el.contains(node)) return "self";
+      return node.className || node.tagName;
+    };
     return {
       text: result?.textContent?.trim() ?? "",
       ellipsis,
@@ -165,6 +175,8 @@ try {
       lcd: box(lcd),
       one: box(one),
       eml: box(eml),
+      resultHit: hit(result),
+      chipHit: hit(chip),
       chipInView: inside(box(chip), view),
       chipInLcd: inside(box(chip), box(lcd)),
       oneInView: inside(box(one), view),
@@ -213,6 +225,15 @@ try {
       fail(`${viewport.width}x${viewport.height} did not hydrate`);
       continue;
     }
+    await evalJs(`(() => {
+      const write = (text) => {
+        window.__copied = String(text);
+        return Promise.resolve();
+      };
+      const clip = window.navigator.clipboard;
+      if (clip) clip.writeText = write;
+      else window.navigator.clipboard = { writeText: write };
+    })()`);
     for (const sample of samples) {
       const label = `${viewport.width}x${viewport.height} ${sample.name}`;
       await evalJs(`(() => {
@@ -254,6 +275,24 @@ try {
       if (shown.ancestorClip.length) fail(`${label} is clipped by ${shown.ancestorClip.join(", ")}`);
       if (!shown.oneInView || !shown.emlInView) fail(`${label} keys are not fully in view`);
       if (!shown.chipInView || !shown.chipInLcd) fail(`${label} Copy chip is not fully visible`);
+      if (shown.resultHit !== "self") fail(`${label} result is covered by ${shown.resultHit}`);
+      if (shown.chipHit !== "self") fail(`${label} Copy chip is covered by ${shown.chipHit}`);
+      const copied = await evalJs(`(() => {
+        window.__copied = "";
+        const chip = [...document.querySelectorAll("button")].find((el) => (el.textContent || "").includes("Copy value"));
+        if (!chip) return "";
+        const r = chip.getBoundingClientRect();
+        const node = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (!node || (node !== chip && !chip.contains(node))) return "";
+        node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        return window.__copied;
+      })()`);
+      const hidden = /[\u00ad\u200b\u200c\u200d\u2060\u2009\u200a\u202f\ufeff\u2212\u00d7]/;
+      if (!copied || hidden.test(copied) || !/^[\x20-\x7e]+$/.test(copied)) {
+        fail(`${label} Copy chip did not copy clean text (${JSON.stringify(copied)})`);
+      } else if (sample.copy && copied !== sample.copy) {
+        fail(`${label} copied ${JSON.stringify(copied)}`);
+      }
       if ((shown.resultMore && !shown.resultCue) || (shown.lcdMore && !shown.lcdCue)) {
         fail(`${label} has more content below without a cue`);
       }

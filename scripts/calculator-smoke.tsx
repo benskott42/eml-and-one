@@ -827,6 +827,17 @@ async function main() {
     console.error("exponent copy was not clean ASCII", exponentCopy);
     failed = true;
   }
+  const { compileExpression } = await import("../lib/eml/parse");
+  const underflowed = runNode(compileExpression("10^(-400)", {}), "float");
+  if (underflowed.text !== "0 ≈" || underflowed.text.startsWith("−") || underflowed.text.startsWith("-") || !underflowed.underflowed) {
+    console.error("float 10^(-400) printed a negative zero", underflowed.text, underflowed.underflowed);
+    failed = true;
+  }
+  const signedZero = runNode(compileExpression("-0", {}), "float");
+  if (signedZero.text !== "−0") {
+    console.error("a real negative zero was rewritten", signedZero.text);
+    failed = true;
+  }
   const limitNode = nodeFromRpn(`${"1".repeat(80)}${"E".repeat(79)}`.split(""));
   const limited = runNode(limitNode, "float", { maxNodes: 1 });
   const limitedReason = resultError({ ...limited, node: limitNode, caption: "limit" });

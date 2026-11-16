@@ -72,6 +72,16 @@ export function CalculatorView(props: CalculatorModel) {
   const needsPair = !freeInput && model.stack.length < 2;
   const [showCard, setShowCard] = useState(false);
   useEffect(() => {
+    const earlyWindow = window as Window & { __emlLive?: boolean; __emlEarly?: string[] };
+    const queued = earlyWindow.__emlEarly ?? [];
+    earlyWindow.__emlLive = true;
+    earlyWindow.__emlEarly = [];
+    for (const key of queued) {
+      if (key === "1") pushOne();
+      else applyEml();
+    }
+  }, [applyEml, pushOne]);
+  useEffect(() => {
     let open = false;
     try {
       open = window.localStorage.getItem("eml-onboarding") !== "1";
