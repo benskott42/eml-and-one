@@ -412,6 +412,7 @@ export function rawDiv(a: Node, b: Node): Node {
   if (
     num &&
     den &&
+    !wides.has(a) &&
     realZeroValue(num) &&
     (den.im === 0 || Object.is(den.im, -0)) &&
     den.re !== 0 &&
@@ -840,6 +841,58 @@ export function decadeOf(node: Node): number | undefined {
   return decades.get(node);
 }
 
+/**
+ * v1.1 prototype (compscibot): a real known as m·10^e with 1 ≤ |m| < 10, kept
+ * when float64 cannot hold it as a normal number (|x| < 2^(−1022)). The float
+ * range of such a node may say 0; this tag says it is not.
+ */
+export type Wide = { m: number; e: number };
+const wides = new WeakMap<Node, Wide>();
+export const MIN_NORMAL = 2.2250738585072014e-308;
+
+export function normWide(m: number, e: number): Wide | null {
+  if (!Number.isFinite(m) || m === 0 || !Number.isFinite(e)) return null;
+  let mm = m;
+  let ee = Math.trunc(e);
+  const shift = Math.floor(Math.log10(Math.abs(mm)));
+  mm /= 10 ** shift;
+  ee += shift;
+  if (Math.abs(mm) >= 10) { mm /= 10; ee += 1; }
+  if (Math.abs(mm) < 1) { mm *= 10; ee -= 1; }
+  return { m: mm, e: ee };
+}
+
+export function noteWide(node: Node, w: Wide | null): Node {
+  if (!w) return node;
+  wides.set(node, w);
+  // The decade is the exponent of the leading digit, and it is exact here.
+  decades.set(node, w.e);
+  // A real, signed, sub-normal interval: never a point, so never "the integer 0".
+  if (w.e < -307) {
+    const range = w.m > 0 ? { re: { lo: 0, hi: MIN_NORMAL }, im: { lo: 0, hi: 0 } } : { re: { lo: -MIN_NORMAL, hi: 0 }, im: { lo: 0, hi: 0 } };
+    // The interval contains 0. Drop any proven integer so a later setRange cannot put int 0 back.
+    clearProvenInt(node);
+    ranges.set(node, range);
+  }
+  return node;
+}
+
+/** The wide tag, or a normal nonzero known real written the same way. */
+export function wideOf(node: Node): Wide | null {
+  const hit = wides.get(node);
+  if (hit) return hit;
+  const v = knownValue(node);
+  if (v && (v.im === 0 || Object.is(v.im, -0)) && Number.isFinite(v.re) && Math.abs(v.re) >= MIN_NORMAL) {
+    const e = Math.floor(Math.log10(Math.abs(v.re)));
+    return normWide(v.re / 10 ** e, e);
+  }
+  return null;
+}
+
+export function isWideTiny(node: Node): boolean {
+  return wides.has(node);
+}
+
 /** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
 export function markTwoScaled(node: Node): Node {
   twoScaled.add(node);
@@ -961,6 +1014,8 @@ export function domainAdd(a: Node, b: Node): Node {
 }
 
 export function domainNeg(b: Node): Node {
+  const wb = wides.get(b);
+  if (wb) return noteWide(rawMul(oneNeg(), b), { m: -wb.m, e: wb.e });
   if (rangeOf(b).int === BigInt(0)) return negativeZero();
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();

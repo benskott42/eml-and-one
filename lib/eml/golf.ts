@@ -1,6 +1,6 @@
 import { eml } from "./complex";
 import { ballVerdict, enclose } from "./enclose";
-import { type Z, exactClose, exactValueAt, valueMatchesTarget } from "./exact";
+import { type Z, exactClose, exactReportAt, valueMatchesTarget } from "./exact";
 import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows } from "./node";
 
 /**
@@ -75,15 +75,19 @@ export function acceptsConstantProgram(node: Node, targetRe: number, targetIm: n
   const floated = evaluateReport(node);
   if (floated.overflowed || floated.underflowed) return false;
   if (!Number.isFinite(floated.value.re) || !Number.isFinite(floated.value.im)) return false;
-  const coarse = exactValueAt(node, 40);
-  if (!exactClose(coarse, targetRe, targetIm, 12)) return false;
+  const coarse = exactReportAt(node, 40);
+  // An absorbed term is not a certificate, the same as an unverified zero.
+  if (coarse.unverified || coarse.notCertified) return false;
+  if (!exactClose(coarse.value, targetRe, targetIm, 12)) return false;
   const ball = enclose(node);
   const verdict = ballVerdict(ball, targetRe, targetIm);
   if (verdict === "unequal") return false;
   if (verdict === "equal") return true;
   if (ball.overflow && !ball.cut && !floated.touchedLn0) return false;
   // Guard digits past 240, so the last place of a 240-digit target is stable.
-  return acceptsConstantValue(exactValueAt(node, 280), targetRe, targetIm);
+  const fine = exactReportAt(node, 280);
+  if (fine.unverified || fine.notCertified) return false;
+  return acceptsConstantValue(fine.value, targetRe, targetIm);
 }
 
 function near(re: number, im: number, target: Target): boolean {

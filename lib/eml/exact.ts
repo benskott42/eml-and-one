@@ -13,6 +13,7 @@ import {
 } from "./node";
 import { decadeOf, inScaledShell, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
+import { floatShowsComponent } from "./format";
 
 /**
  * Wide-exponent complex values for EML circuits.
@@ -35,6 +36,10 @@ import { isSeriesShortcut } from "./node";
  */
 
 const PRECISION = 120;
+/** v1.1: significant digits on screen, the same as float mode's toPrecision(12). */
+const SHOWN_DIGITS = 12;
+/** v1.1: below this, scientific notation, as float mode does below 10^(−6). (Was 10^(−9).) */
+const FIXED_FLOOR = "1e-6";
 
 const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
 
@@ -100,6 +105,7 @@ function expZ(v: Z): Z {
     return { re: NAN, im: NAN };
   }
   const mag = v.re.exp();
+  if (!v.re.isZero() && mag.eq(1)) noteAbsorb(ONE, v.re);
   if (mag.isZero()) return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
   if (!mag.isFinite()) return { re: signedInf(trig.c), im: signedInf(trig.s) };
   return { re: mag.mul(trig.c), im: mag.mul(trig.s) };
@@ -129,6 +135,11 @@ function lnEml(v: Z): Z {
     }
   }
   if (!mag.isFinite()) return { re: POS_INF, im: arg.isFinite() ? arg : ZERO };
+  if (!v.re.isZero() && !v.im.isZero()) {
+    const [big, small] = v.re.abs().gte(v.im.abs()) ? [v.re.abs(), v.im.abs()] : [v.im.abs(), v.re.abs()];
+    // ln|z| = ln|big| + small²/(2 big²) + …; hypot drops that term once 2·gap passes the precision.
+    if (mag.eq(big)) noteAbsorb(ONE, new D(10).pow(-2 * (big.e - small.e)));
+  }
   return { re: D.ln(mag), im: arg };
 }
 
@@ -209,6 +220,27 @@ function noteSeen(v: Z): void {
 let emlWork = Number.NEGATIVE_INFINITY;
 let emlWorkRe = Number.NEGATIVE_INFINITY;
 let emlWorkIm = Number.NEGATIVE_INFINITY;
+/**
+ * v1.1 prototype (compscibot): absorbed terms. A nonzero operand that a gate
+ * dropped whole because it sat below the working precision of its partner:
+ * |small| < ulp(big). `emlAbsorbGap` is the decade gap, `emlAbsorbExp` the
+ * decade of the lost term. Cancellation to dust is not this; that is lossGap.
+ */
+let emlAbsorbGap = Number.NEGATIVE_INFINITY;
+let emlAbsorbExp = Number.POSITIVE_INFINITY;
+function noteAbsorb(big: Decimal, small: Decimal): void {
+  if (!big.isFinite() || !small.isFinite() || big.isZero() || small.isZero()) return;
+  const gap = big.e - small.e;
+  if (!Number.isFinite(gap) || gap < D.precision - 2) return;
+  if (gap > emlAbsorbGap) emlAbsorbGap = gap;
+  if (small.e < emlAbsorbExp) emlAbsorbExp = small.e;
+}
+/** diff = left − right came out equal to one operand while the other was nonzero. */
+function checkAbsorb(diff: Decimal, left: Decimal, right: Decimal): void {
+  if (!diff.isFinite() || !left.isFinite() || !right.isFinite()) return;
+  if (!right.isZero() && diff.eq(left) && !left.isZero()) noteAbsorb(left, right);
+  else if (!left.isZero() && diff.eq(right.neg()) && !right.isZero()) noteAbsorb(right, left);
+}
 /** Working precision is never raised past this. A value that still needs more is not certified. */
 const PRECISION_CAP = 480;
 
@@ -246,11 +278,12 @@ function cancelled(diff: Decimal, left: Decimal, right: Decimal, part: "re" | "i
  * and 10^(−125) i beside 10^(−18), are real parts. Cancellation dust is removed
  * only after a second evaluation shows that the part moved.
  */
-function scrubDust(v: Z): Z {
+function scrubDust(v: Z, floorDigits = D.precision): Z {
   if (!v.re.isFinite() || !v.im.isFinite()) return v;
   const scale = D.max(v.re.abs(), v.im.abs());
   if (!scale.isFinite() || scale.isZero()) return v;
-  const floor = scale.mul(new D(10).pow(-(D.precision - 12)));
+  // v1.1: after a raised pass the floor is that pass's, so a part it resolved (the K33 −iπ word's 5.7e−116) survives.
+  const floor = scale.mul(new D(10).pow(-(floorDigits - 12)));
   const buried = scale.mul(new D(10).pow(-160));
   const limit = D.max(floor, buried);
   const visible = new D(10).pow(-12);
@@ -273,6 +306,8 @@ function exactEml(x: Z, y: Z): Z {
   const b = lnEml(y);
   if (a.re.isNaN() || a.im.isNaN() || b.re.isNaN() || b.im.isNaN()) return { re: NAN, im: NAN };
   if (sameInfinity(a.re, b.re) || sameInfinity(a.im, b.im)) return { re: NAN, im: NAN };
+  checkAbsorb(a.re.sub(b.re), a.re, b.re);
+  checkAbsorb(a.im.sub(b.im), a.im, b.im);
   const re = cancelled(a.re.sub(b.re), a.re, b.re, "re");
   const im = cancelled(a.im.sub(b.im), a.im, b.im, "im");
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
@@ -284,6 +319,9 @@ function asZ(value: C | Z): Z {
   return z(value.re, value.im);
 }
 
+/** A whole number on screen is a claim. This is why it is not one. */
+export type AbsorbedFlag = { reason: "absorbed"; termDecade: number; gap: number };
+
 export type ExactReport = {
   value: Z;
   singular: string | null;
@@ -294,13 +332,19 @@ export type ExactReport = {
   /** Per-component cancellation size. A part with no finite work was not a residue. */
   workRe?: number;
   workIm?: number;
+  /** v1.1: largest decade gap of a nonzero term a gate dropped (|small| < ulp(big)). */
+  absorbedGap?: number;
+  /** v1.1: decade of the smallest such term. */
+  absorbedExp?: number;
+  /** v1.1: set when an absorbed term could not be resolved under the cap. Sticky to the display. */
+  notCertified?: AbsorbedFlag;
   /** Precision the value was computed at. */
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
 };
 
-type Work = { all: number; re: number; im: number };
+type Work = { all: number; re: number; im: number; ab?: number; abE?: number };
 type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
@@ -377,7 +421,7 @@ function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, bud
     // working-precision value, so round back once the hidden component is recovered.
     D.set({ precision: saved });
     const round = (part: Decimal) => (part.isFinite() ? new D(part.toSignificantDigits(saved).toString()) : part);
-    return { ...report, digits, value: scrubDust({ re: round(report.value.re), im: round(report.value.im) }) };
+    return { ...report, digits, value: scrubDust({ re: round(report.value.re), im: round(report.value.im) }, process.env?.EML_SCRUB_AT_SAVED === "1" ? saved : digits) };
   } finally {
     D.set({ precision: saved });
   }
@@ -525,7 +569,59 @@ function settleResidue(
   return residueParts(current).length === 0 ? current : certifyZero(current);
 }
 
+/**
+ * v1.1: absorbed-term policy. One decision, no loop: a gap that fits
+ * under the cap is re-run once at gap + 48 digits; a gap past the cap (the
+ * #431 tower's ~1.66M decades) is marked not certified at once.
+ * The re-run calls atPrecision, which re-enters here with pass 2 and returns
+ * on the next line, so a noise re-run cannot re-run itself. One per result.
+ */
 export function exactReport(
+  root: Node,
+  env: Record<string, C | Z> = {},
+  budget: EvalBudget = {},
+  pass = 0,
+): ExactReport {
+  const report = exactReportCore(root, env, budget, pass);
+  // pass !== 0 is the cap: the single noise re-run comes back through here and stops.
+  if (pass !== 0 || report.unverified) return report;
+  const gap = report.absorbedGap;
+  if (gap === undefined || !Number.isFinite(gap) || gap <= 0) return report;
+  // Only a result that reads as exact makes a claim the lost term can break:
+  // an integer or zero in each component (−1 for #431 and #5884). 1×10^300 for
+  // 10^300 + 1 is already a 12-digit rounding and is left alone (no retry cost).
+  // A component that is exactly 0 is also a claim: the K33 −iπ word's real part.
+  if (!looksExact(report.value) && !report.value.re.isZero() && !report.value.im.isZero()) return report;
+  const digits = report.digits ?? D.precision;
+  const need = gap + 48;
+  if (need <= PRECISION_CAP && need > digits && process.env?.EML_ABSORB_RETRY !== "0") {
+    let again: ExactReport;
+    try {
+      again = atPrecision(need, root, env, budget);
+    } catch {
+      again = report;
+    }
+    const left = again.absorbedGap;
+    // Rounding dust is absorbed at about 10^(−digits) and moves when the digits rise
+    // (cos π: 10^(−120), then 10^(−168)). A real lost term stays at its decade.
+    const movedExp = again.absorbedExp !== undefined && report.absorbedExp !== undefined && Math.abs(again.absorbedExp - report.absorbedExp) > 8;
+    const resolved = again !== report && (left === undefined || !Number.isFinite(left) || left < need - 2 || movedExp);
+    // First-pass gap at the precision edge that moves with the digits: rounding dust.
+    if (again !== report && movedExp && gap <= digits + 16) return again;
+    // Resolved and no longer exact-looking: the raised value is the answer.
+    if (resolved && !looksExact(again.value)) return again;
+    // Resolved but still rounds to an integer (1 + 10^(−200)): say so instead of printing a bare 1.
+    if (resolved) return { ...again, notCertified: { reason: "absorbed", termDecade: report.absorbedExp ?? Number.NEGATIVE_INFINITY, gap } };
+  }
+  return { ...report, notCertified: { reason: "absorbed", termDecade: report.absorbedExp ?? Number.NEGATIVE_INFINITY, gap } };
+}
+
+function looksExact(v: Z): boolean {
+  const part = (d: Decimal) => d.isZero() || (d.isFinite() && exactInteger(d));
+  return part(v.re) && part(v.im);
+}
+
+function exactReportCore(
   root: Node,
   env: Record<string, C | Z> = {},
   budget: EvalBudget = {},
@@ -681,18 +777,30 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
+    emlAbsorbGap = Number.NEGATIVE_INFINITY;
+    emlAbsorbExp = Number.POSITIVE_INFINITY;
     const value = exactEml(a, b);
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
       : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
+    // Sticky: an absorbed term anywhere below stays with every ancestor, shells included.
+    own.ab = emlAbsorbGap;
+    own.abE = emlAbsorbExp;
     const left = work.get(n.a);
     const right = work.get(n.b);
     const nodeWork: Work = {
       all: Math.max(own.all, left?.all ?? Number.NEGATIVE_INFINITY, right?.all ?? Number.NEGATIVE_INFINITY),
+      ab: Math.max(own.ab ?? Number.NEGATIVE_INFINITY, left?.ab ?? Number.NEGATIVE_INFINITY, right?.ab ?? Number.NEGATIVE_INFINITY),
+      abE: Math.min(own.abE ?? Number.POSITIVE_INFINITY, left?.abE ?? Number.POSITIVE_INFINITY, right?.abE ?? Number.POSITIVE_INFINITY),
       re: Math.max(own.re, left?.re ?? Number.NEGATIVE_INFINITY, right?.re ?? Number.NEGATIVE_INFINITY),
       im: Math.max(own.im, left?.im ?? Number.NEGATIVE_INFINITY, right?.im ?? Number.NEGATIVE_INFINITY),
     };
+    // A series shortcut drops its higher terms on purpose; its own note covers them.
+    if (isSeriesShortcut(n)) {
+      nodeWork.ab = Number.NEGATIVE_INFINITY;
+      nodeWork.abE = Number.POSITIVE_INFINITY;
+    }
     work.set(n, nodeWork);
     const nan = value.re.isNaN() || value.im.isNaN();
     let singular: string | null = null;
@@ -726,20 +834,33 @@ function exactReportOnce(
     workExp: rootWork?.all,
     workRe: rootWork?.re,
     workIm: rootWork?.im,
+    absorbedGap: rootWork?.ab,
+    absorbedExp: rootWork?.abE,
     digits: D.precision,
     sawLead,
   };
 }
 
 /** Re-evaluate at `digits` of precision, then restore the usual working precision. */
-export function exactValueAt(root: Node, digits: number, env: Record<string, C | Z> = {}): Z {
+export function exactReportAt(root: Node, digits: number, env: Record<string, C | Z> = {}, budget: EvalBudget = {}): ExactReport {
   const saved = D.precision;
   D.set({ precision: digits });
   try {
-    return exactEvaluate(root, env);
+    return exactReport(root, env, budget);
   } finally {
     D.set({ precision: saved });
   }
+}
+
+/** Re-evaluate at `digits` of precision, then restore the usual working precision. */
+export function exactValueAt(root: Node, digits: number, env: Record<string, C | Z> = {}): Z {
+  return exactReportAt(root, digits, env).value;
+}
+
+/** Flag line for a value that reads as exact while a term was dropped. */
+export function absorbedClaim(flag: AbsorbedFlag): string {
+  const decade = Number.isFinite(flag.termDecade) ? String(flag.termDecade).replace("-", "−") : "an unknown size";
+  return `not certified: a term near 10^(${decade}) was below working precision`;
 }
 
 export function exactParts(re: Decimal.Value, im: Decimal.Value = 0): Z {
@@ -821,23 +942,26 @@ function formatDec(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
   const abs = d.abs();
   if (abs.lt("1e16") && exactInteger(abs)) return sign + abs.toFixed(0);
-  if (abs.lt("1e16") && abs.gte("1e-9")) {
-    const shown = new D(abs.toFixed(12));
+  if (abs.lt("1e16") && abs.gte(FIXED_FLOOR)) {
+    // v1.1: twelve significant digits, as float mode prints, not twelve decimal places.
+    // 0.0000499999999792 kept 8 digits as 0.00005; 1e-8/7 kept 4.
+    const sig = Math.max(0, SHOWN_DIGITS - 1 - abs.e);
+    const shown = new D(abs.toFixed(sig));
     const gap = abs.sub(shown).abs();
     const intGap = abs.sub(abs.round()).abs();
     const dust = new D(10).pow(-(D.precision - 24));
     // Twelve digits hide 0.5 − 10^(−72) and 1 − 10^(−72). Print the first digits of that tail.
-    const hiddenTail = gap.gt(dust) && gap.e < -14;
+    const hiddenTail = gap.gt(dust) && gap.e < abs.e - (SHOWN_DIGITS + 2);
     const hiddenInt = intGap.gt(dust) && intGap.e < -9;
     if (hiddenTail || hiddenInt) {
       const reveal = hiddenTail && (!hiddenInt || gap.e <= intGap.e) ? gap : intGap;
-      const places = Math.min(D.precision - 8, Math.max(12, -reveal.e + 2));
+      const places = Math.min(D.precision - 8, Math.max(sig, -reveal.e + 2));
       return sign + abs.toFixed(places).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
     }
-    const text = abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    const text = abs.toFixed(sig).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
     return sign + text;
   }
-  const exp = abs.toExponential(12).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
+  const exp = abs.toExponential(SHOWN_DIGITS - 1).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
   return sign + exp;
 }
 
@@ -881,7 +1005,6 @@ function exactInteger(d: Decimal): boolean {
  * is huge. A few ulps of a moderate result still agree. Signed zeros agree.
  */
 export function beyondFloatBound(got: C, exact: C): boolean {
-  const scale = Math.max(Math.abs(got.re), Math.abs(got.im), Math.abs(exact.re), Math.abs(exact.im));
   const part = (left: number, right: number): boolean => {
     if (!Number.isFinite(left) || !Number.isFinite(right)) return !Object.is(left, right);
     if (Object.is(left, right)) return false;
@@ -890,7 +1013,8 @@ export function beyondFloatBound(got: C, exact: C): boolean {
     // component is dust when it sits below the digits on screen.
     if (left === 0 && right === 0) return false;
     if (left === 0) return true;
-    if (right === 0) return Math.abs(left) > 5e-12 * Math.max(scale, Math.abs(left));
+    // v1.1: the same cut tidy() uses, so a component the screen prints is a component the flag sees.
+    if (right === 0) return floatShowsComponent(left, Math.hypot(got.re, got.im));
     const mag = Math.max(Math.abs(left), Math.abs(right));
     return Math.abs(left - right) > 5e-12 * mag;
   };

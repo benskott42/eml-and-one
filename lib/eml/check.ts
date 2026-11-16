@@ -4,7 +4,7 @@ import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
 import type { Decimal } from "decimal.js";
-import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
+import { absorbedClaim, beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
 import { acceptsConstantProgram, acceptsConstantValue, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
@@ -216,6 +216,16 @@ check("million minus exact", exactToFloat(exactEvaluate(compileExpression("10000
 if (formatC(c(1e-9)) === "0" || formatC(c(Math.exp(-25))) === "0" || formatC(c(1e-20)) === "0") {
   failed += 1;
   console.log("FAIL small values displayed as 0", formatC(c(1e-9)), formatC(c(Math.exp(-25))), formatC(c(1e-20)));
+}
+if (formatC(c(1e-8 / 7)) !== "1.42857142857×10^−9" || formatC(c(1e-300 / 3)) !== "3.33333333333×10^−301" || formatC(c(1.2345678901234e20)) !== "1.23456789012×10^20") {
+  failed += 1;
+  console.log("FAIL float 12 significant digits", formatC(c(1e-8 / 7)), formatC(c(1e-300 / 3)), formatC(c(1.2345678901234e20)));
+}
+const quietNoise = formatC(c(-1.3e-17, 4.999999997916666e-5));
+const loudNoise = formatC(c(-6e-17, 5e-5));
+if (quietNoise.includes("10^") || quietNoise.includes("−") || !loudNoise.includes("10^−16")) {
+  failed += 1;
+  console.log("FAIL float noise cut", quietNoise, loudNoise);
 }
 if (formatC(c(0, Infinity)) !== "∞i") {
   failed += 1;
@@ -690,9 +700,17 @@ const k35Word = "11111111E1E1EEEEEE111EEE1E11E1E1EEE";
 const k33Node = nodeFromCompact(k33Word);
 const k35Node = nodeFromCompact(k35Word);
 const k33At40 = exactValueAt(k33Node, 40);
-if (!k33At40.re.isZero() || acceptsConstantProgram(k33Node, 0, -Math.PI)) {
+// mpmath at 400 digits. Exact mode may show this residue or a scrubbed zero.
+const k33Residue = exactParts("5.72402265941754e-116").re;
+const k33ReOk = k33At40.re.isZero() || k33At40.re.sub(k33Residue).abs().lte(k33Residue.abs().mul("1e-9"));
+const k33ImOk = k33At40.im.sub(negPi).abs().lte("1e-12");
+if (!k33ReOk || !k33ImOk) {
   failed += 1;
-  console.log("FAIL K33 word", k33At40.re.toString(), acceptsConstantProgram(k33Node, 0, -Math.PI));
+  console.log("FAIL K33 word", k33At40.re.toString(), k33At40.im.toString());
+}
+if (acceptsConstantProgram(k33Node, 0, -Math.PI)) {
+  failed += 1;
+  console.log("FAIL K33 word accepted as −iπ");
 }
 if (acceptsConstantProgram(k35Node, 0, -Math.PI)) {
   failed += 1;
@@ -2871,7 +2889,20 @@ failed += runPropertyChecks();
   closeTo("exp(1e-432)-1", "1e-432");
   closeTo("tan(1e-5000)", "1e-5000");
   closeTo("exp(1e-1000)-1", "1e-1000");
-  for (const source of ["exp(1e-433)-1", "tan(10^(-5000))", "exp(10^(-1000))-1", "sin(1e-300)-1e-300"]) unresolved(source);
+  // v1.1: 10^(−k) carries its exponent, and exp(x)−1 keeps x + x²/2 for |x| ≤ 10^(−241).
+  closeTo("tan(10^(-5000))", "1e-5000");
+  closeTo("exp(10^(-1000))-1", "1e-1000");
+  closeTo("exp(1e-433)-1", "1e-433");
+  closeTo("exp(10^(-433))-1", "1e-433");
+  closeTo("1-exp(1e-433)", "-1e-433");
+  for (const source of ["sin(1e-300)-1e-300"]) unresolved(source);
+  const wholeClaim = exactReport(compileExpression("1+1e-200", {}), {}, { maxNodes: 80_000 });
+  const wholeText = formatExact(wholeClaim.value);
+  const wholeLine = wholeClaim.notCertified ? absorbedClaim(wholeClaim.notCertified) : "";
+  if (wholeText !== "1" || !wholeLine.startsWith("not certified") || wholeClaim.unverified) {
+    failed += 1;
+    console.log("FAIL 1+1e-200 claim", wholeText, wholeLine, wholeClaim.unverified);
+  }
   const shortcut = seriesShortcutNote(compileExpression("sin(1e-200)", {}));
   if (!shortcut || !shortcut.includes("series shortcut")) {
     failed += 1;

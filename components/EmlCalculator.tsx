@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { type C } from "@/lib/eml/complex";
-import { beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "@/lib/eml/exact";
-import { packCircuit } from "@/lib/eml/wire";
+import { absorbedClaim, beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact, type AbsorbedFlag } from "@/lib/eml/exact";
+import { packCircuit, WIRE_VERSION } from "@/lib/eml/wire";
 import { captionName, formatC, isUsable, recognize } from "@/lib/eml/format";
 import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
 import {
@@ -94,6 +94,7 @@ type Entry = {
   floatDiffers?: boolean;
   exactBeside?: string;
   notice?: string | null;
+  notCertified?: AbsorbedFlag | null;
   watch?: number;
 };
 
@@ -614,7 +615,7 @@ export function EmlCalculator() {
   }, []);
 
   const finishExact = useCallback(
-    (request: number, payload: { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean } | { error: string }) => {
+    (request: number, payload: { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean; notCertified?: AbsorbedFlag | null } | { error: string }) => {
       const job = exactJobs.current.get(request);
       exactJobs.current.delete(request);
       inflight.current.fill.delete(request);
@@ -632,13 +633,23 @@ export function EmlCalculator() {
         return;
       }
       const exact = { re: payload.re, im: payload.im };
+      const claim = payload.notCertified ? absorbedClaim(payload.notCertified) : null;
+      const claimedText = claim && !payload.text.endsWith("≈") ? `${payload.text} ≈` : payload.text;
       if (job.kind === "compare") {
         if (payload.unverified) {
           publishWatch(job.watch, { ...current, notice: "couldn't verify" });
           return;
         }
-        if (!payload.underflowedExact && !beyondFloatBound(job.floated, exact)) return;
-        publishWatch(job.watch, { ...current, floatDiffers: true, exactBeside: payload.text });
+        const differs = payload.underflowedExact === true || beyondFloatBound(job.floated, exact);
+        // A not-certified exact value must not read as agreement with the float.
+        if (!differs && !claim) return;
+        publishWatch(job.watch, {
+          ...current,
+          floatDiffers: differs,
+          exactBeside: differs ? payload.text : current.exactBeside,
+          notice: claim ?? current.notice,
+          notCertified: payload.notCertified ?? null,
+        });
         return;
       }
       if (payload.unverified) {
@@ -650,9 +661,11 @@ export function EmlCalculator() {
         ...current,
         pendingExact: false,
         value: exact,
-        text: payload.text,
+        text: claimedText,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
+        notice: claim,
+        notCertified: payload.notCertified ?? null,
       });
     },
     [publishWatch],
@@ -702,17 +715,32 @@ export function EmlCalculator() {
           touchedLn0: report.touchedLn0,
           underflowedExact: exactUnderflowsFloat(report.value),
           unverified: report.unverified === true,
+          notCertified: report.notCertified ?? null,
         });
       } catch (err) {
         finishExact(request, { error: failure(err) });
       }
     };
-    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; message?: string }) => {
+    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; notCertified?: AbsorbedFlag | null; wire?: number; message?: string }) => {
       if (data.request === undefined || !exactJobs.current.has(data.request)) return;
       inflight.current.fill.delete(data.request);
       inflight.current.compare.delete(data.request);
       if (data.type === "error") {
         finishExact(data.request, { error: data.message ?? "Exact evaluation failed." });
+        return;
+      }
+      // A cached worker from before wire v2 drops kx and notCertified. Recompute here instead.
+      if (data.wire !== WIRE_VERSION) {
+        const job = exactJobs.current.get(data.request);
+        const row = job ? modelRef.current.stack.find((item) => item.watch === job.watch) : undefined;
+        if (!job || !row) {
+          finishExact(data.request, { error: "Exact evaluation failed." });
+          return;
+        }
+        const kind = job.kind;
+        deliver(data.request, row.node, row.bound ?? {});
+        exactWorkers.current[kind]?.terminate();
+        exactWorkers.current[kind] = null;
         return;
       }
       finishExact(data.request, {
@@ -723,6 +751,7 @@ export function EmlCalculator() {
         touchedLn0: data.touchedLn0 === true,
         underflowedExact: data.underflowedExact === true,
         unverified: data.unverified === true,
+        notCertified: data.notCertified ?? null,
       });
     };
     const onStack = (watch: number) => model.stack.some((item) => item.watch === watch);
@@ -806,7 +835,7 @@ export function EmlCalculator() {
       const packed = packCircuit(item.node);
       const env: Record<string, { re: number; im: number }> = {};
       for (const [name, value] of Object.entries(bound)) env[name] = { re: value.re, im: value.im };
-      worker.postMessage({ request, tokens: packed.tokens, root: packed.root, env });
+      worker.postMessage({ request, tokens: packed.tokens, root: packed.root, env, wire: WIRE_VERSION });
     }
   }, [finishExact, model.stack]);
 
