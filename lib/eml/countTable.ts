@@ -1,4 +1,5 @@
 import table from "./best-known.json";
+import { recordPill } from "./recordLabel";
 
 export type CountEntry = {
   word: string;
@@ -31,11 +32,7 @@ export function ln0Use(line: Min): "yes" | "no" | "both" | "unknown" {
 }
 
 export function pillText(line: Min): string {
-  let text = line.label;
-  if (/not proven minimal/.test(line.note) && !/not proven/.test(line.label)) text += ", not proven minimal";
-  const tie = /ties [^;]+/.exec(line.note);
-  if (tie) text += ` (${tie[0]})`;
-  return text;
+  return recordPill(line);
 }
 
 export function linesFor(n: number): Min[] {
@@ -49,10 +46,11 @@ export function linesFor(n: number): Min[] {
  */
 export function tableEntry(n: number, mode: "ln0" | "strict", familyWord: string): CountEntry | null {
   if (n === 1) {
+    const line = linesFor(1).find((item) => item.k === 1);
     return {
       word: "1",
       k: 1,
-      status: "the 1 key itself · K 1",
+      status: recordPill(line ?? { value: "1", k: 1, label: "proven minimal", note: "" }),
       note: "",
       kind: "upper",
       ln0: false,

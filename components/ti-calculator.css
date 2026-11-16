@@ -94,6 +94,17 @@ html.ti-two-buttons .ti-btn-eml {
   outline-offset: 3px;
 }
 
+@media (max-width: 720px) {
+  .ti-home {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 8px;
+  }
+}
+
 .ti-bezel {
   background: linear-gradient(180deg, #1a1f24, #2a3138);
   border-radius: 14px;

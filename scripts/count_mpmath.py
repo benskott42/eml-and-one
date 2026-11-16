@@ -60,12 +60,10 @@ for entry in rows:
                 bad.append((entry["n"], lower, f"ln0 flag mismatch: mpmath {used0}, table {claim0}"))
 
 for key, word in known["programs"].items():
-    if key.endswith("-strict"):
-        n = int(key[: -len("-strict")])
-    elif key.lstrip("-").isdigit():
-        n = int(key)
-    else:
+    base = key[:-7] if key.endswith("-strict") else key
+    if not base.lstrip("-").isdigit():
         continue
+    n = int(base)
     if word in seen:
         continue
     seen.add(word)

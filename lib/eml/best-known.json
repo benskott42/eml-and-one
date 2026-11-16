@@ -123,7 +123,7 @@
       "value": "−1",
       "k": 15,
       "label": "proven minimal (uses ln 0)",
-      "note": "uses ln 0"
+      "note": "all programs with K ≤ 13 are excluded; uses ln 0"
     },
     {
       "value": "−1",
@@ -135,7 +135,7 @@
       "value": "0",
       "k": 7,
       "label": "proven minimal",
-      "note": "does not use ln 0"
+      "note": "all programs with K ≤ 5 are excluded; towers included; does not use ln 0"
     },
     {
       "value": "1",
@@ -147,7 +147,7 @@
       "value": "2",
       "k": 19,
       "label": "proven minimal",
-      "note": "does not use ln 0"
+      "note": "all 2056 programs with K ≤ 17 are decided; does not use ln 0"
     },
     {
       "value": "3",

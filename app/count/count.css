@@ -11,14 +11,24 @@
   width: min(100%, 440px);
 }
 
+.count-n {
+  margin-top: 12px;
+}
+
+.count-n-label {
+  display: block;
+  margin: 0 2px 6px;
+  color: #f3f0e8;
+  font-size: 0.9rem;
+}
+
 .count-controls {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-top: 12px;
 }
 
-.count-controls input[type="number"] {
+.count-controls input[type="text"] {
   width: 84px;
   height: 46px;
   text-align: center;
@@ -27,6 +37,16 @@
   border-radius: 8px;
   background: #23262b;
   color: #f3f0e8;
+}
+
+.count-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7e4dc;
+  color: #4a1c12;
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .count-slider {
@@ -95,9 +115,36 @@
 .count-src,
 .count-note {
   margin: 6px 0 0;
-  color: #c5ced6;
+  color: #d5dde4;
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.ti-lcd .count-note,
+.ti-lcd .count-note a,
+.ti-lcd a {
+  color: var(--lcd-ink);
+}
+
+.ti-lcd a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.count-foot a {
+  color: #f7f4ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.count-panel .ti-press,
+.count-panel .ti-press-meta {
+  color: #d5dde4;
+}
+
+.count-panel .ti-lcd-btn {
+  color: #f7f4ee;
+  border-color: #f7f4ee;
 }
 
 .count-seg {
@@ -241,12 +288,75 @@
   border: 0;
 }
 
+.count-doc {
+  width: min(720px, 100%);
+  color: #f3f0e8;
+  line-height: 1.5;
+}
+
+.count-doc h1,
+.count-doc h2 {
+  line-height: 1.25;
+}
+
+.count-doc code {
+  font-family: ui-monospace, "Courier New", monospace;
+}
+
+.count-layout :is(a, button, input):focus-visible,
+.count-doc a:focus-visible {
+  outline: 3px solid #f4e7a1;
+  outline-offset: 3px;
+}
+
+.ti-lcd :is(a, button):focus-visible {
+  outline-color: #1a2214;
+}
+
 @media (max-width: 720px) {
   .count-seg {
     grid-template-columns: 1fr auto;
   }
 
   .count-layout .ti-device {
+    min-height: 0;
     border-radius: 0;
+  }
+
+  .count-layout :is(a, button, input),
+  .count-doc a,
+  .ti-home {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .count-layout a,
+  .count-doc a,
+  .ti-home {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .count-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .count-opt input[type="checkbox"] {
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    flex: none;
+  }
+
+  .count-slider {
+    height: 44px;
+  }
+
+  .count-panel .ti-lcd-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 12px;
   }
 }

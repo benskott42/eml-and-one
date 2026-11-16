@@ -93,14 +93,18 @@ for (let n = -50; n <= 50; n += 1) {
   }
 }
 for (const bad of [1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-  for (const fn of [countWord, countWordLength]) {
-    let threw = false;
-    try {
-      fn(bad);
-    } catch {
-      threw = true;
-    }
-    if (!threw) fail(`non-integer ${bad} was accepted`);
+  let threw = false;
+  try {
+    countWord(bad);
+  } catch {
+    threw = true;
+  }
+  if (!threw) fail(`non-integer ${bad} was accepted by countWord`);
+  try {
+    const length = countWordLength(bad);
+    if (typeof length !== "number") fail(`countWordLength ${bad} returned ${length}`);
+  } catch {
+    fail(`countWordLength threw on ${bad}`);
   }
 }
 

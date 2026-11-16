@@ -75,20 +75,37 @@ const serveRoot = mkdtempSync(join(tmpdir(), "count-site-"));
 mkdirSync(serveRoot, { recursive: true });
 symlinkSync(join(root, "out"), join(serveRoot, "eml-and-one"));
 const serverLog = [];
+let serverCode = null;
 const server = spawn("python3", ["-m", "http.server", String(port), "--directory", serveRoot], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stdout.on("data", (chunk) => serverLog.push(String(chunk)));
 server.stderr.on("data", (chunk) => serverLog.push(String(chunk)));
+server.on("exit", (code) => {
+  serverCode = code;
+});
 
+let served = false;
 for (let i = 0; i < 50; i += 1) {
+  if (serverCode !== null) break;
   try {
     const response = await fetch(`http://127.0.0.1:${port}/eml-and-one/count/`);
-    if (response.ok) break;
+    const html = await response.text();
+    if (response.ok && html.includes("count to n")) {
+      served = true;
+      break;
+    }
   } catch {
     // the server is still binding
   }
   await delay(200);
+}
+if (!served) {
+  console.error(serverLog.join(""));
+  console.error(serverCode !== null ? `static server exited ${serverCode}` : "static server did not serve this build");
+  server.kill();
+  rmSync(serveRoot, { recursive: true, force: true });
+  process.exit(1);
 }
 
 let chrome;
@@ -123,7 +140,9 @@ try {
       if (message.params.response.status >= 400) network.push({ url, status: message.params.response.status, bad: true });
     }
     if (message.method === "Network.loadingFailed") {
-      network.push({ url, status: 0, bad: true, error: message.params.errorText || "" });
+      const error = message.params?.errorText || "";
+      if (error === "net::ERR_ABORTED") return;
+      network.push({ url, status: 0, bad: true, error });
     }
   });
 
@@ -178,13 +197,45 @@ try {
     })();`,
   }, sessionId);
 
+  function displayedN(url) {
+    const match = /[#?&]n=(-?\d+)/.exec(url);
+    if (!match) return null;
+    const n = Number(match[1]);
+    return n < 0 ? `−${-n}` : String(n);
+  }
+
+  function waitEvent(method, timeoutMs = 30_000) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        socket.removeEventListener("message", hear);
+        reject(new Error(`timed out waiting for ${method}`));
+      }, timeoutMs);
+      function hear(event) {
+        const message = JSON.parse(event.data);
+        if (message.method !== method) return;
+        clearTimeout(timer);
+        socket.removeEventListener("message", hear);
+        resolve(message);
+      }
+      socket.addEventListener("message", hear);
+    });
+  }
+
   async function open(url) {
+    const current = await evalJs(`location.href`);
+    const target = new URL(url);
+    const here = typeof current === "string" ? new URL(current) : null;
+    const sameDocument = Boolean(here && here.origin === target.origin && here.pathname === target.pathname && here.search === target.search);
+    const loaded = sameDocument ? null : waitEvent("Page.loadEventFired");
     await send("Page.navigate", { url }, sessionId);
+    if (loaded) await loaded;
+    const want = displayedN(url);
+    const hash = new URL(url).hash;
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      const ready = await evalJs(`document.getElementById("nbig") ? document.getElementById("nbig").textContent : ""`);
-      if (ready) return;
-      await delay(100);
+      const state = await evalJs(`({ n: document.getElementById("nbig")?.textContent || "", hash: location.hash })`);
+      if (state?.n && (!want || state.n === want) && (!hash || state.hash === hash)) return;
+      await delay(50);
     }
     throw new Error(`page did not render ${url}`);
   }
@@ -228,6 +279,41 @@ try {
     workerHit ? workerPath : workerPath || "no worker",
   );
   report("n = 50 shows checking, then 50, the exact chip, and 94 gates", Boolean(sawChecking) && Boolean(fifty), fifty ? fifty.note : "timed out");
+  const contrast = await evalJs(`(() => {
+    function channel(v) { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; }
+    function lum(color) {
+      const match = /rgba?\\((\\d+), (\\d+), (\\d+)/.exec(color);
+      if (!match) return null;
+      return 0.2126 * channel(+match[1]) + 0.7152 * channel(+match[2]) + 0.0722 * channel(+match[3]);
+    }
+    function background(el) {
+      let node = el;
+      while (node) {
+        const color = getComputedStyle(node).backgroundColor;
+        const match = /rgba?\\((\\d+), (\\d+), (\\d+)(?:, ([\\d.]+))?\\)/.exec(color);
+        if (match && (match[4] === undefined || Number(match[4]) > 0.5)) return color;
+        node = node.parentElement;
+      }
+      return "rgb(0, 0, 0)";
+    }
+    function ratio(el) {
+      if (!el) return 0;
+      const fg = lum(getComputedStyle(el).color);
+      const back = lum(background(el));
+      if (fg == null || back == null) return 0;
+      return (Math.max(fg, back) + 0.05) / (Math.min(fg, back) + 0.05);
+    }
+    return {
+      note: ratio(document.getElementById("cutnote")),
+      floatNote: ratio(document.querySelector("#chips .count-note")),
+      link: ratio(document.getElementById("docs-link")),
+    };
+  })()`);
+  report(
+    "cut note, float note, and docs link reach 4.5:1",
+    contrast?.note >= 4.5 && contrast?.floatNote >= 4.5 && contrast?.link >= 4.5,
+    JSON.stringify(contrast),
+  );
   const long = (fifty?.tasks || []).filter((duration) => duration > 100);
   report("no long task over 100 ms before the result", long.length === 0, long.join(", "));
 
@@ -271,9 +357,16 @@ try {
   report("n = 3 pill and cut line", Boolean(three));
 
   const docsHref = await evalJs(`document.getElementById("docs-link")?.href || ""`);
+  let docsPath = "";
+  try {
+    docsPath = docsHref ? new URL(docsHref).pathname.replace(/\/$/, "") : "";
+  } catch {
+    docsPath = "";
+  }
+  const docsInSite = docsPath.endsWith("/counting") && !String(docsHref).includes("/blob/");
   try {
     const docs = await fetch(docsHref, { redirect: "follow", headers: { "User-Agent": "eml-count-e2e" } });
-    if (docs.status === 200) report("docs link", true, docsHref);
+    if (docs.status === 200 && docsInSite) report("docs link", true, docsHref);
     else report("docs link", false, `${docs.status} ${docsHref}`);
   } catch (err) {
     console.log(`SKIP docs link — offline (${err instanceof Error ? err.message : err}) ${docsHref}`);
@@ -294,7 +387,13 @@ try {
   report("shipped page has no trace global and no float count", leaked?.trace === "undefined" && leaked?.floatCount === false, JSON.stringify(leaked));
 
   async function shows(hash, probe) {
+    const want = displayedN(`http://127.0.0.1/${hash}`);
     await evalJs(`location.hash = ${JSON.stringify(hash)}`);
+    const ready = await waitFor(`(() => {
+      const n = document.getElementById("nbig")?.textContent || "";
+      return location.hash === ${JSON.stringify(hash)} && n === ${JSON.stringify(want)} ? "ready" : "";
+    })()`, 30_000);
+    if (ready !== "ready") throw new Error(`did not reach ${hash} (nbig stayed ${await evalJs(`document.getElementById("nbig")?.textContent || ""`)} hash ${await evalJs("location.hash")})`);
     return waitFor(probe, 180_000);
   }
   const neg2 = await shows("#n=-2", `(() => {
@@ -324,6 +423,103 @@ try {
   report("n = 13 is K 99", thirteen === "ok");
   const thirteenFree = await shows("#n=13&noln0", `document.body.innerText.includes("K 101") ? "ok" : ""`);
   report("n = 13 without ln 0 is K 101", thirteenFree === "ok");
+
+  const rangeLabel = await evalJs(`document.querySelector("label[for=n]")?.textContent || ""`);
+  report("n field label shows the range", rangeLabel.includes("n, from -50 to 50"), String(rangeLabel));
+  const back = await evalJs(`document.querySelector("a.ti-home")?.href || ""`);
+  report("count page links back to the calculator", typeof back === "string" && /\/eml-and-one\/?$/.test(back), String(back));
+
+  await evalJs(`(() => {
+    const input = document.getElementById("n");
+    input.focus();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "-5");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  })()`);
+  const typed = await waitFor(`(() => {
+    const shown = document.getElementById("nbig")?.textContent || "";
+    const field = document.getElementById("n")?.value || "";
+    return shown === "−5" && field === "-5" ? "ok" : "";
+  })()`);
+  report("typing -5 keeps -5", typed === "ok", String(typed));
+
+  await evalJs(`(() => {
+    const input = document.getElementById("n");
+    input.focus();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "999");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.blur();
+  })()`);
+  const outOfRange = await waitFor(`(() => {
+    const error = document.getElementById("n-error")?.textContent || "";
+    const shown = document.getElementById("nbig")?.textContent || "";
+    return error && shown === "−5" ? error : "";
+  })()`);
+  report("out-of-range input shows an error and does not clamp", Boolean(outOfRange), String(outOfRange));
+
+  await evalJs(`(() => {
+    const input = document.getElementById("n");
+    input.focus();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "1.5");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.blur();
+  })()`);
+  const nonInteger = await waitFor(`(() => {
+    const error = document.getElementById("n-error")?.textContent || "";
+    const shown = document.getElementById("nbig")?.textContent || "";
+    const field = document.getElementById("n")?.value || "";
+    return error && shown === "−5" && field === "1.5" ? "ok" : "";
+  })()`);
+  report("non-integer input shows an error", nonInteger === "ok");
+
+  const focus = await evalJs(`(() => {
+    function ring(el) {
+      if (!el) return false;
+      try { el.focus({ focusVisible: true }); }
+      catch { el.focus(); }
+      const style = getComputedStyle(el);
+      return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) >= 2;
+    }
+    const copy = [...document.querySelectorAll("button")].find((item) => item.textContent.trim().startsWith("Copy as 1"));
+    return {
+      n: ring(document.getElementById("n")),
+      slider: ring(document.getElementById("slider")),
+      ln0: ring(document.getElementById("ln0")),
+      home: ring(document.querySelector("a.ti-home")),
+      docs: ring(document.getElementById("docs-link")),
+      copy: ring(copy),
+    };
+  })()`);
+  report("focus ring on the n field, slider, ln 0 box, links, and Copy", Boolean(focus) && Object.values(focus).every(Boolean), JSON.stringify(focus));
+
+  await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 900, deviceScaleFactor: 1, mobile: true }, sessionId);
+  await delay(200);
+  const small = await evalJs(`(() => {
+    return [...document.querySelectorAll(".count-layout a, .count-layout button, .count-layout input")].flatMap((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return [];
+      return [{ name: el.id || el.getAttribute("aria-label") || el.textContent.trim().slice(0, 24), w: Math.round(rect.width), h: Math.round(rect.height) }];
+    }).filter((item) => item.w < 44 || item.h < 44);
+  })()`);
+  report("phone targets are at least 44px", Array.isArray(small) && small.length === 0, JSON.stringify(small));
+  const deviceH = await evalJs(`document.querySelector(".count-layout .ti-device")?.getBoundingClientRect().height || 0`);
+  report("phone device does not fill the screen before the panels", deviceH > 0 && deviceH < 800, String(deviceH));
+  await send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
+
+  const calcLoaded = waitEvent("Page.loadEventFired");
+  await send("Page.navigate", { url: `http://127.0.0.1:${port}/eml-and-one/` }, sessionId);
+  await calcLoaded;
+  const calcLink = await waitFor(`(() => {
+    const link = [...document.querySelectorAll("a")].find((item) => {
+      const path = new URL(item.href).pathname.replace(/\\/$/, "");
+      return path.endsWith("/count") && item.textContent.trim() === "Count to n";
+    });
+    return link ? link.href : "";
+  })()`, 20000);
+  report("calculator links to the count page", typeof calcLink === "string" && calcLink.includes("/count"), String(calcLink));
 
   const badNet = network.filter((item) => item.bad);
   report("no failed page requests", badNet.length === 0, badNet.map((item) => `${item.status} ${item.url}`).join("; "));

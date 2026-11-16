@@ -1,7 +1,7 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { PressLine } from "@/components/calculator/chrome";
 import { useExactScheduler } from "@/components/calculator/useExactScheduler";
 import { EMPTY, type Entry, type Model } from "@/components/calculator/screen";
 import { runCutRule } from "@/lib/eml/countCutDebug";
@@ -13,7 +13,10 @@ import { evaluateReport, nodeFromRpn } from "@/lib/eml/node";
 import { samePrincipal } from "@/lib/eml/principalBranch";
 import "./count.css";
 
-const DOCS = "https://github.com/benskott42/eml-and-one/blob/cursor/v1.1-count-to-n-f514/docs/counting.md";
+const DOCS = "/counting";
+const N_MIN = -50;
+const N_MAX = 50;
+const N_ERROR = "Enter an integer from -50 to 50.";
 const CUT_LINE = "Lower cut, Arg in [−π, π), ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log.";
 const NO_GATES = "No gates, so no logarithm is taken; the cut does not apply.";
 
@@ -81,6 +84,11 @@ export function CountApp() {
   const modelRef = useRef<Model>(EMPTY);
   const historyRef = useRef<History<Model>>({ past: [], current: EMPTY });
   const [job, setJob] = useState<{ word: string; watch: number } | null>(null);
+  const [draft, setDraft] = useState<{ n: number; text: string } | null>(null);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const typed = useRef(String(n));
+  const editing = draft !== null && draft.n === n;
+  const fieldText = editing ? draft.text : String(n);
   const serial = useRef(0);
   const setModel = useCallback((next: Model) => {
     modelRef.current = next;
@@ -178,6 +186,24 @@ export function CountApp() {
     ? "minimal conditional on Schanuel's conjecture"
     : "";
 
+  function commitText(text: string) {
+    const trimmed = text.trim();
+    if (!/^-?\d+$/.test(trimmed)) {
+      setInputError(N_ERROR);
+      setDraft({ n, text });
+      return;
+    }
+    const value = Number(trimmed);
+    if (value < N_MIN || value > N_MAX) {
+      setInputError(N_ERROR);
+      setDraft({ n, text });
+      return;
+    }
+    setInputError(null);
+    setDraft(null);
+    writeHash(value, mode);
+  }
+
   return (
     <main className="ti-stage">
       <div className="count-layout">
@@ -187,7 +213,7 @@ export function CountApp() {
               <h1 className="ti-wordmark">EML and One</h1>
               <p className="ti-model">count to n · words from 1 and EML only</p>
             </div>
-            <a className="ti-home" href="../">Calculator</a>
+            <Link className="ti-home" href="/">Calculator</Link>
           </div>
           <div className="ti-bezel">
             <div className="ti-lcd">
@@ -232,14 +258,41 @@ export function CountApp() {
             <button type="button" id="mexact" className="ti-text-btn ti-text-btn-strong" aria-pressed={primary === "exact"} onClick={() => setPrimary("exact")}>exact mode · 120 digits</button>
             <button type="button" id="mfloat" className="ti-text-btn" aria-pressed={primary === "float"} onClick={() => setPrimary("float")}>float (hardware)</button>
           </div>
-          <div className="count-controls">
-            <button type="button" className="ti-text-btn" aria-label="n minus 1" onClick={() => writeHash(clamp(n - 1), mode)}>−</button>
-            <input id="n" aria-label="n" type="number" min={-50} max={50} value={n} onChange={(event) => writeHash(clamp(Number(event.target.value)), mode)} />
-            <button type="button" className="ti-text-btn" aria-label="n plus 1" onClick={() => writeHash(clamp(n + 1), mode)}>+</button>
+          <div className="count-n">
+            <label className="count-n-label" htmlFor="n">n, from -50 to 50</label>
+            <div className="count-controls">
+              <button type="button" className="ti-text-btn" aria-label="n minus 1" onClick={() => writeHash(clamp(n - 1), mode)}>−</button>
+              <input
+                id="n"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                value={fieldText}
+                aria-invalid={editing && inputError ? true : undefined}
+                aria-describedby={editing && inputError ? "n-error" : undefined}
+                onFocus={() => {
+                  typed.current = fieldText;
+                }}
+                onChange={(event) => {
+                  typed.current = event.target.value;
+                  setDraft({ n, text: event.target.value });
+                  setInputError(null);
+                }}
+                onBlur={(event) => commitText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  commitText(typed.current);
+                }}
+              />
+              <button type="button" className="ti-text-btn" aria-label="n plus 1" onClick={() => writeHash(clamp(n + 1), mode)}>+</button>
+            </div>
+            {editing && inputError ? <p className="count-error" id="n-error" role="alert">{inputError}</p> : null}
           </div>
           <input id="slider" className="count-slider" type="range" min={-50} max={50} step={1} aria-label="n from −50 to 50" value={n} onChange={(event) => writeHash(clamp(Number(event.target.value)), mode)} />
           <label className="count-opt">
-            <input type="checkbox" checked={mode === "ln0"} onChange={(event) => writeHash(n, event.target.checked ? "ln0" : "strict")} /> allow ln 0 = −∞ (off = only words that avoid ln 0)
+            <input id="ln0" type="checkbox" checked={mode === "ln0"} onChange={(event) => writeHash(n, event.target.checked ? "ln0" : "strict")} /> allow ln 0 = −∞ (off = only words that avoid ln 0)
           </label>
           <p className="count-conv"><b>Conventions.</b> Lower cut: Arg in [−π, π), so ln of a negative real takes Arg −π (on this cut −iπ becomes +iπ under the principal Log). ln 0 = −∞ when allowed. K counts presses: one per 1, one per E.</p>
         </section>
@@ -265,7 +318,6 @@ export function CountApp() {
             <h2>Sequence · outline</h2>
             <Outline choice={choice} />
             <p className="count-note">{choice.spans.length ? `${choice.spans.length} × EEE1EE11 highlighted (gold and blue bands alternate)` : "no repeating block in this word"}</p>
-            <PressLine node={node} />
           </section>
           <section className="count-panel">
             <h2>Sequence · every press</h2>
@@ -280,7 +332,7 @@ export function CountApp() {
           <section className="count-panel">
             <How choice={choice} />
             <p className="count-foot">Values come from the calculator&apos;s exact engine. 0, −1 and 2 are proved minimal; other table lengths are shortest known; every other word is a construction.</p>
-            <p className="count-foot">Why a counting construction gives n is in <a id="docs-link" href={DOCS}>docs/counting.md</a>.</p>
+            <p className="count-foot">Why a counting construction gives n is in <Link id="docs-link" href={DOCS}>docs/counting.md</Link>.</p>
           </section>
         </div>
       </div>
@@ -292,7 +344,7 @@ function DocText({ text }: { text: string }) {
   const marker = "docs/counting.md";
   const at = text.indexOf(marker);
   if (at < 0) return <>{text}</>;
-  return <>{text.slice(0, at)}<a href={DOCS}>{marker}</a>{text.slice(at + marker.length)}</>;
+  return <>{text.slice(0, at)}<Link href={DOCS}>{marker}</Link>{text.slice(at + marker.length)}</>;
 }
 
 function Outline({ choice }: { choice: CountChoice }) {
@@ -307,7 +359,7 @@ function Outline({ choice }: { choice: CountChoice }) {
               {chunk.kind === "blocks" ? (
                 <>
                   {chips(choice.word, chunk.start, chunk.start + 8)}
-                  <span className="count-note">repeated {chunk.reps} time{chunk.reps === 1 ? "" : "s"}</span>
+                  <span className="count-note">repeated {chunk.reps} time{chunk.reps === 1 ? "" : "s"} (one block = 8 presses = one count step)</span>
                 </>
               ) : longPrefix ? (
                 <>
@@ -316,7 +368,7 @@ function Outline({ choice }: { choice: CountChoice }) {
                 </>
               ) : chips(choice.word, chunk.start, chunk.end)}
             </span>
-            <span>{chunk.start + 1}–{chunk.end}</span>
+            <span>{chunk.start + 1}–{chunk.end} · {chunk.end - chunk.start}</span>
           </div>
         );
       })}
@@ -354,10 +406,10 @@ function Flat({ choice }: { choice: CountChoice }) {
 
 function How({ choice }: { choice: CountChoice }) {
   if (choice.source === "family" && choice.spans.length && choice.n >= 2) {
-    return <p className="count-note"><b>How it counts.</b> The prefix pushes {2 * choice.n + 2} ones. Each EEE1EE11 block takes one step toward {choice.n}. After {choice.n - 1} block{choice.n === 2 ? "" : "s"}, the tail EE1EE outputs {choice.n}.</p>;
+    return <p className="count-note"><b>How it counts.</b> The prefix pushes {2 * choice.n + 2} ones. Each <b>EEE1EE11</b> block takes L with e<sup>L</sup> = e − k to e<sup>L</sup> = e − (k+1). After {choice.n - 1} block{choice.n === 2 ? "" : "s"}, the tail <b>EE1EE</b> outputs e + 1 − e<sup>L</sup> = {choice.n}.</p>;
   }
   if (choice.source === "family" && choice.spans.length && choice.n <= -1) {
-    return <p className="count-note"><b>How it counts.</b> The same block runs {-choice.n} time{choice.n === -1 ? "" : "s"}; the tail E1EE outputs −{-choice.n}.</p>;
+    return <p className="count-note"><b>How it counts.</b> The same block runs {-choice.n} time{choice.n === -1 ? "" : "s"}, taking e<sup>L</sup> from e down to e − {-choice.n}; the tail <b>E1EE</b> outputs e<sup>L</sup> − Log e<sup>e</sup> = −{-choice.n}.</p>;
   }
   if (choice.source === "table") return <p className="count-note"><b>Table word.</b> Shorter than the counting-construction word, so the page shows the table&apos;s word and its status.</p>;
   return null;
