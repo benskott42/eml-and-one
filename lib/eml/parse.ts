@@ -44,6 +44,7 @@ import {
 } from "./library";
 import { formatC, isUsable } from "./format";
 import { EmlError, isolateCircuit, type Node } from "./node";
+import { noteExpr, noteLiteral } from "./provenance";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
@@ -369,7 +370,9 @@ function compileParsed(source: string, variables: Record<string, Node>): Node {
   const stack: Ast[] = [];
   for (const item of toRpn(tokenize(source))) {
     if (item.k === "num") {
-      stack.push({ k: "n", node: literalNode(item.text) });
+      const literal = literalNode(item.text);
+      noteLiteral(literal, item.text);
+      stack.push({ k: "n", node: literal });
       continue;
     }
     if (item.k === "const") {
@@ -402,7 +405,9 @@ function compileParsed(source: string, variables: Record<string, Node>): Node {
   }
   const root = stack.pop();
   if (!root || stack.length) throw new EmlError("The expression has an extra symbol.");
-  return foldAst(root);
+  const node = foldAst(root);
+  noteExpr(node, source.trim());
+  return node;
 }
 
 const REF_UNARY: Record<string, (z: C) => C> = {
