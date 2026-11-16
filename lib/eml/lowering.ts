@@ -1,4 +1,5 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { noteBuilder } from "./provenance";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -281,7 +282,7 @@ export function noteLn(node: Node, arg: Node): Node {
 }
 
 function expOf(t: Node): Node {
-  return noteExp(E(t, ONE), t);
+  return noteBuilder(noteExp(E(t, ONE), t), "expOf");
 }
 
 function ivAdd(a: Iv, b: Iv, sign: 1 | -1): Iv | null {
@@ -379,7 +380,10 @@ export function naiveSub(a: Node, b: Node): Node {
  * so eml(H, exp b) is the same value and eight tokens shorter.
  */
 function subOfExp(a: Node, b: Node): Node {
-  if (a.type === "eml" && a.a && a.b === ONE) return setRange(E(a.a, E(b, ONE)), subRange(a, b));
+  if (a.type === "eml" && a.a && a.b === ONE) {
+    const inner = noteBuilder(E(b, ONE), "expOf");
+    return noteBuilder(setRange(E(a.a, inner), subRange(a, b)), "subOfExp");
+  }
   return naiveSub(a, b);
 }
 
@@ -915,7 +919,7 @@ function scaledSumInAddStrip(a: Node, b: Node, k: number): boolean {
 
 function scaledTiny(a: Node, b: Node, k: number): Node {
   const scale = tenPow(k);
-  return markTwoScaled(markShell(rawDiv(rawAdd(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
+  return noteBuilder(markTwoScaled(markShell(rawDiv(rawAdd(rawMul(a, scale), rawMul(b, scale)), scale), [a, b])), "scaledTiny");
 }
 
 /** (a·10^k − b·10^k) / 10^k. The short subtraction loses a difference near 10^(−20). */
@@ -929,7 +933,7 @@ function scaledTinySub(a: Node, b: Node): Node | null {
   // The short sub word is exact for Im y in [−π, π). The lift can push a tiny imaginary past that.
   if (!ib || !Number.isFinite(scaleFactor) || !(ib.lo * scaleFactor >= -Math.PI && ib.hi * scaleFactor < Math.PI)) return null;
   const scale = tenPow(k);
-  return markTwoScaled(markShell(rawDiv(naiveSub(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
+  return noteBuilder(markTwoScaled(markShell(rawDiv(naiveSub(rawMul(a, scale), rawMul(b, scale)), scale), [a, b])), "scaledTinySub");
 }
 
 export function domainAdd(a: Node, b: Node): Node {
