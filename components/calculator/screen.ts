@@ -5,6 +5,7 @@ import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describ
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
 import { formatC, isUsable } from "@/lib/eml/format";
 import { pressPreviewForNode } from "@/lib/eml/presses";
+import { snapshotSequence, type SequenceSnapshot } from "@/lib/eml/provenance";
 import { programNumberText } from "@/lib/eml/programIndex";
 
 export type Mode = "float" | "exact";
@@ -22,6 +23,7 @@ export type Entry = {
   underflowed?: boolean;
   nearCut?: boolean;
   pendingExact?: boolean;
+  sequence?: SequenceSnapshot;
   cancelled?: boolean;
   floatDiffers?: boolean;
   exactBeside?: string;
@@ -175,7 +177,8 @@ export function resultError(item: Entry): string | null {
 let watchSerial = 1;
 
 export function entry(node: Node, caption: string, mode: Mode): Entry {
-  return { node, caption, watch: watchSerial++, ...runNode(node, mode) };
+  const sequence = snapshotSequence(node);
+  return { node, caption, watch: watchSerial++, sequence, ...runNode(node, mode) };
 }
 
 export function readScalar(text: string): Node {

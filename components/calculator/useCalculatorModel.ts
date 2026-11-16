@@ -691,7 +691,9 @@ export function useCalculatorModel() {
         showProgram(node, `using x=${rawX.trim() || "x"}, y=${rawY.trim() || "y"}`, false, notice);
         return;
       }
-      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice);
+      const loaded = nodeFromRpn(parsed.word.split(""));
+      const caption = parsed.word.length > 80 ? `${parsed.word.length} presses` : parsed.word;
+      showProgram(loaded, caption, false, notice);
     } catch (err) {
       const message = failure(err);
       fail(message.includes("two values") ? "EML needs two values. Press 1 first." : message);
