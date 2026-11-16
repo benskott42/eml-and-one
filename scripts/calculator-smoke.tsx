@@ -130,7 +130,7 @@ async function main() {
   const buttonByText = (label: string) =>
     [...view.document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
   const undo = buttonByText("Undo");
-  const exact = buttonByText("exact");
+  const exact = buttonByText("exact mode · 120 digits");
   if (!(undo instanceof view.HTMLButtonElement) || !(exact instanceof view.HTMLButtonElement)) {
     console.error("missing undo or exact");
     failed = true;
@@ -164,6 +164,60 @@ async function main() {
     await act(async () => {
       clear.click();
     });
+  }
+  const oneInTurn = view.document.querySelector(".ti-btn-one");
+  const emlInTurn = view.document.querySelector(".ti-btn-eml");
+  const sin = buttonByText("sin");
+  const times = buttonByText("×");
+  if (!(oneInTurn instanceof view.HTMLButtonElement) || !(emlInTurn instanceof view.HTMLButtonElement)) {
+    console.error("missing 1 or EML for the one-turn press");
+    failed = true;
+  } else if (emlInTurn.disabled || emlInTurn.getAttribute("aria-disabled") !== "true") {
+    console.error("empty stack should mark EML with aria-disabled and leave it clickable", emlInTurn.disabled, emlInTurn.getAttribute("aria-disabled"));
+    failed = true;
+  } else if (!(sin instanceof view.HTMLButtonElement) || sin.getAttribute("aria-disabled") !== "true" || sin.disabled) {
+    console.error("empty stack should mark sin with aria-disabled", sin instanceof view.HTMLButtonElement ? sin.getAttribute("aria-disabled") : sin);
+    failed = true;
+  } else if (!(times instanceof view.HTMLButtonElement) || times.getAttribute("aria-disabled") !== "true" || times.disabled) {
+    console.error("empty stack should mark × with aria-disabled", times instanceof view.HTMLButtonElement ? times.getAttribute("aria-disabled") : times);
+    failed = true;
+  } else {
+    await act(async () => {
+      sin.click();
+    });
+    const oneValue = view.document.querySelector(".ti-lcd-error")?.textContent ?? "";
+    if (oneValue !== "Needs a value. Press 1 first.") {
+      console.error("a one-value key on an empty stack used the wrong message", oneValue);
+      failed = true;
+    }
+    await act(async () => {
+      emlInTurn.click();
+    });
+    const twoValue = view.document.querySelector(".ti-lcd-error")?.textContent ?? "";
+    if (twoValue !== "EML needs two values. Press 1 first.") {
+      console.error("EML on an empty stack used the wrong message", twoValue);
+      failed = true;
+    }
+    await act(async () => {
+      const one = view.document.querySelector(".ti-btn-one");
+      const eml = view.document.querySelector(".ti-btn-eml");
+      if (!(one instanceof view.HTMLButtonElement) || !(eml instanceof view.HTMLButtonElement)) return;
+      one.click();
+      one.click();
+      eml.click();
+    });
+    let raced = "";
+    for (let i = 0; i < 80; i += 1) {
+      raced = resultText().trim();
+      if (raced === "2.718281828459") break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+    }
+    if (raced !== "2.718281828459") {
+      console.error("1, 1, EML in one turn did not build e", raced, screenText());
+      failed = true;
+    }
   }
   const program = view.document.querySelector("input[placeholder='#110, 110, or 11E']");
   const setProgram = async (value: string) => {

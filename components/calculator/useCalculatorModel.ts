@@ -15,7 +15,7 @@ import {
   integerNode,
   unaryNode,
 } from "@/lib/eml/library";
-import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
+import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn, substitute } from "@/lib/eml/node";
 import { compileExpression } from "@/lib/eml/parse";
 import { parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 import {
@@ -63,6 +63,9 @@ export function useCalculatorModel() {
   const [mode, setMode] = useState<Mode>("exact");
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
   const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
+  const [freeInput, setFreeInput] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const freeInputRef = useRef(false);
   const modelRef = useRef(model);
   const textRef = useRef({ xText, yText });
   const modeRef = useRef<Mode>("exact");
@@ -89,6 +92,7 @@ export function useCalculatorModel() {
   });
   useEffect(() => {
     twoButtonsRef.current = twoButtons;
+    freeInputRef.current = freeInput;
     modelRef.current = model;
     textRef.current = { xText, yText };
     modeRef.current = mode;
@@ -98,14 +102,25 @@ export function useCalculatorModel() {
     const table: Record<string, string> = {};
     const label = (node: Node) => {
       const k = circuitStats(node).rpnLength;
-      return k <= BigInt(9999) ? `K ${k}` : "wide";
+      if (k > BigInt(9999)) return "wide";
+      const n = k.toString();
+      return `${n} ${n === "1" ? "press" : "presses"}`;
     };
+    const gated = !freeInput && model.stack.length < 2;
     for (const key of CONSTANT_KEYS) {
       try {
         table[key.id] = label(constantNode(key.id));
       } catch {
         table[key.id] = "";
       }
+    }
+    if (gated && model.stack.length === 0) {
+      for (const key of UNARY_KEYS) table[key.id] = "needs 2 values";
+      for (const key of BINARY_KEYS) table[key.id] = "needs 2 values";
+      return table;
+    }
+    if (gated) {
+      for (const key of BINARY_KEYS) table[key.id] = "needs 2 values";
     }
     let xNode = integerNode(2);
     let yNode = integerNode(3);
@@ -115,8 +130,8 @@ export function useCalculatorModel() {
         yNode = model.stack[model.stack.length - 1]?.node ?? yNode;
       } else if (model.stack.length === 1) {
         xNode = model.stack[0]?.node ?? xNode;
-        yNode = readScalar(yText);
-      } else {
+        if (freeInput) yNode = readScalar(yText);
+      } else if (freeInput) {
         xNode = readScalar(xText);
         yNode = readScalar(yText);
       }
@@ -124,8 +139,9 @@ export function useCalculatorModel() {
       xNode = integerNode(2);
       yNode = integerNode(3);
     }
-    const arg = model.stack[model.stack.length - 1]?.node ?? xNode;
+    const arg = model.stack[model.stack.length - 1]?.node ?? (freeInput ? xNode : integerNode(2));
     for (const key of UNARY_KEYS) {
+      if (table[key.id]) continue;
       try {
         table[key.id] = label(applyUnaryNode(key.id, arg));
       } catch {
@@ -133,6 +149,7 @@ export function useCalculatorModel() {
       }
     }
     for (const key of BINARY_KEYS) {
+      if (table[key.id]) continue;
       try {
         table[key.id] = label(applyBinaryNode(key.id, xNode, yNode));
       } catch {
@@ -140,7 +157,7 @@ export function useCalculatorModel() {
       }
     }
     return table;
-  }, [model.stack, xText, yText]);
+  }, [freeInput, model.stack, xText, yText]);
 
   const { cancel: cancelExact } = useExactScheduler({ modelRef, historyRef, setModel, stack: model.stack });
 
@@ -178,7 +195,11 @@ export function useCalculatorModel() {
     recomputeRef.current = true;
     setModel((current) => ({
       ...current,
-      stack: mode === "exact" ? current.stack.map((item) => ({ ...item, text: "computing", pendingExact: true, value: { re: Number.NaN, im: Number.NaN } })) : current.stack,
+      stack: current.stack.map((item) =>
+        mode === "exact"
+          ? { ...item, text: "computing", pendingExact: true, value: { re: Number.NaN, im: Number.NaN } }
+          : { ...item, text: "computing", value: { re: Number.NaN, im: Number.NaN } },
+      ),
       note: mode === "exact" ? "computing" : "Computing…",
       error: null,
     }));
@@ -322,24 +343,21 @@ export function useCalculatorModel() {
         y = current.stack[current.stack.length - 1];
         x = current.stack[current.stack.length - 2];
         rest = current.stack.slice(0, -2);
-      } else if (current.stack.length === 0 && !twoButtonsRef.current) {
+      } else if (freeInputRef.current && current.stack.length === 0) {
         const rawX = textRef.current.xText;
         const rawY = textRef.current.yText;
         const numbers = valuesOf(rawX, rawY);
-        x = { ...entry(readScalar(rawX), rawX.trim() || "x", modeRef.current), bound: numbers };
-        y = { ...entry(readScalar(rawY), rawY.trim() || "y", modeRef.current), bound: numbers };
+        x = { ...entry(readScalar(rawX), `x=${rawX.trim() || "x"}`, modeRef.current), bound: numbers };
+        y = { ...entry(readScalar(rawY), `y=${rawY.trim() || "y"}`, modeRef.current), bound: numbers };
         rest = [];
       } else {
-        const next = {
-          ...current,
-          error: "EML needs two values. The older one is x, the top one is y.",
-        };
+        const next = { ...current, error: "EML needs two values. Press 1 first." };
         modelRef.current = next;
         setModel(next);
         return;
       }
       const node = E(x.node, y.node);
-      const caption = clip(`eml(${x.caption}, ${y.caption})`);
+      const caption = clip(freeInputRef.current && current.stack.length === 0 ? `EML(X, Y) using ${x.caption}, ${y.caption}` : `eml(${x.caption}, ${y.caption})`);
       const item = { ...entry(node, caption, modeRef.current), bound: { ...x.bound, ...y.bound } };
       commit({
         stack: [...rest, item],
@@ -372,13 +390,16 @@ export function useCalculatorModel() {
       if (current.stack.length > 0) {
         arg = current.stack[current.stack.length - 1];
         rest = current.stack.slice(0, -1);
-      } else {
+      } else if (freeInputRef.current) {
         const raw = textRef.current.xText;
         arg = {
-          ...entry(readScalar(raw), raw.trim() || "x", modeRef.current),
+          ...entry(readScalar(raw), `x=${raw.trim() || "x"}`, modeRef.current),
           bound: valuesOf(raw, textRef.current.yText),
         };
         rest = [];
+      } else {
+        fail("Needs a value. Press 1 first.");
+        return;
       }
       const node = applyUnaryNode(id, arg.node);
       const caption = clip(unaryCaption(id, label, arg.caption));
@@ -408,15 +429,15 @@ export function useCalculatorModel() {
         y = current.stack[current.stack.length - 1];
         x = current.stack[current.stack.length - 2];
         rest = current.stack.slice(0, -2);
-      } else if (current.stack.length === 0) {
+      } else if (freeInputRef.current && current.stack.length === 0) {
         const rawX = textRef.current.xText;
         const rawY = textRef.current.yText;
         const numbers = valuesOf(rawX, rawY);
-        x = { ...entry(readScalar(rawX), rawX.trim() || "x", modeRef.current), bound: numbers };
-        y = { ...entry(readScalar(rawY), rawY.trim() || "y", modeRef.current), bound: numbers };
+        x = { ...entry(readScalar(rawX), `x=${rawX.trim() || "x"}`, modeRef.current), bound: numbers };
+        y = { ...entry(readScalar(rawY), `y=${rawY.trim() || "y"}`, modeRef.current), bound: numbers };
         rest = [];
       } else {
-        fail("Push a second value. The older one is x and the top one is y.");
+        fail("EML needs two values. Press 1 first.");
         return;
       }
       const node = applyBinaryNode(id, x.node, y.node);
@@ -442,12 +463,17 @@ export function useCalculatorModel() {
     setExpr(text);
     const current = modelRef.current;
     if (!text) {
-      fail("Enter an expression.");
+      setFieldError("Enter an expression.");
       return;
     }
     try {
       const variables: Record<string, Node> = {};
       const numbers: Record<string, C> = {};
+      const wantsField = /\bx\b/i.test(text) || /\by\b/i.test(text);
+      if (wantsField && !freeInputRef.current) {
+        setFieldError("Turn on free input to use x or y");
+        return;
+      }
       if (/\bx\b/i.test(text)) {
         variables.x = readScalar(textRef.current.xText);
         numbers.x = evaluateReport(variables.x).value;
@@ -456,6 +482,7 @@ export function useCalculatorModel() {
         variables.y = readScalar(textRef.current.yText);
         numbers.y = evaluateReport(variables.y).value;
       }
+      setFieldError(null);
       const node = compileExpression(text, variables);
       const item = { ...entry(node, text, modeRef.current), bound: numbers };
       const bits = [noteFor(item)].filter(Boolean);
@@ -466,9 +493,9 @@ export function useCalculatorModel() {
         error: resultError(item),
       });
     } catch (err) {
-      fail(failure(err));
+      setFieldError(failure(err));
     }
-  }, [commit, fail]);
+  }, [commit]);
 
   const swap = useCallback(() => {
     if (recomputeRef.current) {
@@ -609,7 +636,12 @@ export function useCalculatorModel() {
       return;
     }
     recomputeRef.current = true;
-    const pending = { ...previous, note: "Computing…", error: null };
+    const pending = {
+      ...previous,
+      stack: previous.stack.map((item) => ({ ...item, text: "computing" })),
+      note: "Computing…",
+      error: null,
+    };
     modelRef.current = pending;
     setModel(pending);
     void (async () => {
@@ -648,9 +680,21 @@ export function useCalculatorModel() {
       const from = parsed.rotatedFrom;
       const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
       const notice = from ? `Rotated ${from} to ${to}.` : null;
+      if (/[xy]/.test(parsed.word)) {
+        if (!freeInputRef.current) {
+          fail("Turn on free input to use x or y");
+          return;
+        }
+        const rawX = textRef.current.xText;
+        const rawY = textRef.current.yText;
+        const node = substitute(nodeFromRpn(parsed.word.split("")), { x: readScalar(rawX), y: readScalar(rawY) });
+        showProgram(node, `using x=${rawX.trim() || "x"}, y=${rawY.trim() || "y"}`, false, notice);
+        return;
+      }
       showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice);
     } catch (err) {
-      fail(failure(err));
+      const message = failure(err);
+      fail(message.includes("two values") ? "EML needs two values. Press 1 first." : message);
     }
   }, [fail, showProgram]);
 
@@ -744,6 +788,9 @@ export function useCalculatorModel() {
     twoButtons,
     heldShortcut,
     setHeldShortcut,
+    freeInput,
+    setFreeInput,
+    fieldError,
     costs,
     expansions,
     writeTwoButtons,

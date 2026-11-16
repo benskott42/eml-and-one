@@ -509,7 +509,8 @@ export function agreementNote(caption: string, value: C, variables: Record<strin
   const refZero = ref.re === 0 && (ref.im === 0 || Object.is(ref.im, -0));
   const textZero = text.trim() === "0" || text.trim() === "−0" || text.trim() === "-0";
   if (refZero && !textZero) return "float underflows";
-  if (isUsable(value) && formatC(value) === formatC(ref)) return "matches the usual value";
+  if (textZero || (value.re === 0 && (value.im === 0 || Object.is(value.im, -0)))) return null;
+  if (isUsable(value) && formatC(value) === formatC(ref)) return "same as float math (12 digits)";
   if (/tan\s*\(\s*pi\s*\/\s*2\s*\)/i.test(caption)) {
     return "near a pole: this π/2 is not the mathematical pole, and the digits depend on the engine";
   }

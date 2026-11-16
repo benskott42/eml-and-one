@@ -35,6 +35,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-device {
+  position: relative;
   width: min(100%, 480px);
   background: linear-gradient(180deg, #727b84 0%, #525b64 22px, #3d454d 90px, #343b43 100%);
   color: #f3f0e8;
@@ -211,7 +212,9 @@ html.ti-two-buttons .ti-btn-eml {
   font-family: inherit;
   font-size: 1.05rem;
   line-height: 1;
-  padding: 1px 6px 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
   border-radius: 2px;
   cursor: pointer;
 }
@@ -258,6 +261,8 @@ html.ti-two-buttons .ti-btn-eml {
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
   padding: 8px 10px;
   font: inherit;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 
 .ti-field:focus-visible,
@@ -319,11 +324,11 @@ html.ti-two-buttons .ti-btn-eml {
   background: #2b3238;
   color: #f7f4ee;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   font-weight: 650;
   line-height: 1.1;
   padding: 8px 4px;
-  min-height: 2.7rem;
+  min-height: 44px;
   cursor: pointer;
   box-shadow:
     0 4px 0 var(--edge),
@@ -383,7 +388,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-btn.is-down,
-.ti-btn:active:not(:disabled) {
+.ti-btn:active:not(:disabled):not([aria-disabled="true"]) {
   transform: translateY(3px);
   box-shadow:
     0 1px 0 var(--edge),
@@ -391,6 +396,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-btn:disabled,
+.ti-btn[aria-disabled="true"],
 .ti-chip:disabled,
 .ti-text-btn:disabled {
   cursor: not-allowed;
@@ -435,14 +441,107 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-chip {
-  padding: 6px 10px;
-  font-size: 0.85rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  box-sizing: border-box;
 }
 
 .ti-text-btn {
-  min-height: 2.6rem;
+  min-width: 44px;
+  min-height: 44px;
   padding: 8px 12px;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
+}
+
+.ti-skip {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  transform: translateY(-140%);
+  background: #f4e7a1;
+  color: #1a1c19;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  z-index: 2;
+}
+
+.ti-skip:focus {
+  transform: none;
+}
+
+.ti-onboard {
+  position: absolute;
+  z-index: 4;
+  top: 52px;
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #1c242b;
+  color: #f7f4ee;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.ti-fold > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.ti-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.ti-check {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+}
+
+.ti-onboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ti-field-error {
+  margin: 6px 0 0;
+  color: #ffd0c2;
+}
+
+.ti-lcd-result.is-previous {
+  opacity: 0.55;
+}
+
+.ti-btn.is-tutorial {
+  outline: 3px solid #f4e7a1;
+  outline-offset: 2px;
+}
+
+.ti-btn.is-on {
+  background: #f4e7a1;
+  color: #1a1c19;
+}
+
+.ti-btn.is-off {
+  background: #2b3238;
+}
+
+.ti-mode-sub {
+  display: block;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .ti-chip:active:not(:disabled),
@@ -537,7 +636,37 @@ html.ti-two-buttons .ti-btn-eml {
   margin-top: 10px;
 }
 
+@media (max-height: 700px) {
+  .ti-lcd {
+    min-height: 0;
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .ti-bezel {
+    padding: 6px;
+  }
+
+  .ti-device {
+    padding: 4px 12px 6px;
+  }
+
+  .ti-top {
+    padding-bottom: 2px;
+  }
+
+  .ti-modes,
+  .ti-prime,
+  .ti-form {
+    margin-top: 4px;
+  }
+}
+
 @media (max-width: 640px) {
+  .ti-device {
+    font-size: 14px;
+  }
+
   .ti-stage {
     padding: 0;
     background: #343b43;
@@ -563,7 +692,7 @@ html.ti-two-buttons .ti-btn-eml {
     transition: none;
   }
 
-  .ti-btn:active:not(:disabled),
+  .ti-btn:active:not(:disabled):not([aria-disabled="true"]),
   .ti-chip:active:not(:disabled),
   .ti-text-btn:active:not(:disabled) {
     transform: none;

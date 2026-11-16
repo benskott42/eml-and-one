@@ -66,19 +66,23 @@ export function KeyButton({
   onClick,
   title,
   ariaLabel,
+  describedBy,
   disabled = false,
   tone = "plain",
   secondary,
   onReveal,
+  hot = false,
 }: {
   children: ReactNode;
   onClick: () => void;
   title?: string;
   ariaLabel?: string;
+  describedBy?: string;
   disabled?: boolean;
   tone?: "plain" | "one" | "eml";
   secondary?: string;
   onReveal?: (text: string) => void;
+  hot?: boolean;
 }) {
   const revealed = useRef(false);
   return (
@@ -92,13 +96,17 @@ export function KeyButton({
         type="button"
         title={title}
         aria-label={ariaLabel}
+        aria-describedby={describedBy}
         aria-disabled={disabled || undefined}
         onClick={() => {
           if (revealed.current) {
             revealed.current = false;
             return;
           }
-          if (disabled) return;
+          // The disabled flag is the previous paint. 1, then 1, then EML in
+          // one turn has already updated the stack, and a native disabled
+          // attribute would drop EML before that paint. The handler reads
+          // the live stack and shows the gate message when it is still short.
           onClick();
         }}
         onPointerDown={() => {
@@ -121,7 +129,7 @@ export function KeyButton({
           window.addEventListener("pointerup", end, { once: true });
           window.addEventListener("pointercancel", end, { once: true });
         }}
-        className={disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}
+        className={`${disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}${hot ? " is-tutorial" : ""}`}
       >
         {children}
       </button>
