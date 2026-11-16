@@ -136,7 +136,15 @@ jobs:
           if (!boot.one || !boot.eml) fail("1 or EML key is missing");
           console.log("boot", JSON.stringify(boot));
 
-          await evalJs(`document.querySelector(".ti-btn-one").click(); document.querySelector(".ti-btn-one").click(); document.querySelector(".ti-btn-eml").click();`);
+          await evalJs(`(async () => {
+            const one = document.querySelector(".ti-btn-one");
+            const eml = document.querySelector(".ti-btn-eml");
+            one.click();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            one.click();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            eml.click();
+          })()`);
           const e = await evalJs(`(async () => {
             const start = Date.now();
             while (Date.now() - start < 15000) {
