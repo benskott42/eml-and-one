@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -63,13 +63,28 @@ export function CalculatorView(props: CalculatorModel) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowCard(true);
   }, []);
-  function dismissCard() {
+  const dismissCard = useCallback(() => {
     setShowCard(false);
     try {
       window.localStorage.setItem("eml-onboarding", "1");
     } catch {
       /* the card stays dismissed for this visit */
     }
+  }, []);
+  useEffect(() => {
+    if (!showCard) return;
+    function onKey(event: globalThis.KeyboardEvent) {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea")) return;
+      if (event.key === "1" || event.key === "e" || event.key === "E") dismissCard();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showCard, dismissCard]);
+  function onFirstKey(event: MouseEvent<HTMLDivElement>) {
+    if (!showCard) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest("button")) dismissCard();
   }
   useEffect(() => {
     if (!showCard) return;
@@ -170,7 +185,7 @@ export function CalculatorView(props: CalculatorModel) {
             </details>
           </div>
         </div>
-        <div className="ti-pad">
+        <div className="ti-pad" onClick={onFirstKey}>
 
         {twoButtons ? null : (
           <form

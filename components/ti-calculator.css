@@ -568,6 +568,12 @@ html.ti-two-buttons .ti-btn-eml {
   align-items: center;
 }
 
+.ti-lcd .ti-fold summary,
+.ti-lcd .ti-fold p,
+.ti-lcd .ti-press-meta {
+  color: var(--lcd-ink);
+}
+
 .ti-check-row {
   display: flex;
   align-items: center;
@@ -827,17 +833,26 @@ html.ti-two-buttons .ti-btn-eml {
        min-height win when the two conflict. Zero it in the same rule. */
     min-height: 0;
     max-height: 11rem;
-    overflow: hidden;
+    /* The screen stays this tall so the keys do not move. A wheel or a
+       swipe scrolls the error, the press line, and Details inside it. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .ti-lcd-stack {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+    max-height: 2.6rem;
     min-height: 1.15rem;
     overflow: auto;
     overscroll-behavior: contain;
   }
 
-  .ti-lcd-pin {
+  .ti-lcd-pin,
+  .ti-sequence,
+  .ti-lcd > .ti-press,
+  .ti-lcd > .ti-lcd-flag,
+  .ti-lcd > .ti-fold {
     flex: 0 0 auto;
   }
 }
@@ -934,11 +949,14 @@ html.ti-two-buttons .ti-btn-eml {
     flex: 1;
     min-height: 0;
     max-height: none;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .ti-lcd-stack {
     flex: 1 1 auto;
+    max-height: none;
     min-height: 1.15rem;
     overflow: auto;
     overscroll-behavior: contain;

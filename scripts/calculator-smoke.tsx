@@ -61,7 +61,7 @@ async function main() {
     console.error("calculator css is missing the font, focus ring, or reduced motion");
     failed = true;
   }
-  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 8.25rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh")) {
+  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 8.25rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh") || !css.includes("overflow-y: auto")) {
     console.error("phone display cap or landscape layout is missing");
     failed = true;
   }
@@ -99,7 +99,15 @@ async function main() {
       button.click();
     });
   };
+  if (!view.document.querySelector("[aria-label='First visit']")) {
+    console.error("welcome card missing on a first visit");
+    failed = true;
+  }
   await click(".ti-btn-one");
+  if (view.document.querySelector("[aria-label='First visit']")) {
+    console.error("welcome card stayed after the first key");
+    failed = true;
+  }
   await click(".ti-btn-one");
   await click(".ti-btn-eml");
   const screenText = () => view.document.querySelector("[aria-label='Calculator screen']")?.textContent ?? "";
