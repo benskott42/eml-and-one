@@ -1591,6 +1591,27 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     failed += 1;
     console.log("FAIL exact typed 0*inf", formatExact(typedExact.value), typedExact.singular);
   }
+  for (const source of ["ln(0)*0", "0*ln(0)", "ln(0)*(1-1)"]) {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, { maxNodes: 20_000 });
+    const ex = exactReport(node, {}, { maxNodes: 20_000 });
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    if (
+      hw.singular === null ||
+      !Number.isNaN(hw.value.re) ||
+      !Number.isNaN(hw.value.im) ||
+      ex.singular !== SINGULAR_INDET ||
+      !ex.value.re.isNaN() ||
+      !ex.value.im.isNaN() ||
+      text === "0" ||
+      text === "−0"
+    ) {
+      failed += 1;
+      console.log("FAIL 0 times ln 0", source, hw.singular, hw.value, ex.singular, text);
+    } else {
+      console.log("indet", source, text, ex.singular);
+    }
+  }
   const gap = compileExpression("inf-inf", {});
   const gapReport = evaluateReport(gap);
   const gapExact = exactReport(gap, {}, { maxNodes: 20_000 });
