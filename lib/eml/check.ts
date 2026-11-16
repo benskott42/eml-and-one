@@ -2888,7 +2888,7 @@ failed += runPropertyChecks();
   }
   const atanValue = evaluate(compileExpression("arctan(-2*i)", {}), {}, { maxNodes: 200_000 });
   const atanNote = agreementNote("arctan(-2*i)", atanValue, {}, formatC(atanValue));
-  if (atanNote !== "matches the usual value" || !(atanValue.re < 0)) {
+  if (atanNote !== "same as float math (12 digits)" || !(atanValue.re < 0)) {
     failed += 1;
     console.log("FAIL arctan usual value", atanNote, atanValue);
   }
