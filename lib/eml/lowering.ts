@@ -244,10 +244,14 @@ function expRange(range: Range): Range {
   const lo = Math.exp(range.re.lo);
   const hi = Math.exp(range.re.hi);
   const mag = Math.max(lo, hi);
-  // exp of a large negative real underflows to 0 in float64. That is a known
-  // zero for choosing a circuit; the node itself still evaluates.
+  // exp of a large negative real underflows in float64. A point at 0 would be
+  // the integer 0, and negation would fold to −0. The enclosure stays positive.
   if (!(mag > 0) || !Number.isFinite(mag)) {
-    if (Number.isFinite(range.re.hi) && range.re.hi < EXP_UNDERFLOW_RE) return point(0, 0);
+    if (Number.isFinite(range.re.hi) && range.re.hi < EXP_UNDERFLOW_RE) {
+      const tiny = Number.MIN_VALUE;
+      if (range.im && range.im.lo === 0 && range.im.hi === 0) return { re: { lo: 0, hi: tiny }, im: { lo: 0, hi: 0 } };
+      return { re: { lo: -tiny, hi: tiny }, im: { lo: -tiny, hi: tiny } };
+    }
     return UNKNOWN;
   }
   const M = outHi(mag);
@@ -725,6 +729,16 @@ function buildSub(a: Node, b: Node, kFrom: Node = b): Node {
   return finish(scaledRot(a, b, kFrom), range);
 }
 
+/** A real that float64 has already lost, or a decade below the working precision. */
+function underflowedReal(node: Node): boolean {
+  const decade = decadeOf(node);
+  if (decade !== undefined && decade <= -300) return true;
+  const size = extent(node);
+  if (!size) return false;
+  const mag = Math.max(size.re, size.im);
+  return mag > 0 && mag <= Number.MIN_VALUE;
+}
+
 export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
   const folded = cancelledSummand(a, b);
   if (folded) return folded;
@@ -754,6 +768,8 @@ export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
     const node = buildSub(a, b, kFrom);
     return rememberSub(huge ? node : attachInt(node, diff), a, b);
   }
+  // 0 − b is −b. The subtraction circuit rounds a sub-120-digit b to exact 0.
+  if (ia === BigInt(0) && underflowedReal(b)) return domainNeg(b);
   return rememberSub(buildSub(a, b, kFrom), a, b);
 }
 

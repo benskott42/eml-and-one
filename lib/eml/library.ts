@@ -370,7 +370,16 @@ export function tPow(a: Node, b: Node): Node {
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0 && va.re > 0 && Number.isFinite(vb.re)) {
     const re = va.re ** vb.re;
-    if (Number.isFinite(re)) tagReal(node, re);
+    // A float underflow is 0, and tagReal would store that as the integer 0.
+    // The power is not that integer. The decade lets a later cancellation see it.
+    if (Number.isFinite(re) && re !== 0) tagReal(node, re);
+    else if (re === 0) {
+      const log10 = Math.log10(va.re) * vb.re;
+      const decade = Math.floor(log10 + 1e-10);
+      // Past 480 digits a power spelling stays unresolved. Inside the cap, the
+      // decade is what lets 1 ± 10^(−k) keep the small term.
+      if (Number.isFinite(decade) && -decade + 48 <= 480) noteDecade(node, decade);
+    }
   }
   return node;
 }

@@ -29,7 +29,7 @@ import {
   tTwo,
   unaryNode,
 } from "./library";
-import { domainAdd, domainSub, naiveSub, rangeOf, rotSubCircuit } from "./lowering";
+import { domainAdd, domainSub, knownValue, naiveSub, rangeOf, rotSubCircuit } from "./lowering";
 import {
   type Node,
   E,
@@ -2961,6 +2961,78 @@ failed += runPropertyChecks();
       if (row.unverified || row.text !== want[row.source]) {
         failed += 1;
         console.log("FAIL fresh ln", row.source, row.unverified ? "unverified" : row.text);
+      }
+    }
+  }
+}
+
+{
+  // A float underflow is not the integer 0. Negation, sine, and 0 − b keep the tiny term.
+  const tinyRows: Array<[string, string]> = [
+    ["-10^(-400)", "−1×10^−400"],
+    ["-exp(-1000)", "−5.075958897549×10^−435"],
+    ["sin(-10^(-400))", "−1×10^−400"],
+    ["(0-1)*10^(-400)", "−1×10^−400"],
+    ["-(2*exp(-1000))", "−1.01519177951×10^−434"],
+    ["0-10^(-400)", "−1×10^−400"],
+    ["ln(1-10^(-400))", "−1×10^−400"],
+    ["ln(1+10^(-400))", "1×10^−400"],
+    ["-(10^(-30))", "−1×10^−30"],
+    ["10^(-30)", "1×10^−30"],
+    ["-10^(-130)", "−1×10^−130"],
+    ["10^(-130)", "1×10^−130"],
+    ["10^(-400)", "1×10^−400"],
+    ["-0", "−0"],
+  ];
+  const tinyNodes = tinyRows.map(([source]) => compileExpression(source, {}));
+  for (const [i, [source, want]] of tinyRows.entries()) {
+    const report = exactReport(tinyNodes[i], {}, { maxNodes: 400_000 });
+    const text = formatExact(report.value).replace(/\u200b/g, "");
+    const zero = text === "0" || text === "−0";
+    const note = agreementNote(source, evaluateReport(tinyNodes[i], {}, { maxNodes: 400_000 }).value, {}, text);
+    const vouched = note === "matches the usual value" && source !== "-0" && source !== "10^(-30)" && source !== "-(10^(-30))" && source !== "10^(-130)" && source !== "-10^(-130)";
+    if (report.unverified || text !== want || (zero && source !== "-0") || vouched) {
+      failed += 1;
+      console.log("FAIL tiny underflow", source, report.unverified ? "unverified" : text, note);
+    } else {
+      console.log("tiny", source, text);
+    }
+  }
+  const barePow = compileExpression("10^(-400)", {});
+  const bareExp = compileExpression("exp(-1000)", {});
+  if (rangeOf(barePow).int !== undefined || knownValue(barePow) !== null || knownValue(bareExp) !== null) {
+    failed += 1;
+    console.log("FAIL underflow tagged as exact 0", rangeOf(barePow).int, knownValue(barePow), knownValue(bareExp));
+  }
+  const signed = evaluate(compileExpression("-0", {}));
+  if (!Object.is(signed.re, -0) || signed.im !== 0) {
+    failed += 1;
+    console.log("FAIL typed -0", signed);
+  }
+  const tinyJobs = tinyRows.flatMap(([source], i) => {
+    // JSON has no −0, so the typed −0 control stays in this process.
+    if (source === "-0") return [];
+    const packed = packCircuit(tinyNodes[i]);
+    return [{ source, tokens: packed.tokens, root: packed.root }];
+  });
+  const tinyRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const tinyFresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
+    cwd: tinyRoot,
+    input: JSON.stringify(tinyJobs),
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  if (tinyFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh tiny underflow", tinyFresh.status, tinyFresh.stderr);
+  } else {
+    const rows = JSON.parse(tinyFresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+    for (const row of rows) {
+      const want = tinyRows.find(([source]) => source === row.source)?.[1];
+      const text = row.text.replace(/\u200b/g, "");
+      if (row.unverified || text !== want) {
+        failed += 1;
+        console.log("FAIL fresh tiny", row.source, row.unverified ? "unverified" : text);
       }
     }
   }
