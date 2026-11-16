@@ -9,6 +9,7 @@ import {
   isNonfiniteNode,
   knownValue,
   noteDecade,
+  noteLostTiny,
   noteTinyReal,
   naiveSub,
   negativeZero,
@@ -379,6 +380,9 @@ export function tPow(a: Node, b: Node): Node {
       // Past 480 digits a power spelling stays unresolved. Inside the cap, the
       // decade is what lets 1 ± 10^(−k) keep the small term.
       if (Number.isFinite(decade) && -decade + 48 <= 480) noteDecade(node, decade);
+      // No decade past the cap: a series shortcut must not resolve tan(10^(−5000)).
+      // The mark only refuses a later result that collapsed to a confident 0.
+      else if (Number.isFinite(decade)) noteLostTiny(node);
     }
   }
   return node;

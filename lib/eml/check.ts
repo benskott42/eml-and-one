@@ -2975,6 +2975,11 @@ failed += runPropertyChecks();
     ["(0-1)*10^(-400)", "−1×10^−400"],
     ["-(2*exp(-1000))", "−1.01519177951×10^−434"],
     ["0-10^(-400)", "−1×10^−400"],
+    ["0-exp(-1000)", "−5.075958897549×10^−435"],
+    ["0-exp(-1000+i)", "−2.742552296838×10^−435 − 4.271272132365×10^−435i"],
+    ["0-(2*exp(-1000))", "−1.01519177951×10^−434"],
+    ["0+exp(-1000)", "5.075958897549×10^−435"],
+    ["-10^(-500)", "−1×10^−500"],
     ["ln(1-10^(-400))", "−1×10^−400"],
     ["ln(1+10^(-400))", "1×10^−400"],
     ["-(10^(-30))", "−1×10^−30"],
@@ -3009,12 +3014,44 @@ failed += runPropertyChecks();
     failed += 1;
     console.log("FAIL typed -0", signed);
   }
-  const tinyJobs = tinyRows.flatMap(([source], i) => {
-    // JSON has no −0, so the typed −0 control stays in this process.
-    if (source === "-0") return [];
-    const packed = packCircuit(tinyNodes[i]);
-    return [{ source, tokens: packed.tokens, root: packed.root }];
-  });
+  // Past the 480-digit cap, and a sum of two underflows, must not certify 0.
+  const lostRows = [
+    "0-10^(-433)",
+    "0-10^(-500)",
+    "ln(1-10^(-500))",
+    "exp(-1000)+exp(-1000)",
+    "-(exp(-1000)+exp(-1000))",
+  ];
+  const lostNodes = lostRows.map((source) => compileExpression(source, {}));
+  for (const [i, source] of lostRows.entries()) {
+    const report = exactReport(lostNodes[i], {}, { maxNodes: 400_000 });
+    const text = formatExact(report.value).replace(/\u200b/g, "");
+    const collapsed = text === "0" || text === "−0";
+    if (!report.unverified || !collapsed) {
+      failed += 1;
+      console.log("FAIL lost tiny", source, report.unverified ? "unverified" : text);
+    } else {
+      console.log("lost", source, "couldn't verify");
+    }
+  }
+  const foldedPow = exactReport(compileExpression("10^(-500)-10^(-500)", {}), {}, { maxNodes: 400_000 });
+  const foldedText = formatExact(foldedPow.value).replace(/\u200b/g, "");
+  if (foldedPow.unverified || foldedText !== "0") {
+    failed += 1;
+    console.log("FAIL identical past-cap cancel", foldedPow.unverified ? "unverified" : foldedText);
+  }
+  const tinyJobs = [
+    ...tinyRows.flatMap(([source], i) => {
+      // JSON has no −0, so the typed −0 control stays in this process.
+      if (source === "-0") return [];
+      const packed = packCircuit(tinyNodes[i]);
+      return [{ source, tokens: packed.tokens, root: packed.root, unverified: false }];
+    }),
+    ...lostRows.map((source, i) => {
+      const packed = packCircuit(lostNodes[i]);
+      return { source, tokens: packed.tokens, root: packed.root, unverified: true };
+    }),
+  ];
   const tinyRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
   const tinyFresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
     cwd: tinyRoot,
@@ -3028,11 +3065,21 @@ failed += runPropertyChecks();
   } else {
     const rows = JSON.parse(tinyFresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
     for (const row of rows) {
-      const want = tinyRows.find(([source]) => source === row.source)?.[1];
+      const job = tinyJobs.find((item) => item.source === row.source);
       const text = row.text.replace(/\u200b/g, "");
-      if (row.unverified || text !== want) {
-        failed += 1;
-        console.log("FAIL fresh tiny", row.source, row.unverified ? "unverified" : text);
+      if (!job) continue;
+      if (job.unverified) {
+        const collapsed = text === "0" || text === "−0";
+        if (!row.unverified || !collapsed) {
+          failed += 1;
+          console.log("FAIL fresh lost tiny", row.source, row.unverified ? "unverified" : text);
+        }
+      } else {
+        const want = tinyRows.find(([source]) => source === row.source)?.[1];
+        if (row.unverified || text !== want) {
+          failed += 1;
+          console.log("FAIL fresh tiny", row.source, row.unverified ? "unverified" : text);
+        }
       }
     }
   }

@@ -729,14 +729,18 @@ function buildSub(a: Node, b: Node, kFrom: Node = b): Node {
   return finish(scaledRot(a, b, kFrom), range);
 }
 
-/** A real that float64 has already lost, or a decade below the working precision. */
+/**
+ * A real that float64 has already lost, or a decade below the working precision.
+ * 2·exp(−1000) is not a point at Number.MIN_VALUE: its enclosure is about 10^(−323).
+ * Anything that small is still invisible to the 120-digit subtraction.
+ */
 function underflowedReal(node: Node): boolean {
   const decade = decadeOf(node);
   if (decade !== undefined && decade <= -300) return true;
   const size = extent(node);
   if (!size) return false;
   const mag = Math.max(size.re, size.im);
-  return mag > 0 && mag <= Number.MIN_VALUE;
+  return mag > 0 && mag <= 1e-300;
 }
 
 export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
@@ -830,6 +834,17 @@ function liftExponent(mag: number): number {
  */
 const twoScaled = new WeakSet<Node>();
 const decades = new WeakMap<Node, number>();
+/** A term the 480-digit pass cannot recover. A vanished result that still holds one is not a certified 0. */
+const lostTiny = new WeakSet<Node>();
+
+export function noteLostTiny(node: Node): Node {
+  lostTiny.add(node);
+  return node;
+}
+
+export function isLostTiny(node: Node): boolean {
+  return lostTiny.has(node);
+}
 
 /** Signed power-of-ten exponent of a known real, including values float64 cannot hold. */
 export function noteDecade(node: Node, exp: number): Node {
@@ -951,6 +966,9 @@ export function domainAdd(a: Node, b: Node): Node {
   // Building the sum rotates through ln 0 and comes out negative.
   if (floatOverflowInt(a) && finiteBeside(b)) return a;
   if (floatOverflowInt(b) && finiteBeside(a)) return b;
+  // 0 + b is b. The add circuit rounds an underflowed b to exact 0.
+  if (rangeOf(a).int === BigInt(0) && underflowedReal(b)) return b;
+  if (rangeOf(b).int === BigInt(0) && underflowedReal(a)) return a;
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
@@ -973,6 +991,9 @@ export function domainAdd(a: Node, b: Node): Node {
   const tagged = range.int !== undefined ? attachInt(node, range.int) : setRange(node, range);
   noteRealSum(tagged, a, b);
   if (unknown) notePrecision(tagged, { kind: "add", left: a, right: b });
+  // exp(−1000)+exp(−1000) is a real tiny sum the circuit prints as 0.
+  // A recorded decade can still be recovered by raising precision, so leave those sums alone.
+  if (underflowedReal(a) && underflowedReal(b) && decadeOf(a) === undefined && decadeOf(b) === undefined) noteLostTiny(tagged);
   return tagged;
 }
 
