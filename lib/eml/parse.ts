@@ -135,7 +135,8 @@ function tokenize(source: string): Tok[] {
       i += 1;
       continue;
     }
-    throw new EmlError(`Cannot read “${ch}” in the expression.`);
+    const glyph = String.fromCodePoint(s.codePointAt(i) ?? ch.charCodeAt(0));
+    throw new EmlError(`Cannot read “${glyph}” in the expression.`);
   }
   return tokens;
 }
@@ -216,6 +217,7 @@ function toRpn(tokens: Tok[]): Out[] {
       }
       if (name === "pi" || name === "e" || name === "i") out.push({ k: "const", name });
       else if (name === "x" || name === "y") out.push({ k: "var", name });
+      else if (knownCall(name)) throw new EmlError(`${tok.text} needs parentheses, as in ${name}(…).`);
       else throw new EmlError(`Unknown name “${tok.text}”. Use x, y, pi, e, i, or inf.`);
       wantValue = false;
       continue;
@@ -248,7 +250,7 @@ function toRpn(tokens: Tok[]): Out[] {
         }
         out.push({ k: "op", name: top.k === "pre" ? top.name : top.name });
       }
-      if (!found) throw new EmlError("Missing ).");
+      if (!found) throw new EmlError("Unexpected ).");
       continue;
     }
     if (text === ",") {
@@ -297,7 +299,7 @@ function toRpn(tokens: Tok[]): Out[] {
 }
 
 function assertCall(name: string, count: number): void {
-  if (!knownCall(name)) throw new EmlError(`Unknown name “${name}”. Use x, y, pi, e, or i.`);
+  if (!knownCall(name)) throw new EmlError(`Unknown function “${name}”.`);
   const ok = (count === 1 && Object.hasOwn(UNARY, name)) || (count === 2 && Object.hasOwn(BINARY_CALL, name));
   if (!ok) throw new EmlError(`${name} does not take ${count} argument${count === 1 ? "" : "s"}.`);
 }

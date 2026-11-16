@@ -103,6 +103,10 @@ html.ti-two-buttons .ti-btn-eml {
     0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
+.ti-face {
+  display: contents;
+}
+
 .ti-lcd {
   --lcd-ink: #1a2214;
   position: relative;
@@ -156,12 +160,30 @@ html.ti-two-buttons .ti-btn-eml {
   white-space: nowrap;
 }
 
+.ti-lcd:focus-visible {
+  outline: 2px solid var(--lcd-ink);
+  outline-offset: -4px;
+}
+
+.ti-lcd-readout {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
 .ti-lcd-result {
+  flex: 1;
+  min-width: 0;
   margin: 0.25rem 0 0.15rem;
   font-size: clamp(1.8rem, 8vw, 2.8rem);
   line-height: 0.95;
   letter-spacing: 0.01em;
   overflow-wrap: anywhere;
+}
+
+.ti-lcd-sep {
+  white-space: pre;
 }
 
 .ti-lcd-caption,
@@ -186,6 +208,17 @@ html.ti-two-buttons .ti-btn-eml {
   padding: 0.1rem 0.3rem;
   border: 1px solid var(--lcd-ink);
   font-size: 1.15rem;
+}
+
+.ti-lcd-error-empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 .ti-press {
@@ -327,6 +360,10 @@ html.ti-two-buttons .ti-btn-eml {
   padding: 8px 4px;
   min-height: 44px;
   cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   box-shadow:
     0 4px 0 var(--edge),
     inset 0 1px 0 rgba(255, 255, 255, 0.28);
@@ -368,6 +405,26 @@ html.ti-two-buttons .ti-btn-eml {
 .ti-btn-alpha {
   --edge: #14381f;
   background: #1f6b38;
+}
+
+.ti-compute-slot {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.ti-compute-slot .ti-case-note {
+  margin: 0;
+}
+
+.ti-case-note.is-idle {
+  visibility: hidden;
+}
+
+.ti-btn-cancel:disabled {
+  visibility: hidden;
 }
 
 .ti-device-two .ti-btn-one,
@@ -681,6 +738,87 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-manual {
     width: 100%;
     padding: 4px 16px 28px;
+  }
+
+  .ti-lcd {
+    max-height: 11rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+/* Installed apps lock to portrait. A browser tab cannot, so a short
+   landscape phone gets a side-by-side screen and keypad instead. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .ti-stage {
+    min-height: 100dvh;
+    padding: 6px;
+    background:
+      radial-gradient(900px 420px at 50% -80px, #59636d, transparent 70%),
+      #1c2126;
+  }
+
+  .ti-device {
+    width: min(100%, 980px);
+    min-height: 0;
+    height: calc(100dvh - 12px);
+    max-height: calc(100dvh - 12px);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ti-face {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(14rem, 0.9fr);
+    gap: 8px;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .ti-bezel {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ti-lcd {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ti-pad {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ti-prime {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-top: 0;
+    padding-bottom: 4px;
+    background: #3d454d;
+  }
+
+  .ti-btn-one,
+  .ti-btn-eml,
+  .ti-device-two .ti-btn-one,
+  .ti-device-two .ti-btn-eml {
+    min-height: 2.8rem;
+    font-size: 1.35rem;
+  }
+
+  .ti-manual {
+    width: min(100%, 980px);
   }
 }
 

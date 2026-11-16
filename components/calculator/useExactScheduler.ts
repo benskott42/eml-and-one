@@ -30,7 +30,7 @@ export function useExactScheduler(input: {
   const exactJobs = useRef(new Map<number, { watch: number; kind: JobKind; floated: C }>());
   const exactSerial = useRef(0);
 
-  const publishWatch = useCallback((token: number, next: Entry) => {
+  const publishWatch = useCallback((token: number, next: Entry, errorOverride?: string) => {
     const current = modelRef.current;
     if (!current.stack.some((row) => row.watch === token)) return;
     const rows = current.stack.map((row) => (row.watch === token ? next : row));
@@ -39,7 +39,7 @@ export function useExactScheduler(input: {
       ...current,
       stack: rows,
       note: top?.watch === token ? noteFor(next) : current.note,
-      error: top?.watch === token ? resultError(next) : current.error,
+      error: top?.watch === token ? (errorOverride !== undefined ? errorOverride : resultError(next)) : current.error,
     };
     modelRef.current = updated;
     historyRef.current = { ...historyRef.current, current: updated };
@@ -60,8 +60,13 @@ export function useExactScheduler(input: {
           publishWatch(job.watch, { ...current, notice: "couldn't verify" });
           return;
         }
-        const blank = exactScreen("cancelled");
-        publishWatch(job.watch, { ...current, pendingExact: false, cancelled: true, text: blank.text, singular: payload.error });
+        publishWatch(job.watch, {
+          ...current,
+          pendingExact: false,
+          text: "—",
+          value: { re: Number.NaN, im: Number.NaN },
+          singular: null,
+        }, payload.error || "Exact evaluation failed.");
         return;
       }
       const exact = { re: payload.re, im: payload.im };

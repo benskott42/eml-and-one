@@ -5,27 +5,61 @@ import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 
-export function CopyNumber({ text }: { text: string }) {
+function clipboardError(err: unknown): string {
+  const name = typeof err === "object" && err !== null && "name" in err ? String(err.name) : "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Could not copy. Clipboard permission was denied.";
+  }
+  return "Could not copy. The clipboard is not available.";
+}
+
+export function CopyChip({
+  text,
+  label,
+  ariaLabel,
+  title,
+  onError,
+}: {
+  text: string;
+  label: string;
+  ariaLabel: string;
+  title?: string;
+  onError?: (message: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   return (
     <button
       type="button"
       className="ti-lcd-btn"
-      title={text}
-      aria-label={`Copy ${text}`}
+      title={title}
+      aria-label={ariaLabel}
       onClick={() => {
-        const clip = navigator.clipboard;
-        if (!clip) return;
-        void clip.writeText(text).then(() => setCopied(true)).catch(() => undefined);
+        const clip = window.navigator.clipboard;
+        const write = clip?.writeText?.bind(clip);
+        if (!write) {
+          onError?.("Could not copy. The clipboard is not available.");
+          return;
+        }
+        void write(text).then(() => setCopied(true)).catch((err: unknown) => {
+          onError?.(clipboardError(err));
+        });
       }}
     >
-      {copied ? "Copied" : "Copy number"}
+      {copied ? "Copied" : label}
     </button>
   );
 }
 
+export function CopyNumber({ text, onError }: { text: string; onError?: (message: string) => void }) {
+  return <CopyChip text={text} label="Copy #" ariaLabel="Copy program number" title={text} onError={onError} />;
+}
+
 export function PressLine({ node }: { node: Node | null }) {
-  const [copied, setCopied] = useState(false);
   if (!node) return null;
   const view = pressPreviewForNode(node);
   if (!view) {
@@ -40,15 +74,7 @@ export function PressLine({ node }: { node: Node | null }) {
         <span>1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</span>
         {view.usesVariables ? <span>x and y stay in the string</span> : null}
         {view.copyable ? (
-          <button
-            type="button"
-            className="ti-lcd-btn"
-            onClick={() => {
-              void navigator.clipboard.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
-            }}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
+          <CopyChip text={view.full} label="Copy" ariaLabel="Copy press string" />
         ) : null}
       </div>
     </div>
@@ -82,7 +108,8 @@ export function KeyButton({
   onReveal?: (text: string) => void;
   hot?: boolean;
 }) {
-  const revealed = useRef(false);
+  const gesture = useRef(0);
+  const holdTimer = useRef(0);
   return (
     <div className="ti-key">
       {secondary ? (
@@ -95,30 +122,36 @@ export function KeyButton({
         title={title}
         aria-label={ariaLabel}
         disabled={disabled || undefined}
+        onContextMenu={(event) => {
+          if (onReveal) event.preventDefault();
+        }}
         onClick={() => {
-          if (revealed.current) {
-            revealed.current = false;
-            return;
-          }
           if (disabled) return;
           onClick();
         }}
-        onPointerDown={() => {
-          if (!title || !onReveal) return;
-          revealed.current = false;
-          const timer = window.setTimeout(() => {
-            revealed.current = true;
+        onPointerDown={(event) => {
+          if (!title || !onReveal || event.button !== 0) return;
+          const button = event.currentTarget;
+          const id = (gesture.current += 1);
+          let revealed = false;
+          window.clearTimeout(holdTimer.current);
+          holdTimer.current = window.setTimeout(() => {
+            if (gesture.current !== id) return;
+            revealed = true;
             onReveal(title);
           }, 450);
-          const end = () => {
-            window.clearTimeout(timer);
-            if (!revealed.current) return;
-            // pointerup outside the button does not deliver a click, so the
-            // flag would swallow the next key. Drop it on the next turn if
-            // this click does not consume it first.
-            window.setTimeout(() => {
-              revealed.current = false;
-            }, 0);
+          const end = (endEvent: PointerEvent) => {
+            window.clearTimeout(holdTimer.current);
+            if (gesture.current !== id || !revealed || endEvent.type === "pointercancel") return;
+            const rect = button.getBoundingClientRect();
+            const inside = endEvent.clientX >= rect.left && endEvent.clientX <= rect.right && endEvent.clientY >= rect.top && endEvent.clientY <= rect.bottom;
+            if (!inside) return;
+            // The touch click is synthesized after pointerup. Stop that one
+            // click so a long-press shows the hint and does not press the key.
+            button.addEventListener("click", (clickEvent) => {
+              clickEvent.preventDefault();
+              clickEvent.stopPropagation();
+            }, { capture: true, once: true });
           };
           window.addEventListener("pointerup", end, { once: true });
           window.addEventListener("pointercancel", end, { once: true });

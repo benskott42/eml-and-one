@@ -267,6 +267,7 @@ export function wordProgramError(word: string): string | null {
       return "Use # and digits, a string of 0 and 1, or a word of 1, E, x, and y.";
     }
   }
+  if (height > 1) return `That word leaves ${height} values. It has to leave one value.`;
   if (height !== 1) return "That word does not leave one value.";
   return null;
 }
@@ -276,12 +277,12 @@ export function wordProgramError(word: string): string | null {
  * (0 is EML, 1 is the 1 key) and is rotated into the one valid program.
  * rotatedFrom is the text the user typed when that rotation changed it.
  * A word of 1, E, x, and y is checked here, before it is built. Spaces inside
- * a number are an error, and a minus sign is reported on its own.
+ * a number are an error, and a leading minus is a negative program number.
  */
 export function parseProgramInput(source: string): ParsedProgram {
   const raw = source.trim();
   if (!raw) throw new RangeError("Enter a program number, a press string, or a word of 1 and E.");
-  if (raw.includes("-")) throw new RangeError("Program numbers are not negative.");
+  if (raw.startsWith("-") || raw.startsWith("#-")) throw new RangeError("Program numbers are not negative.");
   if (raw.startsWith("#")) {
     if (/\s/.test(raw)) throw new RangeError("A program number cannot contain spaces.");
     const digits = raw.slice(1);
