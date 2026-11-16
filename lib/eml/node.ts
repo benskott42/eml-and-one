@@ -133,7 +133,12 @@ export class EmlLimitError extends EmlError {}
 export type EvalBudget = {
   maxNodes?: number;
   deadline?: number;
+  /** v1.1 (reviewbot E6): called as each exact pass starts, with its working precision. */
+  onProgress?: (progress: { digits: number }) => void;
 };
+
+/** v1.1 (E6): the message of the cooperative deadline's limit error. */
+export const EXACT_TIMED_OUT = "Exact evaluation timed out.";
 
 const DEFAULT_MAX_NODES = 200_000;
 

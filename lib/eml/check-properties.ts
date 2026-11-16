@@ -16,9 +16,11 @@ import { compileExpression } from "./parse";
 export function runPropertyChecks(): number {
   let failed = 0;
   const repoRoot = path.resolve(__dirname, "../..");
+  // v1.1: run tsx's CLI through this node, not the .bin shim, which is tsx.cmd on Windows.
   const cold = spawnSync(
-    path.join(repoRoot, "node_modules/.bin/tsx"),
+    process.execPath,
     [
+      path.join(repoRoot, "node_modules/tsx/dist/cli.mjs"),
       "-e",
       `import { compileExpression } from "./lib/eml/parse";
 import { circuitStats, evaluate } from "./lib/eml/node";

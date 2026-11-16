@@ -1,11 +1,14 @@
-import { decadeOf, inScaledShell, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, type Node } from "./node";
+import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
+
+/** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
+export const WIRE_VERSION = 2;
+import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string }
+  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; int?: string }
   | {
       i: number;
       k: "E";
@@ -20,7 +23,19 @@ export type Wire =
       /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
       kr?: number;
       ki?: number;
+      /** v2: a real below float64's normal range as [m, e] = m·10^e, 1 ≤ |m| < 10. Exponent, not value. */
+      kx?: [number, number];
+      /** Exact integer when the float has already rounded or overflowed. */
+      int?: string;
+      /** v1.1: an odd series node, [id of x, coefficients]; exact mode evaluates the polynomial. */
+      os?: [number, SeriesCoeff[]];
     };
+
+function exactIntDigits(node: Node): string | undefined {
+  if (!isMarkedExactInt(node)) return undefined;
+  const big = provenInteger(node);
+  return big === undefined ? undefined : big.toString();
+}
 
 /** True when a known component is below the 120-digit floor and must travel with the circuit. */
 function tinyPoint(re: number, im: number): boolean {
@@ -41,7 +56,12 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       idOf.set(frame.n, i);
       if (frame.n.type === "one") tokens.push({ i, k: "1" });
       else if (frame.n.type === "var") tokens.push({ i, k: "v", n: frame.n.name });
-      else if (frame.n.type === "input") tokens.push({ i, k: "in", re: frame.n.value.re, im: frame.n.value.im, label: frame.n.label });
+      else if (frame.n.type === "input") {
+        const digits = exactIntDigits(frame.n);
+        const tok: Wire = { i, k: "in", re: wireNum(frame.n.value.re), im: wireNum(frame.n.value.im), label: frame.n.label };
+        if (digits !== undefined) tok.int = digits;
+        tokens.push(tok);
+      }
       continue;
     }
     if (!frame.seen) {
@@ -65,6 +85,15 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     const decade = decadeOf(frame.n);
     if (decade !== undefined) token.dec = decade;
     const known = knownValue(frame.n);
+    if (isWideTiny(frame.n)) {
+      const w = wideOf(frame.n);
+      if (w) token.kx = [w.m, w.e];
+    }
+    const digits = exactIntDigits(frame.n);
+    if (digits !== undefined) token.int = digits;
+    const poly = oddSeriesOf(frame.n);
+    const polyArg = poly ? idOf.get(poly.arg) : undefined;
+    if (poly && polyArg !== undefined) token.os = [polyArg, poly.coeffs];
     if (known && tinyPoint(known.re, known.im)) {
       token.kr = known.re;
       token.ki = known.im;
@@ -74,12 +103,23 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
   return { tokens, root: idOf.get(root) ?? 0 };
 }
 
+// v1.1: a non-finite leaf value (∞i from sqrt(ln 0), a carried 10^400) is sent as a string,
+// because JSON (the overnight child, any JSON transport) turns Infinity and NaN into null.
+// postMessage keeps numbers, and Number() reads both forms.
+type WireNum = number | string;
+function wireNum(x: number): WireNum {
+  return Number.isFinite(x) ? x : String(x);
+}
+
 export function unpackCircuit(tokens: Wire[], root: number): Node {
   const nodes: Node[] = [];
   for (const tok of tokens) {
     if (tok.k === "1") nodes[tok.i] = ONE;
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
-    else if (tok.k === "in") nodes[tok.i] = input({ re: tok.re, im: tok.im }, tok.label);
+    else if (tok.k === "in") {
+      const leaf = input({ re: Number(tok.re), im: Number(tok.im) }, tok.label);
+      nodes[tok.i] = tok.int !== undefined ? markExactInt(leaf, BigInt(tok.int)) : leaf;
+    }
     else {
       const a = nodes[tok.a];
       const b = nodes[tok.b];
@@ -93,6 +133,9 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.lead) markSeriesShortcut(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
+      if (tok.kx) noteWide(node, normWide(tok.kx[0], tok.kx[1]));
+      if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
+      if (tok.os && nodes[tok.os[0]]) noteOddSeries(node, nodes[tok.os[0]], tok.os[1]);
     }
   }
   const node = nodes[root];

@@ -27,6 +27,12 @@ export type Entry = {
   exactBeside?: string;
   notice?: string | null;
   watch?: number;
+  /** v1.1 (E3): exact reached 0 through a recorded cancellation. */
+  cancelledZero?: boolean;
+  /** v1.1 (E3): the engine's sticky absorbed-term flag. */
+  notCertified?: boolean;
+  /** v1.1 (E6): the exact worker's last progress line while the fill is pending. */
+  progress?: string;
 };
 
 export type Model = {
@@ -144,7 +150,7 @@ export function noteFor(item: Entry): string | null {
     programText(item.node),
     number,
     number ? programFlags(item) : null,
-    item.pendingExact ? exactScreen("computing").note : null,
+    item.pendingExact ? item.progress ?? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
     item.floatDiffers && item.exactBeside ? `${FLOAT_DIFFERS} · ${item.exactBeside}` : null,
     item.notice,
@@ -154,7 +160,7 @@ export function noteFor(item: Entry): string | null {
     seriesShortcutNote(item.node),
     isPure(item.node) ? "pure" : null,
     shownSingular(item),
-    agreementNote(item.caption, item.value, item.bound ?? {}, item.text),
+    agreementNote(item.caption, item.value, item.bound ?? {}, item.text, { cancelledZero: item.cancelledZero, notCertified: item.notCertified }),
   ].filter(Boolean);
   return bits.length ? bits.join(" · ") : null;
 }
