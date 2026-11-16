@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import Decimal from "decimal.js";
@@ -2969,83 +2970,165 @@ failed += runPropertyChecks();
 }
 
 {
-  // Long literals cross the worker as text. This process is new, so a WeakMap
-  // from the builder cannot be what supplies the digits.
+  // Long literals and non-finite leaves cross a fresh process. JSON and a
+  // structured-clone worker both have to recover the same value.
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const tsxCli = createRequire(path.join(repoRoot, "package.json")).resolve("tsx/cli");
-  const pasted = (BigInt(2) ** BigInt(300)).toString();
   const wide = Decimal.clone({ precision: 1200, minE: -9e15, maxE: 9e15 });
-  const oraclePow = new wide(2).pow(300).toFixed(0);
-  const threes = `0.${"3".repeat(200)}`;
-  const oracleThrees = new wide(threes).times(3).minus(1).toFixed();
-  const long = `1${"0".repeat(3998)}1`;
-  const sources: Record<string, string> = {
-    pow: pasted,
-    diff: `(${pasted}+1)-${pasted}`,
-    threes: `${threes}*3-1`,
-    long,
-  };
-  if (oraclePow !== pasted) {
+  const axis = cexp({ re: 0, im: Math.PI / 2 });
+  if (!Object.is(axis.re, 0) || axis.im !== 1) {
     failed += 1;
-    console.log("FAIL 1200-digit 2^300 oracle");
+    console.log("FAIL positive imaginary axis", axis);
   }
-  const jobs = Object.entries(sources).map(([id, source]) => {
+  type Expect = { re?: string; im?: string; unverifiedOk?: boolean; leaf?: { re: string; im: string } };
+  const jobs: { id: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number }[] = [];
+  const expect = new Map<string, Expect>();
+  const packSource = (id: string, source: string) => {
     const packed = packCircuit(compileExpression(source, {}));
-    return { id, tokens: packed.tokens, root: packed.root };
-  });
-  const powToken = jobs.find((job) => job.id === "pow")?.tokens.find((token) => token.k === "in");
-  const longToken = jobs.find((job) => job.id === "long")?.tokens.find((token) => token.k === "in");
-  if (!powToken || powToken.k !== "in" || powToken.lit !== 1 || powToken.label !== pasted) {
+    jobs.push({ id, tokens: packed.tokens, root: packed.root });
+  };
+  const expSinNode = compileExpression("exp(1/(-0))+sin(1)", {});
+  const expSinRe = exactReport(expSinNode, {}, { maxNodes: 80_000 }).value.re.toFixed();
+  const expPacked = packCircuit(expSinNode);
+  jobs.push({ id: "expSin", tokens: expPacked.tokens, root: expPacked.root });
+  const expLeaf = expPacked.tokens.find((token) => token.k === "in" && token.label === "−∞");
+  if (!expLeaf || expLeaf.k !== "in" || expLeaf.re !== "-Infinity") {
     failed += 1;
-    console.log("FAIL 2^300 wire label");
+    console.log("FAIL exp(1/(-0)) leaf", expLeaf);
   }
-  if (!longToken || longToken.k !== "in" || longToken.lit !== 1 || longToken.re !== null || longToken.label !== long) {
+  expect.set("expSin", { re: expSinRe, im: "0", leaf: { re: "-Infinity", im: "0" } });
+  const ks = [40, 41, 99, 120, 121, 308, 309, 310, 464, 465, 480, 481, 1000, 3999];
+  for (const k of ks) {
+    const base = `1${"0".repeat(k)}`;
+    const bigger = (BigInt(base) + BigInt(1)).toString();
+    const oracle = new wide(bigger).minus(base).toFixed();
+    packSource(`k${k}`, `${bigger}-${base}`);
+    expect.set(`k${k}`, { re: oracle, im: "0" });
+  }
+  const x400 = "9".repeat(400);
+  packSource("xx", `${x400}-${x400}`);
+  expect.set("xx", { re: "0", im: "0" });
+  packSource("xdiv", `${x400}/${x400}`);
+  expect.set("xdiv", { re: "1", im: "0" });
+  const huge = literalNode(x400);
+  if (huge.type === "input" && !Number.isFinite(huge.value.re)) {
     failed += 1;
-    console.log("FAIL 4000-digit wire", longToken && longToken.k === "in" ? longToken.re : "missing");
+    console.log("FAIL 400-digit literal stored as infinity", huge.value);
   }
+  const expHuge = compileExpression(`exp(-${`1${"0".repeat(309)}`})`, {});
+  const expChecked = exactReport(expHuge, {}, { maxNodes: 80_000 });
+  const expFloat = evaluateReport(expHuge, {}, { maxNodes: 80_000 });
+  if (!expChecked.unverified || expFloat.value.re === Infinity || expFloat.value.re === -Infinity) {
+    failed += 1;
+    console.log("FAIL exp of a 310-digit literal", formatExact(expChecked.value), expChecked.unverified, expFloat.value, expFloat.singular);
+  }
+  for (const n of [100, 200, 464, 470, 1000]) {
+    const text = `0.${"3".repeat(n)}`;
+    const oracle = new wide(text).times(3).minus(1).toFixed();
+    packSource(`threes${n}`, `${text}*3-1`);
+    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n + 120 + 32 > 480 });
+  }
+  const leaf = (id: string, re: number, im: number, label: string, want: { re: string; im: string }) => {
+    const packed = packCircuit(input({ re, im }, label));
+    jobs.push({ id, tokens: packed.tokens, root: packed.root });
+    expect.set(id, { leaf: want });
+  };
+  leaf("negInf", -Infinity, 0, "−∞", { re: "-Infinity", im: "0" });
+  leaf("posInf", Infinity, 0, "∞", { re: "Infinity", im: "0" });
+  leaf("nan", NaN, NaN, "NaN", { re: "NaN", im: "NaN" });
+  leaf("negZero", -0, 0, "-0", { re: "-0", im: "0" });
+  leaf("infI", 0, Infinity, "∞i", { re: "0", im: "Infinity" });
+  packSource("sqrtLn0", "sqrt(ln(0))");
+  expect.set("sqrtLn0", { re: "Infinity", im: "0" });
+  const negInfTok = jobs.find((job) => job.id === "negInf")?.tokens.find((token) => token.k === "in");
+  const zeroTok = jobs.find((job) => job.id === "negZero")?.tokens.find((token) => token.k === "in");
+  const bigTok = packCircuit(huge).tokens.find((token) => token.k === "in");
+  if (!negInfTok || negInfTok.k !== "in" || negInfTok.re !== "-Infinity" || negInfTok.label !== "−∞") {
+    failed += 1;
+    console.log("FAIL −∞ wire", negInfTok);
+  }
+  if (!zeroTok || zeroTok.k !== "in" || zeroTok.re !== "-0") {
+    failed += 1;
+    console.log("FAIL −0 wire", zeroTok);
+  }
+  if (!bigTok || bigTok.k !== "in" || bigTok.lit !== 1 || bigTok.int !== x400 || typeof bigTok.re !== "number" || !Number.isFinite(bigTok.re)) {
+    failed += 1;
+    console.log("FAIL 400-digit wire", bigTok && bigTok.k === "in" ? [bigTok.lit, bigTok.int?.length, bigTok.re] : "missing");
+  }
+  type Row = {
+    id: string;
+    text?: string;
+    re?: string;
+    im?: string;
+    unverified?: boolean;
+    leaves?: { re: string; im: string; label: string }[];
+    error?: string;
+  };
+  const checkRows = (label: string, rows: Row[]) => {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const [id, want] of expect) {
+      const row = byId.get(id);
+      if (!row || row.error) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row?.error ?? "missing");
+        continue;
+      }
+      if (want.leaf) {
+        const hit = row.leaves?.some((item) => item.re === want.leaf?.re && item.im === want.leaf?.im);
+        if (!hit) {
+          failed += 1;
+          console.log(`FAIL ${label} ${id} leaf`, row.leaves);
+        }
+        if (want.re === undefined) continue;
+      }
+      if (row.unverified) {
+        if (!want.unverifiedOk) {
+          failed += 1;
+          console.log(`FAIL ${label} ${id} unverified`, row.text);
+        }
+        continue;
+      }
+      if (row.re !== want.re || (want.im !== undefined && row.im !== want.im)) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row.text, row.re, "want", want.re);
+      }
+    }
+  };
   const child = spawnSync(process.execPath, [tsxCli, path.join(repoRoot, "scripts/fresh-literal.ts")], {
     cwd: repoRoot,
     input: JSON.stringify(jobs),
     encoding: "utf8",
-    timeout: 60_000,
-    maxBuffer: 32 * 1024 * 1024,
+    timeout: 180_000,
+    maxBuffer: 64 * 1024 * 1024,
     windowsHide: true,
   });
   if (child.status !== 0 || !child.stdout) {
     failed += 1;
-    console.log("FAIL fresh literal process", child.status, child.stderr?.slice(0, 500));
+    console.log("FAIL fresh literal JSON", child.status, child.stderr?.slice(0, 800));
   } else {
-    const rows = JSON.parse(child.stdout) as Array<{
-      id: string;
-      text?: string;
-      re?: string;
-      literal?: string | null;
-      unverified?: boolean;
-      ms?: number;
-      error?: string;
-    }>;
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const pow = byId.get("pow");
-    const diff = byId.get("diff");
-    const third = byId.get("threes");
-    const big = byId.get("long");
-    if (!pow || pow.error || pow.unverified || pow.re !== oraclePow || pow.literal !== pasted) {
-      failed += 1;
-      console.log("FAIL pasted 2^300", pow?.error ?? pow?.text, pow?.literal?.length);
-    }
-    if (!diff || diff.error || diff.unverified || diff.re !== "1") {
-      failed += 1;
-      console.log("FAIL (2^300+1)-2^300", diff?.error ?? diff?.text, diff?.re);
-    }
-    if (!third || third.error || third.unverified || third.re !== oracleThrees) {
-      failed += 1;
-      console.log("FAIL 200 threes", third?.error ?? third?.text, third?.re, "oracle", oracleThrees);
-    }
-    const longMs = big?.ms ?? Number.POSITIVE_INFINITY;
-    if (!big || big.error || big.literal !== long || longMs > 2_000) {
-      failed += 1;
-      console.log("FAIL 4000-digit literal", big?.error ?? big?.text, big?.literal?.length, longMs);
-    }
+    checkRows("json", JSON.parse(child.stdout) as Row[]);
+  }
+  const sab = new SharedArrayBuffer(4);
+  const flag = new Int32Array(sab);
+  const channel = new MessageChannel();
+  const worker = new Worker(path.join(repoRoot, "scripts/fresh-literal.ts"), {
+    execArgv: ["--import", "tsx"],
+  });
+  let cloneError = "";
+  worker.once("error", (error) => {
+    cloneError = error instanceof Error ? error.message : String(error);
+    Atomics.store(flag, 0, 2);
+    Atomics.notify(flag, 0);
+  });
+  worker.postMessage({ jobs, port: channel.port2, sab }, [channel.port2]);
+  Atomics.wait(flag, 0, 0, 180_000);
+  const delivered = receiveMessageOnPort(channel.port1);
+  void worker.terminate();
+  if (!delivered || cloneError) {
+    failed += 1;
+    console.log("FAIL fresh literal clone", cloneError || "no message");
+  } else {
+    checkRows("clone", delivered.message as Row[]);
   }
 }
 

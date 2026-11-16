@@ -36,6 +36,10 @@ import { isSeriesShortcut } from "./node";
  */
 
 const PRECISION = 120;
+/** Digits on screen, the same count float mode prints with toPrecision(12). */
+const SHOWN_DIGITS = 12;
+/** Scientific notation below this, as float mode does below 10^(−6). */
+const FIXED_FLOOR = "1e-6";
 
 const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
 
@@ -101,7 +105,11 @@ function expZ(v: Z): Z {
     return { re: NAN, im: NAN };
   }
   const mag = v.re.exp();
-  if (mag.isZero()) return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  if (mag.isZero()) {
+    // A finite argument whose exponential left the exponent range is not the mathematical 0.
+    if (v.re.isFinite()) expCollapsed = true;
+    return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  }
   if (!mag.isFinite()) return { re: signedInf(trig.c), im: signedInf(trig.s) };
   return { re: mag.mul(trig.c), im: mag.mul(trig.s) };
 }
@@ -191,6 +199,8 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 
 /** Decades cancelled inside one subtraction. A later pass may raise precision. */
 let lossGap = 0;
+/** exp of a finite value fell off the exponent range and came back as 0. That 0 is not a result. */
+let expCollapsed = false;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
 
@@ -558,16 +568,20 @@ export function exactReport(
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
   lossGap = 0;
-  // A pasted literal can be longer than the working precision. Evaluate it
-  // where those digits fit, up to the same 480-digit cap as every other retry.
+  // Every pasted literal is evaluated where its digits fit. Past the 480-digit
+  // cap the screen says it could not verify, rather than certifying a rounding.
   if (pass === 0) {
     const span = literalSpan(root);
-    if (span > D.precision && span + 16 <= PRECISION_CAP) {
-      // Cancellation can spend the whole literal, so keep a full working precision past it.
-      let lifted = atPrecision(Math.min(PRECISION_CAP, span + PRECISION + 32), root, env, budget);
-      lifted = settleResidue(lifted, root, env, budget);
-      if (lifted.unverified) return lifted;
-      return confirmDust(present(lifted), root, env, budget);
+    if (span > 0) {
+      const need = span + PRECISION + 32;
+      if (need > PRECISION_CAP) return certifyZero(exactReportOnce(root, env, budget));
+      if (need > D.precision) {
+        let lifted = atPrecision(need, root, env, budget);
+        lifted = settleResidue(lifted, root, env, budget);
+        if (lifted.unverified) return lifted;
+        if (expCollapsed && vanished(lifted.value)) return certifyZero(lifted);
+        return confirmDust(present(lifted), root, env, budget);
+      }
     }
   }
   const report = exactReportOnce(root, env, budget);
@@ -597,6 +611,7 @@ export function exactReport(
           if (vanished(again.value)) return certifyZero(again);
         } else if (lossGap > digits - 16) return certifyZero(again);
       }
+      if (expCollapsed && vanished(again.value)) return certifyZero(again);
       return confirmDust(present(again), root, env, budget);
     }
   }
@@ -620,6 +635,7 @@ export function exactReport(
       if (settled.unverified) return settled;
     }
   }
+  if (expCollapsed && vanished(settled.value)) return certifyZero(settled);
   return confirmDust(present(settled), root, env, budget);
 }
 
@@ -638,6 +654,7 @@ function exactReportOnce(
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  expCollapsed = false;
   let steps = 0;
   let cache = pureCache.get(D.precision);
   if (!cache) {
@@ -714,7 +731,9 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
+    const collapsedBefore = expCollapsed;
     const value = exactEml(a, b);
+    const collapsedHere = expCollapsed && !collapsedBefore;
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
@@ -738,7 +757,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork });
+    if (!varA && !varB && !collapsedHere) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork });
   }
 
   const out = memo.get(root);
@@ -854,23 +873,25 @@ function formatDec(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
   const abs = d.abs();
   if (abs.lt("1e16") && exactInteger(abs)) return sign + abs.toFixed(0);
-  if (abs.lt("1e16") && abs.gte("1e-9")) {
-    const shown = new D(abs.toFixed(12));
+  if (abs.lt("1e16") && abs.gte(FIXED_FLOOR)) {
+    // Twelve significant digits, as float mode prints, not twelve places after the decimal.
+    const sig = Math.max(0, SHOWN_DIGITS - 1 - abs.e);
+    const shown = new D(abs.toFixed(sig));
     const gap = abs.sub(shown).abs();
     const intGap = abs.sub(abs.round()).abs();
     const dust = new D(10).pow(-(D.precision - 24));
     // Twelve digits hide 0.5 − 10^(−72) and 1 − 10^(−72). Print the first digits of that tail.
-    const hiddenTail = gap.gt(dust) && gap.e < -14;
+    const hiddenTail = gap.gt(dust) && gap.e < abs.e - (SHOWN_DIGITS + 2);
     const hiddenInt = intGap.gt(dust) && intGap.e < -9;
     if (hiddenTail || hiddenInt) {
       const reveal = hiddenTail && (!hiddenInt || gap.e <= intGap.e) ? gap : intGap;
-      const places = Math.min(D.precision - 8, Math.max(12, -reveal.e + 2));
+      const places = Math.min(D.precision - 8, Math.max(sig, -reveal.e + 2));
       return sign + abs.toFixed(places).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
     }
-    const text = abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    const text = abs.toFixed(sig).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
     return sign + text;
   }
-  const exp = abs.toExponential(12).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
+  const exp = abs.toExponential(SHOWN_DIGITS - 1).replace(/\.?0+e/, "e").replace("e+", "×10^").replace("e-", "×10^−");
   return sign + exp;
 }
 

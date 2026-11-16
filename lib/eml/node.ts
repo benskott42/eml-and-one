@@ -193,6 +193,30 @@ export function isSeriesShortcut(node: Node): boolean {
   return seriesShortcuts.has(node);
 }
 
+const unverifiedNodes = new WeakSet<Node>();
+
+/** A result that dropped a term. The screen says it could not verify. */
+export function markUnverified(node: Node): Node {
+  unverifiedNodes.add(node);
+  return node;
+}
+
+export function isUnverified(node: Node): boolean {
+  return unverifiedNodes.has(node);
+}
+
+const maybeUnverifiedNodes = new WeakSet<Node>();
+
+/** A sum beside a value that may be infinite. The mark travels with the circuit. */
+export function markMaybeUnverified(node: Node): Node {
+  maybeUnverifiedNodes.add(node);
+  return node;
+}
+
+export function isMaybeUnverified(node: Node): boolean {
+  return maybeUnverifiedNodes.has(node);
+}
+
 export function usesSeriesShortcut(root: Node): boolean {
   const seen = new Set<Node>();
   const stack: Node[] = [root];

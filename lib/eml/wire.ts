@@ -1,11 +1,11 @@
-import { decadeOf, inScaledShell, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, exactLiteralOf, input, isSeriesShortcut, markSeriesShortcut, noteExactLiteral, notePrecision, precisionNoteOf, type Node } from "./node";
+import { decadeOf, inScaledShell, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
+import { E, ONE, V, exactLiteralOf, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, noteExactLiteral, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number | null; im: number | null; label: string; lit?: 1 }
+  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; lit?: 1; int?: string; unver?: 1; mu?: 1 }
   | {
       i: number;
       k: "E";
@@ -20,7 +20,26 @@ export type Wire =
       /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
       kr?: number;
       ki?: number;
+      /** Exact integer when the float has already rounded or overflowed. */
+      int?: string;
+      /** A dropped term. Exact mode must not certify the gates. */
+      unver?: 1;
+      /** A sum beside a possible infinity; only a NaN result stands. */
+      mu?: 1;
     };
+
+function exactIntDigits(node: Node): string | undefined {
+  if (!isMarkedExactInt(node)) return undefined;
+  const big = provenInteger(node);
+  return big === undefined ? undefined : big.toString();
+}
+
+type WireNum = number | string;
+function wireNum(x: number): WireNum {
+  // JSON keeps a string, and Number("-0") is −0. A bare −0 would be written as 0.
+  if (Object.is(x, -0)) return "-0";
+  return Number.isFinite(x) ? x : String(x);
+}
 
 /** True when a known component is below the 120-digit floor and must travel with the circuit. */
 function tinyPoint(re: number, im: number): boolean {
@@ -42,12 +61,13 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       if (frame.n.type === "one") tokens.push({ i, k: "1" });
       else if (frame.n.type === "var") tokens.push({ i, k: "v", n: frame.n.name });
       else if (frame.n.type === "input") {
-        const literal = exactLiteralOf(frame.n);
-        const re = Number.isFinite(frame.n.value.re) ? frame.n.value.re : null;
-        const im = Number.isFinite(frame.n.value.im) ? frame.n.value.im : null;
-        const token: Wire = { i, k: "in", re, im, label: frame.n.label };
-        if (literal !== undefined) token.lit = 1;
-        tokens.push(token);
+        const digits = exactIntDigits(frame.n);
+        const tok: Wire = { i, k: "in", re: wireNum(frame.n.value.re), im: wireNum(frame.n.value.im), label: frame.n.label };
+        if (digits !== undefined) tok.int = digits;
+        if (exactLiteralOf(frame.n) !== undefined) tok.lit = 1;
+        if (isUnverified(frame.n)) tok.unver = 1;
+        if (isMaybeUnverified(frame.n)) tok.mu = 1;
+        tokens.push(tok);
       }
       continue;
     }
@@ -76,6 +96,10 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.kr = known.re;
       token.ki = known.im;
     }
+    const digits = exactIntDigits(frame.n);
+    if (digits !== undefined) token.int = digits;
+    if (isUnverified(frame.n)) token.unver = 1;
+    if (isMaybeUnverified(frame.n)) token.mu = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -87,15 +111,11 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
     if (tok.k === "1") nodes[tok.i] = ONE;
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
     else if (tok.k === "in") {
-      const re =
-        typeof tok.re === "number" && Number.isFinite(tok.re)
-          ? tok.re
-          : tok.label.trim().startsWith("-")
-            ? Number.NEGATIVE_INFINITY
-            : Number.POSITIVE_INFINITY;
-      const im = typeof tok.im === "number" && Number.isFinite(tok.im) ? tok.im : 0;
-      const node = input({ re, im }, tok.label);
-      nodes[tok.i] = tok.lit ? noteExactLiteral(node, tok.label) : node;
+      const leaf = input({ re: Number(tok.re), im: Number(tok.im) }, tok.label);
+      if (tok.unver) markUnverified(leaf);
+      if (tok.mu) markMaybeUnverified(leaf);
+      if (tok.lit) noteExactLiteral(leaf, tok.label);
+      nodes[tok.i] = tok.int !== undefined ? markExactInt(leaf, BigInt(tok.int)) : leaf;
     }
     else {
       const a = nodes[tok.a];
@@ -110,6 +130,9 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.lead) markSeriesShortcut(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
+      if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
+      if (tok.unver) markUnverified(node);
+      if (tok.mu) markMaybeUnverified(node);
     }
   }
   const node = nodes[root];

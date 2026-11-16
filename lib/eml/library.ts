@@ -8,7 +8,9 @@ import {
   endInteger,
   decadeOf,
   isNonfiniteNode,
+  integerQuotient,
   knownValue,
+  markExactInt,
   noteDecade,
   noteTinyReal,
   naiveSub,
@@ -357,6 +359,8 @@ export function tDiv(a: Node, b: Node): Node {
   const u = expArgument(a);
   const v = expArgument(b);
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
+  const quotient = integerQuotient(a, b);
+  if (quotient) return quotient;
   return rawDiv(a, b);
 }
 
@@ -854,10 +858,17 @@ installIntegerBuilder(integerNode);
  */
 const LITERAL_DIGITS = 4_000;
 
-function exactRealInput(text: string): Node {
+function finiteLiteral(text: string): number {
   const numeric = Number(text);
-  const re = Number.isFinite(numeric) ? numeric : text.startsWith("-") ? -Infinity : Infinity;
-  return noteExactLiteral(input({ re, im: 0 }, text), text);
+  if (Number.isFinite(numeric)) return numeric;
+  // Past the float range the magnitude is not an infinity. Infinity would be folded as one.
+  return text.startsWith("-") ? -Number.MAX_VALUE : Number.MAX_VALUE;
+}
+
+function exactRealInput(text: string): Node {
+  const node = noteExactLiteral(input({ re: finiteLiteral(text), im: 0 }, text), text);
+  if (/^[+-]?\d+$/.test(text)) return markExactInt(node, BigInt(text));
+  return node;
 }
 
 function digitsToInteger(sign: number, digits: string): Node {

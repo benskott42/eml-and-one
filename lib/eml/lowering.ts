@@ -515,6 +515,31 @@ function smallInt(n: number): Node {
   return ints.get(n) ?? node;
 }
 
+const markedExactInt = new WeakSet<Node>();
+
+/** Exact evaluation reads this integer. The float value stays the rounded one. */
+export function isMarkedExactInt(node: Node): boolean {
+  return markedExactInt.has(node);
+}
+
+export function markExactInt(node: Node, value: bigint): Node {
+  markedExactInt.add(node);
+  return attachInt(node, value);
+}
+
+/** Exact quotient of an integer past the float range, when the quotient itself still fits in a float. */
+export function integerQuotient(a: Node, b: Node): Node | null {
+  if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
+  const ia = provenInteger(a) ?? rangeOf(a).int;
+  const ib = provenInteger(b) ?? rangeOf(b).int;
+  if (ia === undefined || ib === undefined || ib === BigInt(0)) return null;
+  if (ia % ib !== BigInt(0)) return null;
+  const q = ia / ib;
+  if (!Number.isFinite(Number(q))) return null;
+  if (q <= SAFE && q >= -SAFE) return smallInt(Number(q));
+  return markExactInt(input({ re: Number(q), im: 0 }, `int:${q.toString()}`), q);
+}
+
 function expInt(n: number): Node {
   return expOf(smallInt(n));
 }
@@ -937,8 +962,9 @@ function scaledTinySub(a: Node, b: Node): Node | null {
 export function domainAdd(a: Node, b: Node): Node {
   // Adding a finite number to an integer past the float range must stay +∞.
   // Building the sum rotates through ln 0 and comes out negative.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
-  if (floatOverflowInt(b) && finiteBeside(a)) return b;
+  // A pasted integer keeps its exact digits. Dropping a finite addend would turn N+1 into N.
+  if (floatOverflowInt(a) && finiteBeside(b) && !isMarkedExactInt(a) && !isMarkedExactInt(b)) return a;
+  if (floatOverflowInt(b) && finiteBeside(a) && !isMarkedExactInt(a) && !isMarkedExactInt(b)) return b;
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
