@@ -664,7 +664,7 @@ export function EmlCalculator() {
         text: claimedText,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
-        notice: claim,
+        notice: claim ?? current.notice,
         notCertified: payload.notCertified ?? null,
       });
     },
