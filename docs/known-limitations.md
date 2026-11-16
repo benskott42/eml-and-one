@@ -12,7 +12,7 @@ Phase-free infinities do not make subtraction or addition work at b = 0. sub(5, 
 
 ## Float
 
-Float is a hardware view of the same gates. It is not patched toward the exact value. The screen compares the real and imaginary parts separately. With 12 digits shown, a relative error of about 5×10^(−12) or larger on either component is flagged, and so is a component that float dropped. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That precision starts at 120 digits and rises, up to 480, when the rounding would hide a value. It is not a fixed snap at 10^(−112). A known magnitude of 10^(−432) still resolves. 10^(−433) is past the cap, and the screen says it could not verify. ln/log(1+10^(−k)) for k above about 324 may show a confident 0 in exact mode, because 10^(−k) underflows a 64-bit float before the precision hint is set (fix planned for v1.1). A compare that hits the node limit says the same, and a too-large circuit does not also say it left the finite numbers. A zero that a series shortcut produced is not certified.
+Float is a hardware view of the same gates. It is not patched toward the exact value. The screen compares the real and imaginary parts separately. With 12 digits shown, a relative error of about 5×10^(−12) or larger on either component is flagged, and so is a component that float dropped. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That precision starts at 120 digits and rises, up to 480, when the rounding would hide a value. It is not a fixed snap at 10^(−112). A known magnitude of 10^(−432) still resolves. 10^(−433) is past the cap, and the screen says it could not verify. ln/log(1+10^(−k)) for k above about 324 may show a confident 0 in exact mode, because 10^(−k) underflows a 64-bit float before the precision hint is set (fix planned for v1.1). In exact mode, adding two equal imaginary values near 10^(-120) (e.g. 6.103*10^(-120)i + 6.103*10^(-120)i) can show half the true sum with no flag; fix planned for v1.1. A compare that hits the node limit says the same, and a too-large circuit does not also say it left the finite numbers. A zero that a series shortcut produced is not certified.
 
 These float results stay wrong, and the flag is what publishes that. There is no second float formula for them:
 
@@ -29,6 +29,7 @@ These float results stay wrong, and the flag is what publishes that. There is no
 What the flag does not catch:
 
 - A relative error at or below about 5×10^(−12) on a component. That is one digit past the 12 on screen. A few ulps, and 0.1 + 0.2 − 0.3, sit in this band.
+- In float mode, sinh(+-0.00005i) can show a -1e-16 real part below the flag threshold.
 - 0 minus the smallest positive float, 5×10^(−324). Float keeps a signed zero and exact keeps 0. The comparison treats those magnitudes as equal.
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
