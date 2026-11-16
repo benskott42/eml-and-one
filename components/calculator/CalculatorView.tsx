@@ -8,7 +8,7 @@ import table from "@/lib/eml/best-known.json";
 import { agreementNote } from "@/lib/eml/parse";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programIndexDigits } from "@/lib/eml/programIndex";
-import { CopyChip, CopyNumber, GolfPanel, KeyButton } from "./chrome";
+import { CopyChip, CopyNumber, CopyValue, GolfPanel, KeyButton } from "./chrome";
 import { SequencePanel } from "./SequencePanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
@@ -137,13 +137,13 @@ export function CalculatorView(props: CalculatorModel) {
             </div>
             <div className="ti-lcd-pin">
             <div className="ti-lcd-readout">
-              <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite">
+              <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite" title={readout}>
                 {readout}
                 {fieldError && top ? " previous" : ""}
               </p>
               <div className="ti-lcd-copies">
                 {canCopyValue && top ? (
-                  <CopyChip key={top.text} text={top.text} label="Copy value" ariaLabel="Copy displayed value" onError={reportError} />
+                  <CopyValue key={top.text} shown={top.text} onError={reportError} />
                 ) : null}
                 {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
               </div>

@@ -19,12 +19,14 @@ export function CopyChip({
   ariaLabel,
   title,
   onError,
+  copiedLabel = "Copied",
 }: {
   text: string;
   label: string;
   ariaLabel: string;
   title?: string;
   onError?: (message: string) => void;
+  copiedLabel?: string;
 }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -38,6 +40,7 @@ export function CopyChip({
       className="ti-lcd-btn"
       title={title}
       aria-label={ariaLabel}
+      aria-live="polite"
       onClick={() => {
         const clip = window.navigator.clipboard;
         const write = clip?.writeText?.bind(clip);
@@ -50,8 +53,29 @@ export function CopyChip({
         });
       }}
     >
-      {copied ? "Copied" : label}
+      {copied ? copiedLabel : label}
     </button>
+  );
+}
+
+/** The display mark ≈ is not part of the number. A paste should be the digits alone. */
+export function displayedCopy(shown: string): { text: string; approximate: boolean } {
+  const trimmed = shown.trim();
+  const approximate = trimmed.startsWith("≈") || trimmed.endsWith("≈");
+  const text = trimmed.replace(/^≈\s*/, "").replace(/\s*≈$/, "");
+  return { text, approximate };
+}
+
+export function CopyValue({ shown, onError }: { shown: string; onError?: (message: string) => void }) {
+  const copy = displayedCopy(shown);
+  return (
+    <CopyChip
+      text={copy.text}
+      label="Copy value"
+      ariaLabel="Copy displayed value"
+      copiedLabel={copy.approximate ? "Copied · ≈ not certified" : "Copied"}
+      onError={onError}
+    />
   );
 }
 

@@ -701,8 +701,20 @@ async function main() {
   const manifestMod = await import("../app/manifest");
   const manifest = manifestMod.default();
   delete process.env.PAGES_BASE_PATH;
+  const iconSrcs = (manifest.icons ?? []).map((icon) => icon.src);
   if (manifest.orientation !== "portrait" || manifest.start_url !== "/eml-and-one/" || manifest.scope !== "/eml-and-one/" || manifest.display !== "standalone") {
     console.error("manifest is missing the portrait lock or the Pages base path", manifest);
+    failed = true;
+  }
+  if (!iconSrcs.includes("/eml-and-one/icon-192.png") || !iconSrcs.includes("/eml-and-one/icon-512.png") || !iconSrcs.some((src) => src.includes("icon-maskable-512.png") && src.startsWith("/eml-and-one/"))) {
+    console.error("manifest icons are missing the Pages base path", manifest.icons);
+    failed = true;
+  }
+  const { displayedCopy } = await import("../components/calculator/chrome");
+  const marked = displayedCopy("1.25×10^16 ≈");
+  const plain = displayedCopy("1");
+  if (marked.text !== "1.25×10^16" || !marked.approximate || plain.text !== "1" || plain.approximate) {
+    console.error("copy value kept the approximation mark", marked, plain);
     failed = true;
   }
 
