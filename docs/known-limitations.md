@@ -41,5 +41,5 @@ What the flag does not catch:
 - Loading the 671-press word for ln(1+10^-130) can show exact 0 (float flags "differs from exact"); the result depends on whether the compiled circuit is still cached. Fix planned for v1.1.
 - The slow K = 35 search was not re-run for this version. The fast suite stops at the K = 21 table.
 - The dedup key still keeps up to four circuits. The unsigned-key rewrite is not in this version.
-- The calculator component is still one file. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
+- The calculator is split across `components/calculator`: the screen, the model, and the view. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
 - 0, −1, and 2 tie the lengths in arXiv:2603.21852. ±iπ at K 21 was posted publicly before this project. 3 at K 29 ties an earlier code-golf answer. Those are not claimed as first discoveries. The citations are in the EML and One README.
