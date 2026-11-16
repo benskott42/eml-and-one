@@ -3035,6 +3035,30 @@ failed += runPropertyChecks();
   expectInt("(10^400+1)-10^400", 1, "1");
   expectInt("10^400-(10^400-1)", 1, "1");
 
+  // mpmath dps 50. A finite non-integer beside 10^400 cancels back to itself.
+  // i = 0 + i, −i = 0 − i, 0.5 = 0.5,
+  // pi = 3.1415926535897932384626433832795028841971693993751,
+  // sqrt(2) = 1.4142135623730950488016887242096980785696718753769.
+  const beside = (source: string, re: string, im = "0") => {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    if (
+      hw.singular !== null ||
+      ex.singular !== null ||
+      !close(hw.value, c(Number(re), Number(im)), 1e-12) ||
+      !exactClose(ex.value, re, im, 40)
+    ) {
+      failed += 1;
+      console.log("FAIL huge plus small part", source, hw.value, hw.singular, formatExact(ex.value), ex.singular);
+    }
+  };
+  beside("(10^400+i)-10^400", "0", "1");
+  beside("(10^400+pi)-10^400", "3.1415926535897932384626433832795028841971693993751");
+  beside("(10^400+sqrt(2))-10^400", "1.4142135623730950488016887242096980785696718753769");
+  beside("(10^400+0.5)-10^400", "0.5");
+  beside("(10^400+(-i))-10^400", "0", "-1");
+
   const gap = exactReport(compileExpression("10^400-10^300", {}), {}, budget);
   const gapText = "9".repeat(100) + "0".repeat(300);
   if (exactClose(gap.value, "1e400", 0, 110) || !exactClose(gap.value, gapText, 0, 110)) {

@@ -786,6 +786,19 @@ function carryHugeInt(value: bigint, a: Node, b: Node): Node {
   return markExactInt(node, value);
 }
 
+/**
+ * A distinct copy of `huge`. The real sum rotates through ln 0 and comes out negative,
+ * so the node only remembers the two operands. A later cancellation returns the small one.
+ * The factor is a fresh 1, so two different small parts of the same huge integer stay different nodes.
+ */
+function rememberHugeReal(huge: Node, other: Node, op: "add" | "sub"): Node {
+  const one = input({ re: 1, im: 0 }, `beside:${other.id}:${op}`);
+  const node = rawMul(huge, one);
+  if (op === "add") noteRealSum(node, huge, other);
+  else rememberSub(node, huge, other);
+  return node;
+}
+
 function overflowIntDiff(a: Node, b: Node): Node | null {
   if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
   const ia = rangeOf(a).int;
@@ -836,9 +849,9 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   if (rest) return rest;
   const carried = overflowIntDiff(a, b);
   if (carried) return carried;
-  // A non-integer beside an integer past the float range stays that infinity.
-  // Building the difference rotates through ln 0 and comes out negative.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
+  // A finite non-integer beside an integer past the float range is not dropped.
+  // The real difference rotates through ln 0 and comes out negative, so the node only remembers both operands.
+  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "sub");
   const pa = poleSignOf(a);
   const pb = poleSignOf(b);
   if (pa !== null && pb !== null && pa === pb) return rememberSub(naiveSub(a, b), a, b);
@@ -1042,10 +1055,10 @@ export function domainAdd(a: Node, b: Node): Node {
 function domainAddBuild(a: Node, b: Node): Node {
   const carried = overflowIntSum(a, b);
   if (carried) return carried;
-  // Adding a non-integer to an integer past the float range must stay +∞.
-  // Building the sum rotates through ln 0 and comes out negative.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
-  if (floatOverflowInt(b) && finiteBeside(a)) return b;
+  // A finite non-integer beside an integer past the float range is not dropped.
+  // Building the sum rotates through ln 0 and comes out negative, so the node only remembers both operands.
+  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "add");
+  if (floatOverflowInt(b) && finiteBeside(a)) return rememberHugeReal(b, a, "add");
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
