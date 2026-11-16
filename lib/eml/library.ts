@@ -318,13 +318,21 @@ function exactZero(node: Node): boolean {
 function negativeFactor(node: Node): boolean {
   const v = knownValue(node);
   if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
+  if (!Number.isFinite(v.re)) return false;
   return v.re < 0 || Object.is(v.re, -0);
 }
 
+/** A known infinity, or a node marked non-finite. ln(0) is −∞ and is not marked. */
+function nonFiniteFactor(node: Node): boolean {
+  if (isNonfiniteNode(node)) return true;
+  const v = knownValue(node);
+  return v !== null && (!Number.isFinite(v.re) || !Number.isFinite(v.im));
+}
+
 export function tMul(a: Node, b: Node): Node {
-  // 0 · ∞ is indeterminate. Typed infinity and division by the integer 0 are both non-finite.
-  if ((exactZero(a) && isNonfiniteNode(b)) || (exactZero(b) && isNonfiniteNode(a))) {
-    const pole = isNonfiniteNode(a) ? a : b;
+  // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
+  if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
+    const pole = nonFiniteFactor(a) ? a : b;
     return naiveIndeterminate(pole);
   }
   // 0 · (−1) is the −0 leaf. The product program collapses that sign.
