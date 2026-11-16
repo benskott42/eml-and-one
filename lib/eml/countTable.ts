@@ -1,5 +1,6 @@
 import table from "./best-known.json";
 import { recordPill } from "./recordLabel";
+import { provedMinimal, statusPill } from "./statusLabels";
 
 export type CountEntry = {
   word: string;
@@ -31,10 +32,6 @@ export function ln0Use(line: Min): "yes" | "no" | "both" | "unknown" {
   return "unknown";
 }
 
-export function pillText(line: Min): string {
-  return recordPill(line);
-}
-
 export function linesFor(n: number): Min[] {
   return LINES.filter((line) => asInt(line.value) === n);
 }
@@ -46,15 +43,14 @@ export function linesFor(n: number): Min[] {
  */
 export function tableEntry(n: number, mode: "ln0" | "strict", familyWord: string): CountEntry | null {
   if (n === 1) {
-    const line = linesFor(1).find((item) => item.k === 1);
     return {
       word: "1",
       k: 1,
-      status: recordPill(line ?? { value: "1", k: 1, label: "proven minimal", note: "" }),
+      status: "the 1 key itself · K 1",
       note: "",
       kind: "upper",
       ln0: false,
-      source: "the 1 key itself",
+      source: "integer table: 1 at K 1",
     };
   }
   const lines = linesFor(n)
@@ -64,14 +60,15 @@ export function tableEntry(n: number, mode: "ln0" | "strict", familyWord: string
     const keys = mode === "strict" ? [`${n}-strict`, `${n}`] : [`${n}`, `${n}-strict`];
     const word = [...keys.map((key) => PROGRAMS[key]), familyWord].find((item) => item && item.length === line.k) ?? null;
     if (!word) continue;
+    const proved = provedMinimal(n, mode);
     return {
       word,
       k: line.k,
-      status: pillText(line),
+      status: proved ? statusPill(true) : recordPill(line),
       note: line.note,
-      kind: /^proven minimal/.test(line.label) ? "proven" : "known",
+      kind: proved ? "proven" : "known",
       ln0: ln0Use(line) === "yes",
-      source: `best-known.json: ${line.value} at K ${line.k}`,
+      source: `integer table: ${n} at K ${line.k}`,
     };
   }
   return null;

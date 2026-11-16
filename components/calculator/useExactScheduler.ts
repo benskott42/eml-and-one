@@ -87,6 +87,7 @@ export function useExactScheduler(input: {
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
         cutHits: payload.cutHits,
+        underflowedExact: payload.underflowedExact === true,
       });
     },
     [modelRef, publishWatch],

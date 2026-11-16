@@ -29,4 +29,4 @@ This gives −1 at K 17 and −2 at K 27, the same lengths as the integer table'
 - 1 is the `1` key (K 1).
 - 0 is ln(1) via the ln template `11xE1EE` with x = 1: `111E1EE` (K 7).
 
-These are constructions. A length is called minimal only where best-known.json and the README (see docs/minimality.md) say it is proved: 0, −1 and 2. Lower cut, Arg in [−π, π), ln 0 = −∞; on this cut −iπ becomes +iπ under the principal Log.
+These are constructions. A length is called minimal only where best-known.json and the README (see docs/minimality.md) say it is proven: 0, −1 and 2. Lower cut, Arg in [−π, π), ln 0 = −∞; on this cut −iπ becomes +iπ under the principal Log.

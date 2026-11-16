@@ -487,6 +487,7 @@ jobs:
           process.exit(failures.length ? 1 : 0);
           END
       - name: Count page
+        timeout-minutes: 30
         run: npm run count:e2e
       - name: Upload the tested site
         if: inputs.upload-site

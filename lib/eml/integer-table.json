@@ -40,11 +40,11 @@
     "word": "1",
     "presses": 1,
     "usesLn0": false,
-    "status": "proven-minimal",
-    "minimal": true,
+    "status": "the 1 key",
+    "minimal": false,
     "wordNoLn0": "1",
     "pressesNoLn0": 1,
-    "minimalNoLn0": true,
+    "minimalNoLn0": false,
     "lowerBoundCaveat": null
   },
   {

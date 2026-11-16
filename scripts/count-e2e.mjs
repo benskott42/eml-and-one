@@ -3,14 +3,44 @@
  * Builds the static site, serves it, and drives Chrome over the debugging port.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const root = join(import.meta.dirname, "..");
-const port = 4183;
-const debugPort = 9222;
+const labelSrc = readFileSync(join(root, "lib/eml/statusLabels.ts"), "utf8");
+function exportedPhrase(name) {
+  const match = new RegExp(`export const ${name} = "([^"]+)"`).exec(labelSrc);
+  if (!match) throw new Error(`missing ${name}`);
+  return match[1];
+}
+const PROVEN_PILL = exportedPhrase("PROVEN_MINIMAL");
+const KNOWN_PILL = `shortest known, not ${PROVEN_PILL}`;
+const THREE_PILL = `${KNOWN_PILL} (ties Kaseorg's code-golf answer)`;
+const NEG2_PILL = `shortest known (depends on ln 0; unresolved tower trees remain), not ${PROVEN_PILL}`;
+const BAD_PORTS = new Set([1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080]);
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const chosen = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(chosen));
+    });
+  });
+}
+async function openPort() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const chosen = await freePort();
+    if (chosen && !BAD_PORTS.has(chosen)) return chosen;
+  }
+  throw new Error("no free port");
+}
+const port = await openPort();
+const debugPort = await openPort();
 const site = `http://127.0.0.1:${port}/eml-and-one/count/`;
 const failures = [];
 
@@ -197,6 +227,16 @@ try {
     })();`,
   }, sessionId);
 
+  function exactProbe(n) {
+    const shown = n < 0 ? `−${-n}` : String(n);
+    return `(() => {
+      const big = (document.getElementById("big")?.textContent || "").replace(/\\s+/g, " ").trim();
+      const chips = document.getElementById("chips")?.textContent || "";
+      if (!big || big.includes("checking")) return "";
+      return big === ${JSON.stringify(shown)} && chips.includes("exact mode · 120 digits") ? "ok" : "bad:" + big;
+    })()`;
+  }
+
   function displayedN(url) {
     const match = /[#?&]n=(-?\d+)/.exec(url);
     if (!match) return null;
@@ -254,12 +294,12 @@ try {
   await open(`${site}#n=50`);
   const sawChecking = await waitFor(`(document.getElementById("big")?.textContent || "").includes("checking") || window.__sawFifty === true`);
   const fifty = await waitFor(`(() => {
-    const big = document.getElementById("big")?.textContent?.trim() || "";
+    const big = (document.getElementById("big")?.textContent || "").replace(/\\s+/g, " ").trim();
     const chips = document.getElementById("chips")?.textContent || "";
     const note = document.getElementById("cutnote")?.textContent || "";
-    const shown = big === "50" && chips.includes("exact mode · 120 digits") && note.includes("94 gates");
-    if (shown) window.__sawFifty = true;
-    return shown ? { big, chips, note, tasks: window.__longtasks.slice() } : null;
+    if (!big || big.includes("checking")) return null;
+    if (big === "50") window.__sawFifty = true;
+    return { big, chips, note, tasks: window.__longtasks.slice() };
   })()`, 180_000);
   const workerUrls = await evalJs(`window.__workerUrls || []`);
   const workerPath = Array.isArray(workerUrls) && workerUrls.length
@@ -278,7 +318,16 @@ try {
     workerPath.startsWith("/eml-and-one/") && Boolean(workerHit),
     workerHit ? workerPath : workerPath || "no worker",
   );
-  report("n = 50 shows checking, then 50, the exact chip, and 94 gates", Boolean(sawChecking) && Boolean(fifty), fifty ? fifty.note : "timed out");
+  const ends = await evalJs(`({
+    plus: document.querySelector("[aria-label='n plus 1']")?.disabled === true,
+    minus: document.querySelector("[aria-label='n minus 1']")?.disabled === true,
+  })`);
+  report("plus is disabled at 50 and minus is not", ends?.plus === true && ends?.minus === false, JSON.stringify(ends));
+  report(
+    "n = 50 shows checking, then exactly 50, the exact chip, and 94 gates",
+    Boolean(sawChecking) && fifty?.big === "50" && fifty.chips.includes("exact mode · 120 digits") && fifty.note.includes("94 gates"),
+    fifty ? `${fifty.big} | ${fifty.note}` : "timed out",
+  );
   const contrast = await evalJs(`(() => {
     function channel(v) { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; }
     function lum(color) {
@@ -319,18 +368,18 @@ try {
 
   await open(`${site}#n=7`);
   await waitFor(`document.getElementById("nbig")?.textContent === "7"`);
+  const repeated = await evalJs(`document.querySelector(".count-x")?.textContent?.trim() || ""`);
+  report("outline shows the × n badge", typeof repeated === "string" && repeated.startsWith("× "), String(repeated));
   await evalJs(`document.getElementById("slider").focus()`);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 }, sessionId);
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 }, sessionId);
-  await delay(150);
-  const stepped = await evalJs(`document.getElementById("nbig")?.textContent`);
-  report("slider ArrowRight steps 7 to 8", stepped === "8", String(stepped));
+  const stepped = await waitFor(exactProbe(8), 180_000);
+  report("slider ArrowRight steps 7 to 8 and shows exactly 8", stepped === "ok", String(stepped));
   await evalJs(`document.getElementById("slider").blur(); document.body.focus()`);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }, sessionId);
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 }, sessionId);
-  await delay(150);
-  const steppedBack = await evalJs(`document.getElementById("nbig")?.textContent`);
-  report("body ArrowLeft steps 8 to 7", steppedBack === "7", String(steppedBack));
+  const steppedBack = await waitFor(exactProbe(7), 180_000);
+  report("body ArrowLeft steps 8 to 7 and shows exactly 7", steppedBack === "ok", String(steppedBack));
 
   await evalJs(`document.getElementById("mfloat").click()`);
   const pressed = await evalJs(`({
@@ -345,16 +394,20 @@ try {
   report("float button aria-pressed", pressed?.float === "true" && pressed?.exact === "false" && pressedBack?.exact === "true" && pressedBack?.float === "false", JSON.stringify({ pressed, pressedBack }));
 
   await evalJs(`location.hash = "#n=12"`);
-  const hashed = await waitFor(`document.getElementById("nbig")?.textContent === "12" ? "12" : ""`);
-  report("hashchange shows 12", hashed === "12", String(hashed));
+  const hashed = await waitFor(exactProbe(12), 180_000);
+  report("hashchange shows exactly 12", hashed === "ok", String(hashed));
 
   await evalJs(`location.hash = "#n=3"`);
   const three = await waitFor(`(() => {
-    const label = document.getElementById("label")?.textContent || "";
+    const big = (document.getElementById("big")?.textContent || "").replace(/\\s+/g, " ").trim();
+    const chips = document.getElementById("chips")?.textContent || "";
+    if (!big || big.includes("checking")) return "";
+    const label = (document.getElementById("label")?.textContent || "").trim();
     const line = document.body.innerText.includes("Lower cut, Arg in [−π, π), ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log.");
-    return label.includes("shortest known, not proven minimal (ties Kaseorg's code-golf answer)") && line ? label : "";
-  })()`);
-  report("n = 3 pill and cut line", Boolean(three));
+    const ok = big === "3" && chips.includes("exact mode · 120 digits") && label === ${JSON.stringify(THREE_PILL)} && line;
+    return ok ? "ok" : "bad:" + big + "|" + label;
+  })()`, 180_000);
+  report("n = 3 is exactly 3 with its pill and cut line", three === "ok", String(three));
 
   const docsHref = await evalJs(`document.getElementById("docs-link")?.href || ""`);
   let docsPath = "";
@@ -394,15 +447,21 @@ try {
       return location.hash === ${JSON.stringify(hash)} && n === ${JSON.stringify(want)} ? "ready" : "";
     })()`, 30_000);
     if (ready !== "ready") throw new Error(`did not reach ${hash} (nbig stayed ${await evalJs(`document.getElementById("nbig")?.textContent || ""`)} hash ${await evalJs("location.hash")})`);
+    const numeric = Number(String(want).replace("−", "-"));
+    const exact = await waitFor(exactProbe(numeric), 180_000);
+    if (exact !== "ok") {
+      report(`exact value for ${hash}`, false, String(exact));
+      return "";
+    }
     return waitFor(probe, 180_000);
   }
   const neg2 = await shows("#n=-2", `(() => {
     const text = document.body.innerText;
-    const pill = document.getElementById("label")?.textContent || "";
-    const ok = text.includes("K 25") && text.includes("shortest known (depends on ln 0; unresolved tower trees remain)") && !pill.trimStart().startsWith("proven minimal");
-    return ok ? "ok" : "";
+    const pill = (document.getElementById("label")?.textContent || "").trim();
+    const ok = text.includes("K 25") && pill === ${JSON.stringify(NEG2_PILL)};
+    return ok ? "ok" : "bad:" + pill;
   })()`);
-  report("n = −2 is K 25 and shortest known, not proved", neg2 === "ok");
+  report("n = −2 is K 25 and the unproved pill", neg2 === "ok");
   const neg2free = await shows("#n=-2&noln0", `(() => {
     const text = document.body.innerText;
     return text.includes("K 27") && text.includes("minimal conditional on Schanuel's conjecture") ? "ok" : "";
@@ -416,16 +475,36 @@ try {
   report("n = −9 cut note says 3 gates", neg9 === "ok");
   const eight = await shows("#n=8", `(() => {
     const text = document.body.innerText;
-    return text.includes("K 71") && text.includes("shortest known, not proven minimal") ? "ok" : "";
+    const pill = (document.getElementById("label")?.textContent || "").trim();
+    return text.includes("K 71") && pill === ${JSON.stringify(KNOWN_PILL)} ? "ok" : "";
   })()`);
-  report("n = 8 is K 71 and shortest known, not proven minimal", eight === "ok");
+  report("n = 8 is K 71 and the unproved pill", eight === "ok");
   const thirteen = await shows("#n=13", `document.body.innerText.includes("K 99") ? "ok" : ""`);
   report("n = 13 is K 99", thirteen === "ok");
   const thirteenFree = await shows("#n=13&noln0", `document.body.innerText.includes("K 101") ? "ok" : ""`);
   report("n = 13 without ln 0 is K 101", thirteenFree === "ok");
 
   const rangeLabel = await evalJs(`document.querySelector("label[for=n]")?.textContent || ""`);
-  report("n field label shows the range", rangeLabel.includes("n, from -50 to 50"), String(rangeLabel));
+  report("n field label shows the range", rangeLabel.includes("n, from −50 to 50"), String(rangeLabel));
+  const title = await evalJs(`document.title`);
+  report("count page title", title === "Count to n — EML and One", String(title));
+  const live = await evalJs(`document.querySelectorAll("[aria-live]").length`);
+  report("one screen-reader announcement region", live === 1, String(live));
+  const provedRows = await shows("#n=0", `(() => {
+    const pill = (document.getElementById("label")?.textContent || "").trim();
+    const basis = document.getElementById("basis")?.textContent || "";
+    const built = document.body.innerText.includes("built by: counting construction");
+    const source = document.body.innerText.includes("Source: integer table: 0 at K 7");
+    return pill === ${JSON.stringify(PROVEN_PILL)} && basis.includes("K ≤ 5") && basis.includes("with or without ln 0") && !basis.includes(${JSON.stringify(KNOWN_PILL)}) && built && source ? "ok" : "bad:" + pill + "|" + basis;
+  })()`);
+  report("n = 0 shows the proved pill and its basis", provedRows === "ok", String(provedRows));
+  const one = await shows("#n=1", `(() => {
+    const pill = (document.getElementById("label")?.textContent || "").trim();
+    const basis = document.getElementById("basis");
+    const built = document.body.innerText.includes("built by: counting construction");
+    return pill === "the 1 key itself · K 1" && !basis && pill !== ${JSON.stringify(PROVEN_PILL)} && built ? "ok" : "bad:" + pill;
+  })()`);
+  report("n = 1 keeps the neutral pill", one === "ok", String(one));
   const back = await evalJs(`document.querySelector("a.ti-home")?.href || ""`);
   report("count page links back to the calculator", typeof back === "string" && /\/eml-and-one\/?$/.test(back), String(back));
 
@@ -443,6 +522,51 @@ try {
     return shown === "−5" && field === "-5" ? "ok" : "";
   })()`);
   report("typing -5 keeps -5", typed === "ok", String(typed));
+  const typedExact = await waitFor(exactProbe(-5), 180_000);
+  report("typing -5 shows exactly −5", typedExact === "ok", String(typedExact));
+
+  await evalJs(`(() => {
+    const input = document.getElementById("n");
+    input.focus();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "−5");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  })()`);
+  const typedMinus = await waitFor(`(() => {
+    const shown = document.getElementById("nbig")?.textContent || "";
+    const field = document.getElementById("n")?.value || "";
+    return shown === "−5" && location.hash.includes("n=-5") ? "ok" : field + " " + shown;
+  })()`);
+  report("typing U+2212 −5 keeps −5", typedMinus === "ok", String(typedMinus));
+
+  await evalJs(`(() => {
+    const input = document.getElementById("n");
+    input.focus();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "+3");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  })()`);
+  const typedPlus = await waitFor(`(() => {
+    const shown = document.getElementById("nbig")?.textContent || "";
+    return shown === "3" && location.hash.includes("n=3") ? "ok" : "";
+  })()`);
+  report("typing +3 shows 3", typedPlus === "ok", String(typedPlus));
+
+  for (const bad of ["#n=1e400", "#n=1e5", "#n=3.5", "#n=2.9", "#n=999", "#n=99"]) {
+    const token = bad.slice(3);
+    await evalJs(`location.hash = ${JSON.stringify(bad)}`);
+    const rejected = await waitFor(`(() => {
+      const error = document.getElementById("n-error")?.textContent || "";
+      const shown = document.getElementById("nbig")?.textContent || "";
+      const field = document.getElementById("n")?.value || "";
+      return error && field === ${JSON.stringify(token)} && shown === "—" && location.hash.includes(${JSON.stringify("n=" + token)}) ? "ok" : "";
+    })()`, 10_000);
+    report("bad address " + bad + " shows an error", rejected === "ok", String(rejected));
+  }
+  await evalJs(`location.hash = "#n=-5"`);
+  await waitFor(`document.getElementById("nbig")?.textContent === "−5" ? "ok" : ""`);
 
   await evalJs(`(() => {
     const input = document.getElementById("n");
@@ -457,7 +581,7 @@ try {
     const shown = document.getElementById("nbig")?.textContent || "";
     return error && shown === "−5" ? error : "";
   })()`);
-  report("out-of-range input shows an error and does not clamp", Boolean(outOfRange), String(outOfRange));
+  report("out-of-range input shows an error and does not clamp", Boolean(outOfRange) && String(outOfRange).includes("−50"), String(outOfRange));
 
   await evalJs(`(() => {
     const input = document.getElementById("n");
@@ -507,7 +631,94 @@ try {
   report("phone targets are at least 44px", Array.isArray(small) && small.length === 0, JSON.stringify(small));
   const deviceH = await evalJs(`document.querySelector(".count-layout .ti-device")?.getBoundingClientRect().height || 0`);
   report("phone device does not fill the screen before the panels", deviceH > 0 && deviceH < 800, String(deviceH));
+  await send("Emulation.setDeviceMetricsOverride", { width: 844, height: 390, deviceScaleFactor: 1, mobile: true }, sessionId);
+  await delay(200);
+  const landscape = await evalJs(`(() => {
+    return [...document.querySelectorAll(".count-layout a, .count-layout button, .count-layout input")].flatMap((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return [];
+      return [{ name: el.id || el.getAttribute("aria-label") || el.textContent.trim().slice(0, 24), w: Math.round(rect.width), h: Math.round(rect.height) }];
+    }).filter((item) => item.w < 44 || item.h < 44);
+  })()`);
+  report("landscape targets are at least 44px", Array.isArray(landscape) && landscape.length === 0, JSON.stringify(landscape));
   await send("Emulation.clearDeviceMetricsOverride", {}, sessionId);
+
+  await evalJs(`(() => {
+    window.__copyErrors = [];
+    window.addEventListener("unhandledrejection", (event) => window.__copyErrors.push(String(event.reason && event.reason.message || event.reason)));
+    [...document.querySelectorAll("button")].find((item) => item.textContent.trim() === "Copy as 1 / E")?.click();
+  })()`);
+  const copied = await waitFor(`document.getElementById("copy-status")?.textContent || ""`);
+  const copyErrors = await evalJs(`window.__copyErrors || []`);
+  report(
+    "copy shows Copied or a visible failure",
+    (copied === "Copied" || copied === "Could not copy") && Array.isArray(copyErrors) && copyErrors.length === 0,
+    `${copied} ${JSON.stringify(copyErrors)}`,
+  );
+
+  const keptN = await evalJs(`document.getElementById("nbig")?.textContent || ""`);
+  await evalJs(`document.getElementById("docs-link")?.click()`);
+  const onDocs = await waitFor(`document.querySelector(".count-doc") ? "yes" : ""`, 20_000);
+  await evalJs(`([...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n") || {}).click()`);
+  const docsBack = await waitFor(`(() => {
+    const shown = document.getElementById("nbig")?.textContent || "";
+    return shown && shown === ${JSON.stringify(String(keptN))} ? "ok" : "";
+  })()`, 20_000);
+  report("docs link does not reset n", onDocs === "yes" && docsBack === "ok", `${onDocs} ${docsBack} wanted ${keptN}`);
+
+  await evalJs(`document.querySelector("a.ti-home")?.click()`);
+  const onCalc = await waitFor(`document.body.innerText.includes("a two-button calculator") ? "yes" : ""`, 20_000);
+  const focused = await evalJs(`document.activeElement?.tagName || ""`);
+  report("page change moves focus to the heading", onCalc === "yes" && focused === "H1", focused);
+  await evalJs(`(() => {
+    const input = document.getElementById("expr");
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    set.call(input, "1+1");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    [...document.querySelectorAll("button")].find((item) => item.getAttribute("aria-label")?.startsWith("Push the constant 1"))?.click();
+  })()`);
+  const stacked = await waitFor(`(() => {
+    const tape = document.querySelector(".ti-footer .ti-tape")?.textContent || "";
+    const result = document.querySelector(".ti-lcd-result")?.textContent || "";
+    const expr = document.getElementById("expr")?.value || "";
+    return tape.includes("1") && result.trim() === "1" && expr === "1+1" ? "ok" : "";
+  })()`);
+  const lengthBefore = await evalJs(`history.length`);
+  await evalJs(`([...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n") || {}).click()`);
+  const onCount = await waitFor(`document.getElementById("nbig")?.textContent ? "yes" : ""`, 20_000);
+  await evalJs(`document.querySelector("[aria-label='n plus 1']")?.click()`);
+  await evalJs(`document.querySelector("[aria-label='n plus 1']")?.click()`);
+  await delay(100);
+  const lengthAfter = await evalJs(`history.length`);
+  report("n updates do not add history entries", onCount === "yes" && lengthAfter === lengthBefore + 1, `${lengthBefore} -> ${lengthAfter}`);
+  await evalJs(`history.back()`);
+  const oneBack = await waitFor(`(() => {
+    const calc = document.body.innerText.includes("a two-button calculator");
+    const count = location.pathname.includes("/count");
+    return calc && !count ? "ok" : "";
+  })()`, 20_000);
+  report("one Back leaves Count to n", oneBack === "ok", String(oneBack));
+  const kept = await waitFor(`(() => {
+    const tape = document.querySelector(".ti-footer .ti-tape")?.textContent || "";
+    const result = document.querySelector(".ti-lcd-result")?.textContent || "";
+    const expr = document.getElementById("expr")?.value || "";
+    return tape.includes("1") && result.trim() === "1" && expr === "1+1" ? "ok" : "";
+  })()`);
+  report("calculator stack, tape, and expression survive the header", stacked === "ok" && kept === "ok", `${stacked} ${kept}`);
+
+  await evalJs(`([...document.querySelectorAll("a")].find((item) => item.textContent.trim() === "Count to n") || {}).click()`);
+  await waitFor(`document.getElementById("nbig")?.textContent ? "yes" : ""`, 20_000);
+  await evalJs(`location.hash = "#n=20"`);
+  const edited = await waitFor(`document.getElementById("nbig")?.textContent === "20" ? "ok" : ""`);
+  await evalJs(`document.querySelector("a.ti-home")?.click()`);
+  await waitFor(`document.body.innerText.includes("a two-button calculator") ? "yes" : ""`, 20_000);
+  await evalJs(`history.back()`);
+  const returned = await waitFor(`(() => {
+    const model = document.querySelector(".ti-model")?.textContent || "";
+    const shown = document.getElementById("nbig")?.textContent || "";
+    return location.pathname.includes("/count") && model.includes("count to n") && shown === "20" ? "ok" : "";
+  })()`, 20_000);
+  report("Back after an edited address shows the count page", edited === "ok" && returned === "ok", `${edited} ${returned}`);
 
   const calcLoaded = waitEvent("Page.loadEventFired");
   await send("Page.navigate", { url: `http://127.0.0.1:${port}/eml-and-one/` }, sessionId);
@@ -520,6 +731,31 @@ try {
     return link ? link.href : "";
   })()`, 20000);
   report("calculator links to the count page", typeof calcLink === "string" && calcLink.includes("/count"), String(calcLink));
+  const calcTitle = await evalJs(`document.title`);
+  report("calculator title stays distinct", calcTitle === "EML and One", String(calcTitle));
+
+  const countingLoaded = waitEvent("Page.loadEventFired");
+  await send("Page.navigate", { url: `http://127.0.0.1:${port}/eml-and-one/counting/` }, sessionId);
+  await countingLoaded;
+  const counting = await evalJs(`(() => {
+    const html = document.querySelector(".count-doc")?.innerHTML || "";
+    const links = [...document.querySelectorAll(".count-doc-nav a")];
+    const boxes = links.map((link) => link.getBoundingClientRect());
+    const gap = boxes.length === 2 ? boxes[1].left - boxes[0].right : 0;
+    return {
+      sub: html.includes("<sub>"),
+      sup: html.includes("<sup>"),
+      list: document.querySelectorAll(".count-doc li").length,
+      raw: html.includes("c_{") || html.includes("c_k"),
+      links: links.length,
+      gap,
+    };
+  })()`);
+  report(
+    "counting page renders math, a list, and separated links",
+    Boolean(counting?.sub) && Boolean(counting?.sup) && counting.list >= 6 && !counting.raw && counting.links === 2 && counting.gap >= 8,
+    JSON.stringify(counting),
+  );
 
   const badNet = network.filter((item) => item.bad);
   report("no failed page requests", badNet.length === 0, badNet.map((item) => `${item.status} ${item.url}`).join("; "));

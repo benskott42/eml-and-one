@@ -13,7 +13,10 @@ export function countWord(n: number): string {
 
 /** The length formula. Non-integers are not rejected: the comparisons fall through to a number. */
 export function countWordLength(n: number): number {
-  return n === 1 ? 1 : n === 0 ? 7 : n >= 2 ? 10 * n - 1 : 10 * -n + 7;
+  if (n === 1) return 1;
+  if (n === 0) return 7;
+  if (n >= 2) return 10 * n - 1;
+  return 10 * -n + 7;
 }
 
 /** One span per `EEE1EE11` block, in press order. */
@@ -23,8 +26,7 @@ export function blockSpans(n: number): Array<[number, number]> {
   const start = n >= 2 ? 2 * n + 2 : n <= -1 ? 2 * -n + 3 : 0;
   const spans: Array<[number, number]> = [];
   for (let i = 0; i < reps; i++) spans.push([start + 8 * i, start + 8 * i + 8]);
-  for (const [a, b] of spans) {
+  for (const [a, b] of spans)
     if (w.slice(a, b) !== BLOCK) throw new Error("span bug");
-  }
   return spans;
 }

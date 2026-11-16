@@ -22,6 +22,10 @@
   font-size: 0.9rem;
 }
 
+.count-controls button:disabled {
+  opacity: 0.45;
+}
+
 .count-controls {
   display: flex;
   gap: 8px;
@@ -105,6 +109,15 @@
 .count-pill.known {
   background: #6b4a14;
   border-color: #6b4a14;
+}
+
+.count-x {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.85em;
 }
 
 .count-pill.upper {
@@ -294,6 +307,27 @@
   line-height: 1.5;
 }
 
+.count-doc-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0 0 1.25rem;
+}
+
+.count-doc ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.count-doc li {
+  margin: 0.2rem 0;
+}
+
+.count-doc sub,
+.count-doc sup {
+  line-height: 0;
+}
+
 .count-doc h1,
 .count-doc h2 {
   line-height: 1.25;
@@ -313,7 +347,7 @@
   outline-color: #1a2214;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-height: 500px) {
   .count-seg {
     grid-template-columns: 1fr auto;
   }

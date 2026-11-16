@@ -129,19 +129,13 @@
       "value": "−1",
       "k": 17,
       "label": "proven minimal without ln 0",
-      "note": "without ln 0"
+      "note": "the only shorter −1 is the K 15 word, and that word uses ln 0"
     },
     {
       "value": "0",
       "k": 7,
       "label": "proven minimal",
-      "note": "all programs with K ≤ 5 are excluded; towers included; does not use ln 0"
-    },
-    {
-      "value": "1",
-      "k": 1,
-      "label": "proven minimal",
-      "note": "does not use ln 0"
+      "note": "all programs with K ≤ 5 are excluded; towers included; with or without ln 0 = −∞"
     },
     {
       "value": "2",

@@ -1,22 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useExactScheduler } from "@/components/calculator/useExactScheduler";
 import { EMPTY, type Entry, type Model } from "@/components/calculator/screen";
 import { runCutRule } from "@/lib/eml/countCutDebug";
 import { choose, type CountChoice } from "@/lib/eml/countModel";
+import { noteBeside } from "@/lib/eml/recordLabel";
+import { PROVEN_MINIMAL, provedMinimal, statusPill } from "@/lib/eml/statusLabels";
 import { exactStatus, floatCertified, type ExactMsg } from "@/lib/eml/countStatus";
 import { formatC } from "@/lib/eml/format";
 import { type History } from "@/lib/eml/history";
 import { evaluateReport, nodeFromRpn } from "@/lib/eml/node";
 import { samePrincipal } from "@/lib/eml/principalBranch";
+import { readCountHash, rememberCountHash } from "@/components/countMemory";
 import "./count.css";
 
 const DOCS = "/counting";
 const N_MIN = -50;
 const N_MAX = 50;
-const N_ERROR = "Enter an integer from -50 to 50.";
+const N_ERROR = "Enter an integer from −50 to 50.";
 const CUT_LINE = "Lower cut, Arg in [−π, π), ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log.";
 const NO_GATES = "No gates, so no logarithm is taken; the cut does not apply.";
 
@@ -28,36 +31,86 @@ function clamp(n: number): number {
 }
 
 const hashListeners = new Set<() => void>();
-let lastPush = -1e9;
-
-function subscribeHash(onStoreChange: () => void): () => void {
-  hashListeners.add(onStoreChange);
-  window.addEventListener("hashchange", onStoreChange);
-  window.addEventListener("popstate", onStoreChange);
-  return () => {
-    hashListeners.delete(onStoreChange);
-    window.removeEventListener("hashchange", onStoreChange);
-    window.removeEventListener("popstate", onStoreChange);
-  };
-}
+let routeState: unknown = null;
 
 function notifyHash(): void {
   for (const onStoreChange of hashListeners) onStoreChange();
 }
 
-function parseHash(hash: string): { n: number; mode: Mode } {
-  const match = /n=(-?\d+)/.exec(hash);
-  return { n: clamp(match ? Number(match[1]) : 7), mode: /noln0/.test(hash) ? "strict" : "ln0" };
+function hasRouteState(state: unknown): boolean {
+  return Boolean(state && typeof state === "object" && "__NA" in state && (state as { __NA?: unknown }).__NA);
+}
+
+function rememberRouteState(): void {
+  if (hasRouteState(window.history.state)) routeState = window.history.state;
+}
+
+/** Replace the current entry. Pushing a hash makes Back show the wrong page. */
+function replaceUrl(hash: string): void {
+  rememberRouteState();
+  const state = hasRouteState(window.history.state) ? window.history.state : routeState;
+  if (!state) return;
+  const params = new URLSearchParams(window.location.search);
+  params.delete("back");
+  const search = params.toString();
+  const suffix = `${search ? `?${search}` : ""}${hash}`;
+  if (`${window.location.search}${window.location.hash}` === suffix && hasRouteState(window.history.state)) return;
+  History.prototype.replaceState.call(window.history, state, "", `${window.location.pathname}${suffix}`);
+}
+
+type Parsed = { n: number | null; mode: Mode; error: string | null; raw: string | null };
+
+function parseHash(hash: string): Parsed {
+  const mode: Mode = /noln0/.test(hash) ? "strict" : "ln0";
+  const match = /(?:^|#|&)n=([^&]*)/.exec(hash);
+  if (!match) return { n: null, mode, error: null, raw: null };
+  let token = match[1];
+  try {
+    token = decodeURIComponent(token);
+  } catch {
+    /* keep the raw token */
+  }
+  const normalized = token.replaceAll("−", "-").replace(/^\+/, "");
+  if (!/^-?\d+$/.test(normalized)) return { n: null, mode, error: N_ERROR, raw: token };
+  const value = Number(normalized);
+  if (!Number.isSafeInteger(value) || value < N_MIN || value > N_MAX) return { n: null, mode, error: N_ERROR, raw: token };
+  return { n: value, mode, error: null, raw: null };
+}
+
+function useLocationHash(): string | null {
+  const [hash, setHash] = useState<string | null>(() => (typeof window === "undefined" ? null : window.location.hash));
+  useLayoutEffect(() => {
+    const read = () => {
+      rememberRouteState();
+      if (!hasRouteState(window.history.state) && routeState) {
+        History.prototype.replaceState.call(window.history, routeState, "", window.location.hash);
+      }
+      setHash(window.location.hash);
+    };
+    hashListeners.add(read);
+    read();
+    window.addEventListener("hashchange", read);
+    window.addEventListener("popstate", read);
+    return () => {
+      hashListeners.delete(read);
+      window.removeEventListener("hashchange", read);
+      window.removeEventListener("popstate", read);
+    };
+  }, []);
+  return hash;
 }
 
 function writeHash(n: number, mode: Mode): void {
   const hash = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
+  replaceUrl(hash);
   if (window.location.hash !== hash) {
-    const now = performance.now();
-    if (now - lastPush > 800) history.pushState(null, "", hash);
-    else history.replaceState(null, "", hash);
-    lastPush = now;
+    window.setTimeout(() => {
+      rememberRouteState();
+      replaceUrl(hash);
+      notifyHash();
+    }, 0);
   }
+  rememberCountHash(hash);
   notifyHash();
 }
 
@@ -77,18 +130,21 @@ function Chip({ ch, gap }: { ch: string; gap?: boolean }) {
 }
 
 export function CountApp() {
-  const hash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
-  const { n, mode } = parseHash(hash);
+  const hash = useLocationHash();
+  const parsed: Parsed = hash === null ? { n: null, mode: "ln0", error: null, raw: null } : parseHash(hash);
+  const { n, mode } = parsed;
   const [primary, setPrimary] = useState<"exact" | "float">("exact");
   const [model, setModelState] = useState<Model>(EMPTY);
   const modelRef = useRef<Model>(EMPTY);
   const historyRef = useRef<History<Model>>({ past: [], current: EMPTY });
   const [job, setJob] = useState<{ word: string; watch: number } | null>(null);
-  const [draft, setDraft] = useState<{ n: number; text: string } | null>(null);
+  const [draft, setDraft] = useState<{ n: number | null; text: string } | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
-  const typed = useRef(String(n));
+  const [spoken, setSpoken] = useState("");
+  const [copyNote, setCopyNote] = useState("");
+  const typed = useRef("");
   const editing = draft !== null && draft.n === n;
-  const fieldText = editing ? draft.text : String(n);
+  const fieldText = editing ? draft.text : parsed.raw ?? (n === null ? "" : String(n));
   const serial = useRef(0);
   const setModel = useCallback((next: Model) => {
     modelRef.current = next;
@@ -96,9 +152,10 @@ export function CountApp() {
   }, []);
   useExactScheduler({ modelRef, historyRef, setModel, stack: model.stack });
 
-  const choice = useMemo(() => choose(n, mode), [n, mode]);
-  const node = useMemo(() => nodeFromRpn(choice.word.split("")), [choice.word]);
+  const choice = useMemo(() => (n === null ? null : choose(n, mode)), [n, mode]);
+  const node = useMemo(() => (choice ? nodeFromRpn(choice.word.split("")) : null), [choice]);
   const floated = useMemo(() => {
+    if (!node) return null;
     const report = evaluateReport(node);
     return {
       text: formatC(report.value),
@@ -110,18 +167,35 @@ export function CountApp() {
       touchedLn0: report.touchedLn0,
     };
   }, [node]);
-  const agrees = useMemo(() => samePrincipal(choice.word), [choice.word]);
+  const agrees = useMemo(() => (choice ? samePrincipal(choice.word) : false), [choice]);
 
   useEffect(() => {
-    if (window.location.hash) return;
-    writeHash(7, "ln0");
-  }, []);
+    if (hash === null) return;
+    const returning = new URLSearchParams(window.location.search).get("back") === "1";
+    const saved = readCountHash();
+    if (returning && saved) {
+      replaceUrl(saved);
+      if (window.location.hash !== saved) window.location.hash = saved;
+      notifyHash();
+      return;
+    }
+    if (hash === "") {
+      writeHash(7, "ln0");
+      return;
+    }
+    if (parsed.error || n === null) return;
+    const canonical = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
+    if (hash !== canonical) writeHash(n, mode);
+    else rememberCountHash(canonical);
+  }, [hash, n, mode, parsed.error]);
 
   useEffect(() => {
+    if (!choice || !node) return;
     const word = choice.word;
     const circuit = node;
     const timer = window.setTimeout(() => {
       const live = parseHash(window.location.hash);
+      if (live.n === null) return;
       const liveWord = choose(live.n, live.mode).word;
       const watch = ++serial.current;
       const entry: Entry = {
@@ -140,7 +214,7 @@ export function CountApp() {
       setModel(next);
     }, 120);
     return () => window.clearTimeout(timer);
-  }, [choice.word, node, setModel]);
+  }, [choice, node, setModel]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -154,16 +228,23 @@ export function CountApp() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-      if (event.key === "ArrowRight") writeHash(clamp(n + 1), mode);
-      if (event.key === "ArrowLeft") writeHash(clamp(n - 1), mode);
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      const inText = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range");
+      const stepKey = event.key === "ArrowRight" || event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "ArrowDown";
+      if (!stepKey) return;
+      if (inText && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      if (n === null) return;
+      event.preventDefault();
+      const next = event.key === "ArrowLeft" || event.key === "ArrowDown" ? n - 1 : n + 1;
+      writeHash(clamp(next), mode);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [n, mode]);
 
   const row = job ? model.stack.find((item) => item.watch === job.watch) : undefined;
-  const settled = Boolean(job && row && !row.pendingExact && job.word === choice.word);
+  const settled = Boolean(choice && job && row && !row.pendingExact && job.word === choice.word);
   const failed = Boolean(settled && row && (row.cancelled || row.notice === "couldn't verify" || row.cutHits === undefined));
   const message: ExactMsg | null = settled && row && !failed
     ? {
@@ -172,22 +253,37 @@ export function CountApp() {
         im: row.value.im,
         singular: row.singular,
         touchedLn0: row.touchedLn0 === true,
-        underflowedExact: false,
+        underflowedExact: row.underflowedExact === true,
         unverified: false,
         cutHits: row.cutHits,
       }
     : null;
-  const status = message ? exactStatus(message, n) : null;
-  const floatOk = message ? floatCertified(floated, message) : false;
+  const status = message && n !== null ? exactStatus(message, n) : null;
+  const floatOk = message && floated ? floatCertified(floated, message) : false;
   const hits = message?.cutHits ?? 0;
-  const principal = message ? principalSentence(choice, agrees) : "";
-  const showValue = primary === "exact" ? (message?.text ?? "checking…") : floated.text;
-  const schanuel = choice.table?.note.includes("minimal conditional on Schanuel's conjecture")
+  const principal = message && choice ? principalSentence(choice, agrees) : "";
+  const showValue = !choice ? "" : primary === "exact" ? (message?.text ?? "checking…") : (floated?.text ?? "");
+  const schanuel = choice?.table?.note.includes("minimal conditional on Schanuel's conjecture")
     ? "minimal conditional on Schanuel's conjecture"
     : "";
+  const proved = n !== null && provedMinimal(n, mode);
+  const pill = choice?.table?.status ?? (n === null ? "" : statusPill(proved));
+  const basis = choice?.table ? noteBeside(choice.table.note, pill) : "";
+  if (message && spoken !== showValue) setSpoken(showValue);
+
+  async function copyText(text: string) {
+    try {
+      const clip = navigator.clipboard;
+      if (!clip?.writeText) throw new Error("clipboard unavailable");
+      await clip.writeText(text);
+      setCopyNote("Copied");
+    } catch {
+      setCopyNote("Could not copy");
+    }
+  }
 
   function commitText(text: string) {
-    const trimmed = text.trim();
+    const trimmed = text.trim().replaceAll("−", "-").replace(/^\+/, "");
     if (!/^-?\d+$/.test(trimmed)) {
       setInputError(N_ERROR);
       setDraft({ n, text });
@@ -202,6 +298,69 @@ export function CountApp() {
     setInputError(null);
     setDraft(null);
     writeHash(value, mode);
+  }
+
+  const visibleError = parsed.error ?? (editing ? inputError : null);
+  const nLabel = parsed.error ? "—" : n === null ? "" : n < 0 ? `−${-n}` : String(n);
+  const field = (
+    <div className="count-n">
+      <label className="count-n-label" htmlFor="n">n, from −50 to 50</label>
+      <div className="count-controls">
+        <button type="button" className="ti-text-btn" aria-label="n minus 1" disabled={n === null || n <= N_MIN} onClick={() => n !== null && writeHash(clamp(n - 1), mode)}>−</button>
+        <input
+          id="n"
+          type="text"
+          inputMode="text"
+          autoComplete="off"
+          spellCheck={false}
+          value={fieldText}
+          aria-invalid={visibleError ? true : undefined}
+          aria-describedby={visibleError ? "n-error" : undefined}
+          onFocus={() => {
+            typed.current = fieldText;
+          }}
+          onChange={(event) => {
+            typed.current = event.target.value;
+            setDraft({ n, text: event.target.value });
+            setInputError(null);
+          }}
+          onBlur={(event) => commitText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            commitText(typed.current);
+          }}
+        />
+        <button type="button" className="ti-text-btn" aria-label="n plus 1" disabled={n === null || n >= N_MAX} onClick={() => n !== null && writeHash(clamp(n + 1), mode)}>+</button>
+      </div>
+      {visibleError ? <p className="count-error" id="n-error" role="alert">{visibleError}</p> : null}
+    </div>
+  );
+
+  if (!choice || !floated || n === null) {
+    return (
+      <main className="ti-stage">
+        <div className="count-layout">
+          <section className="ti-device">
+            <div className="ti-top">
+              <div>
+                <h1 className="ti-wordmark">EML and One</h1>
+                <p className="ti-model">count to n · words from 1 and EML only</p>
+              </div>
+              <Link className="ti-home" href="/">Calculator</Link>
+            </div>
+            <div className="ti-bezel">
+              <div className="ti-lcd">
+                <div className="ti-lcd-status"><span>count to n</span></div>
+                <p className="ti-lcd-caption">n = <span id="nbig">{nLabel}</span></p>
+                <p className="ti-lcd-result" id="big"></p>
+              </div>
+            </div>
+            {field}
+          </section>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -228,12 +387,13 @@ export function CountApp() {
                   </span>
                 </span>
               </div>
-              <p className="ti-lcd-caption">n = <span id="nbig">{n < 0 ? `−${-n}` : String(n)}</span></p>
-              <p className="ti-lcd-caption" id="kline"><b>K {choice.K}</b> {choice.K === 1 ? "press" : "presses"} · {choice.source === "table" ? "word from the integer table" : "counting construction"}</p>
-              <p className="ti-lcd-result" id="big" aria-live="polite">
+              <p className="ti-lcd-caption">n = <span id="nbig">{nLabel}</span></p>
+              <p className="ti-lcd-caption" id="kline"><b>K {choice.K}</b> {choice.K === 1 ? "press" : "presses"} · {choice.source === "table" ? "word from the integer table" : "built by: counting construction"}</p>
+              <p className="ti-lcd-result" id="big">
                 {!message ? <span className="count-pending">checking…</span> : showValue}
               </p>
-              <div id="chips" aria-live="polite">
+              <p className="sr-only" aria-live="polite" aria-atomic="true">{spoken}</p>
+              <div id="chips">
                 {message && status ? (
                   primary === "exact" ? (
                     <>
@@ -258,38 +418,7 @@ export function CountApp() {
             <button type="button" id="mexact" className="ti-text-btn ti-text-btn-strong" aria-pressed={primary === "exact"} onClick={() => setPrimary("exact")}>exact mode · 120 digits</button>
             <button type="button" id="mfloat" className="ti-text-btn" aria-pressed={primary === "float"} onClick={() => setPrimary("float")}>float (hardware)</button>
           </div>
-          <div className="count-n">
-            <label className="count-n-label" htmlFor="n">n, from -50 to 50</label>
-            <div className="count-controls">
-              <button type="button" className="ti-text-btn" aria-label="n minus 1" onClick={() => writeHash(clamp(n - 1), mode)}>−</button>
-              <input
-                id="n"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                spellCheck={false}
-                value={fieldText}
-                aria-invalid={editing && inputError ? true : undefined}
-                aria-describedby={editing && inputError ? "n-error" : undefined}
-                onFocus={() => {
-                  typed.current = fieldText;
-                }}
-                onChange={(event) => {
-                  typed.current = event.target.value;
-                  setDraft({ n, text: event.target.value });
-                  setInputError(null);
-                }}
-                onBlur={(event) => commitText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  commitText(typed.current);
-                }}
-              />
-              <button type="button" className="ti-text-btn" aria-label="n plus 1" onClick={() => writeHash(clamp(n + 1), mode)}>+</button>
-            </div>
-            {editing && inputError ? <p className="count-error" id="n-error" role="alert">{inputError}</p> : null}
-          </div>
+          {field}
           <input id="slider" className="count-slider" type="range" min={-50} max={50} step={1} aria-label="n from −50 to 50" value={n} onChange={(event) => writeHash(clamp(Number(event.target.value)), mode)} />
           <label className="count-opt">
             <input id="ln0" type="checkbox" checked={mode === "ln0"} onChange={(event) => writeHash(n, event.target.checked ? "ln0" : "strict")} /> allow ln 0 = −∞ (off = only words that avoid ln 0)
@@ -300,19 +429,15 @@ export function CountApp() {
           <section className="count-panel">
             <h2>The count label</h2>
             <div id="label">
-              {choice.source === "table" && choice.table ? (
-                <span className={`count-pill ${choice.table.kind}`}>{choice.table.status}</span>
-              ) : (
-                <span className="count-pill upper">{choice.familyLabel}</span>
-              )}
-              {choice.source === "family" && choice.table ? <span className={`count-pill ${choice.table.kind}`}>table: {choice.table.status}</span> : null}
-              {choice.source === "family" && !choice.table ? <span className="count-pill upper">a construction, not a search record</span> : null}
+              <span className={`count-pill ${proved ? "proven" : n === 1 ? "upper" : "known"}`}>{pill}</span>
             </div>
+            {basis ? <p className="count-src" id="basis">{basis}</p> : null}
+            {choice.source === "family" ? <p className="count-src">{choice.familyLabel}</p> : null}
             {choice.table && choice.K > 1 ? <p className="count-cutline">{CUT_LINE}</p> : null}
             {choice.K === 1 ? <p className="count-cutline">{NO_GATES}</p> : null}
             {choice.source === "table" && choice.table ? <p className="count-src">The counting-construction word here is K {choice.familyK}; the table word is shorter{choice.table.ln0 ? " and uses ln 0 = −∞" : ""}.</p> : null}
             {schanuel ? <p className="count-note" id="schanuel">{schanuel}</p> : null}
-            {choice.table ? <p className="count-src">Source: {choice.table.source}.</p> : null}
+            {choice.table ? <p className="count-src">Source: {choice.table.source}{choice.table.note ? `; ${choice.table.note}` : ""}.</p> : null}
           </section>
           <section className="count-panel">
             <h2>Sequence · outline</h2>
@@ -324,14 +449,15 @@ export function CountApp() {
             <Flat choice={choice} />
             <p className="sr-only">The full word, one character per press, is in the copy text below.</p>
             <div className="count-actions">
-              <button type="button" className="ti-text-btn" onClick={() => void navigator.clipboard?.writeText(choice.word)}>Copy as 1 / E</button>
-              <button type="button" className="ti-text-btn" onClick={() => void navigator.clipboard?.writeText(choice.word.replace(/E/g, "0"))}>Copy as bits 1/0</button>
+              <button type="button" className="ti-text-btn" onClick={() => void copyText(choice.word)}>Copy as 1 / E</button>
+              <button type="button" className="ti-text-btn" onClick={() => void copyText(choice.word.replace(/E/g, "0"))}>Copy as bits 1/0</button>
             </div>
+            {copyNote ? <p className="count-note" id="copy-status">{copyNote}</p> : null}
             <p className="count-copy" id="copytext">{choice.word}</p>
           </section>
           <section className="count-panel">
             <How choice={choice} />
-            <p className="count-foot">Values come from the calculator&apos;s exact engine. 0, −1 and 2 are proved minimal; other table lengths are shortest known; every other word is a construction.</p>
+            <p className="count-foot">Values come from the calculator&apos;s exact engine. 0, −1 and 2 are {PROVEN_MINIMAL}; other table lengths are shortest known; every other word is a construction.</p>
             <p className="count-foot">Why a counting construction gives n is in <Link id="docs-link" href={DOCS}>docs/counting.md</Link>.</p>
           </section>
         </div>
@@ -354,7 +480,7 @@ function Outline({ choice }: { choice: CountChoice }) {
         const longPrefix = chunk.kind === "prefix" && chunk.end - chunk.start > 24;
         return (
           <div className="count-seg" key={`${chunk.kind}-${chunk.start}`}>
-            <span>{chunk.label}{chunk.reps ? ` × ${chunk.reps}` : ""}</span>
+            <span>{chunk.label}{chunk.reps ? <span className="count-x">× {chunk.reps}</span> : null}</span>
             <span className="count-chips">
               {chunk.kind === "blocks" ? (
                 <>

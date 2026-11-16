@@ -140,7 +140,7 @@ export function checkCutTraces(floatYs: C[], exactYs: ZCut[]): CutCheck {
   return { ok: violations.length === 0, lengthOk, floatHits, exactHits, case2, violations };
 }
 
-/** Four synthetic traces that fail, and one case-2 trace that passes. */
+/** Four required failing traces, the optional opposite-side trace, and one case-2 trace that passes. */
 export function ruleSelfTest(): { name: string; want: "fail" | "pass"; got: "fail" | "pass" }[] {
   const z = (reNeg: boolean, imZero: boolean): ZCut => ({
     re: { isNeg: () => reNeg, isZero: () => false },
@@ -152,6 +152,7 @@ export function ruleSelfTest(): { name: string; want: "fail" | "pass"; got: "fai
     ["(b) float im at 2 × cutDustTolerance", "fail", [{ re: -2, im: 2 * tol }], [z(true, true)]],
     ["(c) exact im 1e-130, float exactly on the axis", "fail", [{ re: -2, im: 0 }], [z(true, false)]],
     ["(d) traces of different lengths", "fail", [{ re: -2, im: 0 }, { re: 3, im: 0 }], [z(true, true)]],
+    ["(e) float on the opposite side of zero", "fail", [{ re: 2, im: 0 }], [z(true, true)]],
     ["case 2: float dust off an exact cut point", "pass", [{ re: 1, im: 0 }, { re: -2, im: tol / 2 }], [z(false, true), z(true, true)]],
   ];
   return cases.map(([name, want, floatYs, exactYs]) => ({

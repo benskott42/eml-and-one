@@ -28,6 +28,7 @@ export type Entry = {
   notice?: string | null;
   watch?: number;
   cutHits?: number;
+  underflowedExact?: boolean;
 };
 
 export type Model = {

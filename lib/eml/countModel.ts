@@ -17,10 +17,10 @@ export type CountChoice = {
 };
 
 export function familyLabel(n: number): string {
-  if (n >= 2) return "counting construction: K = 10n − 1 (gives exactly n on both cuts, without ln 0)";
-  if (n <= -1) return "counting construction: K = 10m + 7, m = −n (gives exactly n on both cuts, without ln 0)";
-  if (n === 1) return "the 1 key: 1 press";
-  return "ln(1) via the ln template 11xE1EE: 7 presses";
+  if (n >= 2) return "built by: counting construction, K = 10n − 1";
+  if (n <= -1) return "built by: counting construction, K = 10m + 7, m = −n";
+  if (n === 1) return "built by: counting construction, the 1 key";
+  return "built by: counting construction, ln(1) via 11xE1EE";
 }
 
 export function choose(n: number, mode: "ln0" | "strict"): CountChoice {
