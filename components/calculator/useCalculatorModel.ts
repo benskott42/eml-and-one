@@ -37,6 +37,25 @@ import {
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "./twoButtons";
 import { useExactScheduler } from "./useExactScheduler";
 
+const MAX_WORD_PRESSES = 100_001;
+
+function isPressWhitespace(code: number): boolean {
+  return code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32
+    || code === 160 || code === 0xfeff
+    || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
+    || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000;
+}
+
+function wordExceedsPressLimit(source: string): boolean {
+  let presses = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    if (isPressWhitespace(source.charCodeAt(i))) continue;
+    presses += 1;
+    if (presses > MAX_WORD_PRESSES) return true;
+  }
+  return false;
+}
+
 type Live = {
   pushNode: (node: Node, caption: string, tapeLabel: string) => void;
   pushOne: () => void;
@@ -679,6 +698,10 @@ export function useCalculatorModel() {
   }, []);
 
   const loadProgramText = useCallback((source: string) => {
+    if (wordExceedsPressLimit(source)) {
+      fail("Too long: words are limited to 100,001 presses.");
+      return;
+    }
     try {
       const parsed = parseProgramInput(source);
       if (parsed.kind === "index") {
@@ -688,10 +711,6 @@ export function useCalculatorModel() {
       const from = parsed.rotatedFrom;
       const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
       const notice = from ? `Rotated ${from} to ${to}.` : null;
-      if (parsed.word.length > 40_000) {
-        fail("That word is too long to load.");
-        return;
-      }
       if (/[xy]/.test(parsed.word)) {
         if (!freeInputRef.current) {
           fail("Turn on free input to use x or y");

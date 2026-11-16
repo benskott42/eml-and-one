@@ -540,10 +540,27 @@ async function main() {
       failed = true;
     }
   }
-  await setUiProgram(`${"1".repeat(20_001)}${"E".repeat(20_000)}`);
+  const fortyThousand = `${"1 ".repeat(20_001)}${"E ".repeat(20_000)}`;
+  await setUiProgram(fortyThousand);
   await loadUi();
-  if (!uiAlert().includes("too long") || uiAlert().toLowerCase().includes("cancelled")) {
-    console.error("a huge word was not rejected before it was built", uiAlert());
+  const fortyScreen = uiView.document.querySelector("[aria-label='Calculator screen']")?.textContent ?? "";
+  if (uiAlert().includes("100,001") || !fortyScreen.includes("40001 presses")) {
+    console.error("a 40,001-press word with spaces did not load", uiAlert(), fortyScreen.slice(0, 240));
+    failed = true;
+  }
+  await setUiProgram("1".repeat(100_003));
+  await loadUi();
+  if (uiAlert() !== "Too long: words are limited to 100,001 presses.") {
+    console.error("a 100,003-press word was not refused with the limit", uiAlert());
+    failed = true;
+  }
+  const paste = "1".repeat(400_000);
+  await setUiProgram(paste);
+  const pasteStarted = performance.now();
+  await loadUi();
+  const pasteMs = performance.now() - pasteStarted;
+  if (uiAlert() !== "Too long: words are limited to 100,001 presses." || pasteMs > 100) {
+    console.error("a 400k paste was not rejected quickly", pasteMs, uiAlert());
     failed = true;
   }
   const expression = uiView.document.querySelector("#expression");
