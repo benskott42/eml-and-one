@@ -68,6 +68,15 @@ export function CalculatorView(props: CalculatorModel) {
       /* the card stays dismissed for this visit */
     }
   }
+  useEffect(() => {
+    if (!showCard) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      dismissCard();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showCard]);
   const fullDigits = top ? programIndexDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 

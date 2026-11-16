@@ -398,7 +398,7 @@ export function useCalculatorModel() {
         };
         rest = [];
       } else {
-        fail("EML needs two values. Press 1 first.");
+        fail("Needs a value. Press 1 first.");
         return;
       }
       const node = applyUnaryNode(id, arg.node);
@@ -471,7 +471,7 @@ export function useCalculatorModel() {
       const numbers: Record<string, C> = {};
       const wantsField = /\bx\b/i.test(text) || /\by\b/i.test(text);
       if (wantsField && !freeInputRef.current) {
-        setFieldError("EML needs two values. Press 1 first.");
+        setFieldError("Turn on free input to use x or y");
         return;
       }
       if (/\bx\b/i.test(text)) {
@@ -682,7 +682,7 @@ export function useCalculatorModel() {
       const notice = from ? `Rotated ${from} to ${to}.` : null;
       if (/[xy]/.test(parsed.word)) {
         if (!freeInputRef.current) {
-          fail("EML needs two values. Press 1 first.");
+          fail("Turn on free input to use x or y");
           return;
         }
         const rawX = textRef.current.xText;
