@@ -75,7 +75,7 @@ import {
 } from "./programIndex";
 import { encodePresses, previewPresses, pressPreviewForNode } from "./presses";
 import { agreementNote, compileExpression, referenceExpression, referenceLostTerm } from "./parse";
-import { packCircuit, unpackCircuit } from "./wire";
+import { packCircuit, readWireNum, unpackCircuit, wireNum, type WireNum } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
 
@@ -3290,6 +3290,59 @@ if (inShard("core")) {
   }
 }
 
+// v1.1 (reviewbot 04:47, M3): −0 on the wire. JSON.stringify(-0) is "0", so wireNum sends "-0".
+// A −0 leaf and a float −0 result go through the JSON child (overnight-child.ts) and the worker
+// path (scripts/wire-worker.ts: worker_threads, the same structured clone as postMessage);
+// the sign must survive both: Object.is(v, -0).
+if (inShard("core")) {
+  const zeroRows: Array<{ src: string; leaf: boolean; exact: string }> = [
+    { src: "-0", leaf: true, exact: "−0" },
+    { src: "0*(-1)", leaf: true, exact: "−0" },
+    { src: "-1/inf", leaf: false, exact: "0" },
+    { src: "-(10^(-400))", leaf: false, exact: "−1×10^−400" },
+  ];
+  const isNegZero = (x: WireNum | null | undefined) => x !== null && x !== undefined && Object.is(readWireNum(x), -0);
+  const jobs = zeroRows.map((row) => {
+    const packed = packCircuit(compileExpression(row.src, {}));
+    const wire = JSON.parse(JSON.stringify(packed)) as typeof packed;
+    const leafTok = wire.tokens.find((tok) => tok.i === wire.root);
+    if (row.leaf && !(leafTok && leafTok.k === "in" && leafTok.re === "-0")) {
+      failed += 1;
+      console.log("FAIL −0 wire leaf token", row.src, JSON.stringify(leafTok));
+    }
+    if (wireNum(-0) !== "-0" || !Object.is(readWireNum(wireNum(-0)), -0)) {
+      failed += 1;
+      console.log("FAIL wireNum(-0)", wireNum(-0));
+    }
+    return { src: row.src, tokens: wire.tokens, root: wire.root, env: {} };
+  });
+  const jobFile = path.join(repoRoot, "scripts/.zero-job.json");
+  writeFileSync(jobFile, JSON.stringify({ items: jobs }));
+  const child = spawnSync(process.execPath, [tsxCli, path.join(repoRoot, "scripts/overnight-child.ts"), jobFile], { cwd: repoRoot, encoding: "utf8", timeout: 180_000 });
+  rmSync(jobFile, { force: true });
+  const viaWorker = runTsx("scripts/wire-worker.ts", JSON.stringify(jobs));
+  if (child.status !== 0 || viaWorker.status !== 0) {
+    failed += 1;
+    console.log("FAIL −0 wire children", child.status, viaWorker.status, child.stderr?.slice(0, 300), viaWorker.stderr?.slice(0, 300));
+  } else {
+    const runs = JSON.parse(child.stdout) as Array<Array<{ text?: string; floatRe?: WireNum }>>;
+    const posted = JSON.parse(viaWorker.stdout) as Array<{ src: string; leafRe: WireNum | null; re: WireNum; text: string }>;
+    zeroRows.forEach((row, k) => {
+      const json = runs[k]?.[0];
+      const work = posted[k];
+      const ok =
+        json !== undefined && work !== undefined &&
+        json.text === row.exact && isNegZero(json.floatRe) &&
+        work.text === row.exact && isNegZero(work.re) &&
+        (!row.leaf || isNegZero(work.leafRe));
+      if (!ok) {
+        failed += 1;
+        console.log("FAIL −0 wire round trip", row.src, JSON.stringify(json), JSON.stringify(work));
+      }
+    });
+  }
+}
+
 // v1.1: breakerbot's overnight findings 1–5, 7, 8 (overnight-bugs.md). The page compiles and
 // posts the wire; the exact worker never compiled anything. scripts/overnight-child.ts is that
 // worker: each case is evaluated cold, then again on the warm pureCache (a repeat compute).
@@ -3313,7 +3366,7 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL overnight child", child.status, child.stderr?.slice(0, 400));
   } else {
-    const runs = JSON.parse(child.stdout) as Array<Array<{ text?: string; unverified?: boolean; singular?: string | null; error?: string; floatRe?: number | null; floatIm?: number | null; floatSingular?: string | null; floatUnverified?: boolean }>>;
+    const runs = JSON.parse(child.stdout) as Array<Array<{ text?: string; unverified?: boolean; singular?: string | null; error?: string; floatRe?: WireNum | null; floatIm?: WireNum | null; floatSingular?: string | null; floatUnverified?: boolean }>>;
     const parse = (text: string): [Decimal, Decimal] | null => {
       const t = text.replace(/−/g, "-").replace(/×10\^/g, "e").replace(/\s+/g, "");
       const num = "[0-9.]+(?:e[+-]?\\d+)?";
@@ -3349,7 +3402,7 @@ if (inShard("core")) {
         // ln 0 folds (breakerbot hotfix-verify): −∞ − (−∞) and friends are undefined with a
         // flag in BOTH modes, never a certified 0. JSON turns NaN/±∞ into null.
         if (item.undef) {
-          const floatFinite = typeof run.floatRe === "number" && typeof run.floatIm === "number";
+          const floatFinite = run.floatRe != null && run.floatIm != null && Number.isFinite(readWireNum(run.floatRe)) && Number.isFinite(readWireNum(run.floatIm));
           if (run.text !== "undefined" || !run.singular || floatFinite || !run.floatSingular) {
             failed += 1;
             console.log("FAIL", name, run.text, run.singular, "float", run.floatRe, run.floatIm, run.floatSingular);
