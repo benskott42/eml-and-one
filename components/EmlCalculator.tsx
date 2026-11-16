@@ -167,6 +167,20 @@ function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | "singul
   }
   try {
     const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    if (report.unverified) {
+      return {
+        value: { re: Number.NaN, im: Number.NaN },
+        text: "—",
+        singular: null,
+        mode,
+        touchedLn0: false,
+        overflowed: false,
+        underflowed: false,
+        nearCut: false,
+        pendingExact: false,
+        notice: "couldn't verify",
+      };
+    }
     return {
       value: report.value,
       text: formatC(report.value),

@@ -171,6 +171,17 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
  * not a certified zero: the dropped term could have been the answer.
  */
 const seriesShortcuts = new WeakSet<Node>();
+const unverifiedNodes = new WeakSet<Node>();
+
+/** A result that dropped a term. The screen says it could not verify, in either mode. */
+export function markUnverified(node: Node): Node {
+  unverifiedNodes.add(node);
+  return node;
+}
+
+export function isUnverified(node: Node): boolean {
+  return unverifiedNodes.has(node);
+}
 
 export function markSeriesShortcut(node: Node): Node {
   seriesShortcuts.add(node);
@@ -212,6 +223,8 @@ export type EvalReport = {
   underflowed: boolean;
   /** The float result landed on the branch cut, or within a few ulps of it. */
   nearCut: boolean;
+  /** The circuit dropped a term. The number is not a result. */
+  unverified?: boolean;
 };
 
 function zeroC(v: C): boolean {
@@ -243,6 +256,17 @@ export function expUnderflows(input: C): boolean {
 }
 
 export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: EvalBudget = {}): EvalReport {
+  if (isUnverified(root)) {
+    return {
+      value: { re: Number.NaN, im: Number.NaN },
+      singular: null,
+      touchedLn0: false,
+      overflowed: false,
+      underflowed: false,
+      nearCut: false,
+      unverified: true,
+    };
+  }
   const maxNodes = budget.maxNodes ?? DEFAULT_MAX_NODES;
   const deadline = budget.deadline ?? 0;
   const memo = new Map<Node, C>();
