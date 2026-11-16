@@ -1878,7 +1878,8 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
   const noisy = formatC(evaluate(compileExpression("2-1e10*i", {})));
   const tangent = formatC(evaluate(compileExpression("tan(pi/2)", {})));
-  if (noisy.includes("2.000000") || !noisy.startsWith("2 − ") || tangent.includes("7")) {
+  // Scientific form is 12 significant digits, so the old 7-digit rounding (no "7") is gone.
+  if (noisy.includes("2.000000") || !noisy.startsWith("2 − ") || tangent !== "4.50359962737×10^15") {
     failed += 1;
     console.log("FAIL display rounding", noisy, tangent);
   }
