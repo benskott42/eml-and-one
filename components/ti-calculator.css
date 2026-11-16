@@ -747,6 +747,15 @@ html.ti-two-buttons .ti-btn-eml {
   }
 }
 
+/* 320x568 is shorter than the 11rem screen plus the keypad. A lower cap
+   keeps 1 and EML on the first page. 375x667 stays on the 11rem cap. */
+@media (max-width: 400px) and (max-height: 640px) {
+  .ti-lcd {
+    min-height: 0;
+    max-height: 8.25rem;
+  }
+}
+
 /* Installed apps lock to portrait. A browser tab cannot, so a short
    landscape phone gets a side-by-side screen and keypad instead. */
 @media (orientation: landscape) and (max-height: 500px) {
@@ -815,6 +824,32 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-device-two .ti-btn-eml {
     min-height: 2.8rem;
     font-size: 1.35rem;
+  }
+
+  .ti-form {
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .ti-field {
+    padding: 6px 8px;
+  }
+
+  .ti-text-btn {
+    min-height: 2.4rem;
+    padding: 6px 8px;
+  }
+
+  .ti-modes {
+    margin-top: 6px;
+    gap: 6px;
+    grid-template-columns: 1.1fr 1fr 1fr;
+  }
+
+  .ti-modes .ti-btn {
+    min-height: 2.5rem;
+    padding: 4px 3px;
+    font-size: 0.68rem;
   }
 
   .ti-manual {

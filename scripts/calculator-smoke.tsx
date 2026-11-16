@@ -61,7 +61,7 @@ async function main() {
     console.error("calculator css is missing the font, focus ring, or reduced motion");
     failed = true;
   }
-  if (!css.includes("max-height: 11rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px")) {
+  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 8.25rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px")) {
     console.error("phone display cap or landscape layout is missing");
     failed = true;
   }
