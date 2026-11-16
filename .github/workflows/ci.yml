@@ -2,17 +2,24 @@ name: ci
 
 on:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -29,9 +36,8 @@ jobs:
           set -euo pipefail
           CHROME=$(command -v google-chrome || command -v google-chrome-stable || true)
           if [ -z "$CHROME" ]; then
-            sudo apt-get update
-            sudo apt-get install -y google-chrome-stable
-            CHROME=$(command -v google-chrome || command -v google-chrome-stable)
+            echo "google-chrome is not installed" >&2
+            exit 1
           fi
           mkdir -p /tmp/eml-site
           ln -sfn "$PWD/out" /tmp/eml-site/eml-and-one
@@ -50,170 +56,330 @@ jobs:
           const site = process.env.SITE || "http://127.0.0.1:4173/eml-and-one/";
           const port = 9412;
           const chromeBin = process.env.CHROME || "google-chrome";
-          const profile = mkdtempSync(join(tmpdir(), "ci-chrome-"));
-          const chrome = spawn(chromeBin, [
-            "--headless=new",
-            "--disable-gpu",
-            "--no-sandbox",
-            `--remote-debugging-port=${port}`,
-            `--user-data-dir=${profile}`,
-            "about:blank",
-          ], { stdio: "ignore" });
-
-          let ws;
-          let id = 0;
-          const pending = new Map();
           const failures = [];
+          let chrome;
 
           function fail(message) {
             failures.push(message);
             console.error(`FAIL ${message}`);
           }
 
-          async function connect() {
-            for (let i = 0; i < 50; i++) {
+          function launch() {
+            const profile = mkdtempSync(join(tmpdir(), "ci-chrome-"));
+            return spawn(chromeBin, [
+              "--headless=new",
+              "--disable-gpu",
+              "--no-sandbox",
+              `--remote-debugging-port=${port}`,
+              `--user-data-dir=${profile}`,
+              "about:blank",
+            ], { stdio: "ignore" });
+          }
+
+          async function connect(timeoutMs) {
+            const deadline = Date.now() + timeoutMs;
+            let last = "chrome did not open a debugging port";
+            while (Date.now() < deadline) {
               try {
-                const version = await fetch(`http://127.0.0.1:${port}/json/version`).then((r) => r.json());
-                ws = new WebSocket(version.webSocketDebuggerUrl);
+                const version = await fetch(`http://127.0.0.1:${port}/json/version`).then((response) => {
+                  if (!response.ok) throw new Error(`version ${response.status}`);
+                  return response.json();
+                });
+                const socket = new WebSocket(version.webSocketDebuggerUrl);
                 await new Promise((resolve, reject) => {
-                  ws.addEventListener("open", resolve);
-                  ws.addEventListener("error", reject);
+                  socket.addEventListener("open", resolve, { once: true });
+                  socket.addEventListener("error", () => reject(new Error("debugger socket failed")), { once: true });
                 });
-                ws.addEventListener("message", (event) => {
-                  const message = JSON.parse(event.data);
-                  if (message.id && pending.has(message.id)) {
-                    pending.get(message.id)(message);
-                    pending.delete(message.id);
-                  }
-                });
-                return;
-              } catch {
-                await delay(150);
+                return socket;
+              } catch (err) {
+                last = err instanceof Error ? err.message : String(err);
+                await delay(200);
               }
             }
-            throw new Error("chrome did not open a debugging port");
+            throw new Error(last);
           }
 
-          function send(method, params = {}, sessionId) {
-            const messageId = ++id;
-            return new Promise((resolve) => {
-              pending.set(messageId, resolve);
-              ws.send(JSON.stringify({ id: messageId, method, params, sessionId }));
+          try {
+            let socket;
+            for (let attempt = 1; attempt <= 2; attempt += 1) {
+              chrome = launch();
+              try {
+                socket = await connect(30_000);
+                break;
+              } catch (err) {
+                chrome.kill();
+                chrome = undefined;
+                if (attempt === 2) throw err;
+              }
+            }
+
+            let id = 0;
+            const pending = new Map();
+            const bad = [];
+            socket.addEventListener("message", (event) => {
+              const message = JSON.parse(event.data);
+              if (message.id && pending.has(message.id)) {
+                pending.get(message.id)(message);
+                pending.delete(message.id);
+                return;
+              }
+              const url = message.params?.response?.url || message.params?.request?.url || "";
+              if (url.endsWith("/favicon.ico")) return;
+              if (message.method === "Network.responseReceived" && message.params.response.status >= 400) {
+                bad.push(`${message.params.response.status} ${url}`);
+              }
+              if (message.method === "Network.loadingFailed") {
+                bad.push(`failed ${url} ${message.params.errorText || ""}`.trim());
+              }
             });
-          }
 
-          await connect();
-          const target = await send("Target.createTarget", { url: "about:blank" });
-          const session = await send("Target.attachToTarget", { targetId: target.result.targetId, flatten: true });
-          const sessionId = session.result.sessionId;
-          await send("Page.enable", {}, sessionId);
-          await send("Runtime.enable", {}, sessionId);
-          await send("Emulation.setDeviceMetricsOverride", {
-            width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
-          }, sessionId);
-          await send("Page.navigate", { url: site }, sessionId);
-          await delay(800);
-
-          async function evalJs(expression) {
-            const result = await send("Runtime.evaluate", {
-              expression,
-              returnByValue: true,
-              awaitPromise: true,
-            }, sessionId);
-            if (result.result?.exceptionDetails) {
-              throw new Error(result.result.exceptionDetails.text || "evaluate failed");
-            }
-            return result.result?.result?.value;
-          }
-
-          const boot = await evalJs(`({
-            screen: !!document.querySelector('[aria-label="Calculator screen"]'),
-            one: !!document.querySelector(".ti-btn-one"),
-            eml: !!document.querySelector(".ti-btn-eml"),
-            result: document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "",
-          })`);
-          if (!boot.screen) fail("calculator screen is missing");
-          if (!boot.one || !boot.eml) fail("1 or EML key is missing");
-          console.log("boot", JSON.stringify(boot));
-
-          await evalJs(`(async () => {
-            const one = document.querySelector(".ti-btn-one");
-            const eml = document.querySelector(".ti-btn-eml");
-            one.click();
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            one.click();
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            eml.click();
-          })()`);
-          const e = await evalJs(`(async () => {
-            const start = Date.now();
-            while (Date.now() - start < 15000) {
-              const text = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
-              if (text.includes("2.718")) return text;
-              await new Promise((resolve) => setTimeout(resolve, 50));
-            }
-            return document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
-          })()`);
-          if (!String(e).includes("2.718")) fail(`1, 1, EML result was ${JSON.stringify(e)}`);
-          else console.log("e", e);
-
-          async function compute(source, ready) {
-            return evalJs(`(async () => {
-              const input = document.querySelector("#expression")
-                || [...document.querySelectorAll("label")].find((label) => /^\\s*Expression/i.test(label.textContent || ""))?.querySelector("input");
-              if (!input || !input.form) return { error: "no expression field" };
-              const before = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
-              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-              set.call(input, ${JSON.stringify(source)});
-              input.dispatchEvent(new Event("input", { bubbles: true }));
-              const tasks = [];
-              const observer = new PerformanceObserver((list) => {
-                for (const entry of list.getEntries()) tasks.push(Math.round(entry.duration));
+            function send(method, params = {}, sessionId) {
+              const messageId = ++id;
+              return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  pending.delete(messageId);
+                  reject(new Error(`timed out waiting for ${method}`));
+                }, 30_000);
+                pending.set(messageId, (message) => {
+                  clearTimeout(timer);
+                  resolve(message);
+                });
+                socket.send(JSON.stringify({ id: messageId, method, params, sessionId }));
               });
-              observer.observe({ type: "longtask", buffered: false });
-              input.form.requestSubmit();
-              const start = Date.now();
-              let text = before;
-              let note = "";
-              let error = "";
-              const accept = ${ready};
-              while (Date.now() - start < 25000) {
-                text = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
-                note = document.querySelector(".ti-lcd-note")?.textContent?.trim() ?? "";
-                error = document.querySelector(".ti-lcd-error")?.textContent?.trim() ?? "";
-                const shown = text + " " + note + " " + error;
-                if (text !== before && text !== "computing" && accept(shown)) {
+            }
+
+            const target = await send("Target.createTarget", { url: "about:blank" });
+            const session = await send("Target.attachToTarget", { targetId: target.result.targetId, flatten: true });
+            const sessionId = session.result.sessionId;
+            await send("Page.enable", {}, sessionId);
+            await send("Runtime.enable", {}, sessionId);
+            await send("Network.enable", {}, sessionId);
+            await send("Page.addScriptToEvaluateOnNewDocument", {
+              source: `(() => {
+                const urls = [];
+                const Native = window.Worker;
+                window.Worker = function Worker(url, options) {
+                  urls.push(String(url));
+                  return new Native(url, options);
+                };
+                window.Worker.prototype = Native.prototype;
+                window.__workerUrls = urls;
+              })();`,
+            }, sessionId);
+            await send("Emulation.setDeviceMetricsOverride", {
+              width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
+            }, sessionId);
+            await send("Page.navigate", { url: site }, sessionId);
+
+            async function evalJs(expression) {
+              const result = await send("Runtime.evaluate", {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+              }, sessionId);
+              if (result.result?.exceptionDetails) {
+                throw new Error(result.result.exceptionDetails.text || result.result.exceptionDetails.exception?.description || "evaluate failed");
+              }
+              return result.result?.result?.value;
+            }
+
+            const bootDeadline = Date.now() + 30_000;
+            let boot;
+            while (Date.now() < bootDeadline) {
+              try {
+                boot = await evalJs(`({
+                  path: location.pathname,
+                  screen: !!document.querySelector('[aria-label="Calculator screen"]'),
+                  one: !!document.querySelector(".ti-btn-one"),
+                  eml: !!document.querySelector(".ti-btn-eml"),
+                  result: document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "",
+                })`);
+                if (boot?.screen && boot.one && boot.eml) break;
+              } catch {
+                /* the document is still navigating */
+              }
+              await delay(200);
+            }
+            console.log("boot", JSON.stringify(boot));
+            if (!boot?.path?.startsWith("/eml-and-one")) fail(`page loaded at ${JSON.stringify(boot?.path)}`);
+            if (!boot?.screen) fail("calculator screen is missing");
+            if (!boot?.one || !boot?.eml) fail("1 or EML key is missing");
+
+            const field = `document.querySelector("#expression") || [...document.querySelectorAll("label")].find((label) => /^\\s*Expression/i.test(label.textContent || ""))?.querySelector("input")`;
+
+            async function compute(source, accept, timeoutMs, watchTasks) {
+              return evalJs(`(async () => {
+                const input = ${field};
+                if (!input || !input.form) return { error: "no expression field" };
+                const read = () => {
+                  const text = document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "";
+                  const note = document.querySelector(".ti-lcd-note span")?.textContent?.trim() ?? "";
+                  const error = document.querySelector(".ti-lcd-error")?.textContent?.trim() ?? "";
+                  return { text, note, error, chips: document.querySelectorAll(".ti-press-chip").length, hidden: document.querySelectorAll('[aria-hidden="true"] [tabindex="0"]').length };
+                };
+                const result = document.querySelector(".ti-lcd-result");
+                let generation = 0;
+                let seen = result?.textContent ?? "";
+                const count = () => {
+                  const next = result?.textContent ?? "";
+                  if (next !== seen) {
+                    generation += 1;
+                    seen = next;
+                  }
+                };
+                const observer = result ? new MutationObserver(() => { generation += 1; count(); }) : null;
+                observer?.observe(result, { subtree: true, characterData: true, childList: true });
+                const tasks = [];
+                const tasksObserver = ${watchTasks ? "new PerformanceObserver((list) => { for (const entry of list.getEntries()) tasks.push(Math.round(entry.duration)); })" : "null"};
+                tasksObserver?.observe({ type: "longtask", buffered: false });
+                const started = generation;
+                const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+                set.call(input, ${JSON.stringify(source)});
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.form.requestSubmit();
+                const accept = ${accept};
+                const deadline = Date.now() + ${timeoutMs};
+                let shown = read();
+                while (Date.now() < deadline) {
+                  count();
+                  shown = read();
+                  if (generation > started && shown.text !== "computing" && accept(shown)) {
+                    observer?.disconnect();
+                    tasksObserver?.disconnect();
+                    return { ...shown, tasks };
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 40));
+                }
+                observer?.disconnect();
+                tasksObserver?.disconnect();
+                return { ...shown, tasks, error: shown.error || "timeout" };
+              })()`);
+            }
+
+            // One turn: the second 1 and EML run before the browser paints, so a
+            // native disabled attribute from the empty stack would drop EML.
+            const e = await evalJs(`(async () => {
+              const result = document.querySelector(".ti-lcd-result");
+              let generation = 0;
+              let seen = result?.textContent ?? "";
+              const count = () => {
+                const next = result?.textContent ?? "";
+                if (next !== seen) { generation += 1; seen = next; }
+              };
+              const observer = new MutationObserver(() => { generation += 1; count(); });
+              observer.observe(result, { subtree: true, characterData: true, childList: true });
+              const started = generation;
+              document.querySelector(".ti-btn-one").click();
+              document.querySelector(".ti-btn-one").click();
+              document.querySelector(".ti-btn-eml").click();
+              const deadline = Date.now() + 20000;
+              let text = "";
+              while (Date.now() < deadline) {
+                count();
+                text = result?.textContent?.trim() ?? "";
+                if (generation > started && text !== "computing" && text === "2.718281828459") {
                   observer.disconnect();
-                  return { text, note, error, tasks, chips: document.querySelectorAll(".ti-press-chip").length, hidden: document.querySelectorAll('[aria-hidden="true"] [tabindex="0"]').length };
+                  return text;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 40));
               }
               observer.disconnect();
-              return { text, note, error: error || "timeout", tasks, chips: document.querySelectorAll(".ti-press-chip").length, hidden: document.querySelectorAll('[aria-hidden="true"] [tabindex="0"]').length };
+              return result?.textContent?.trim() ?? "";
             })()`);
+            console.log("e", JSON.stringify(e));
+            if (e !== "2.718281828459") fail(`1, 1, EML result was ${JSON.stringify(e)}`);
+
+            const two = await compute("2*2", "(shown) => shown.text === \"4\"", 25000, false);
+            console.log("2*2", JSON.stringify(two));
+            if (two.error === "no expression field") fail("no expression field");
+            else if (two.text !== "4") fail(`2*2 result was ${JSON.stringify(two.text)}`);
+
+            const ln = await compute("ln(-1)", "(shown) => shown.text === \"3.14159265359i\"", 25000, false);
+            console.log("ln(-1)", JSON.stringify(ln));
+            if (ln.text !== "3.14159265359i") fail(`ln(-1) result was ${JSON.stringify(ln.text)}`);
+
+            const tan = await compute("tan(10^(-5000))", "(shown) => shown.text === \"\\u2014\"", 25000, true);
+            console.log("tan", JSON.stringify(tan));
+            if (tan.text !== "—") fail(`tan(10^(-5000)) result was ${JSON.stringify(tan.text)}`);
+            if (!String(tan.note || "").split(" · ").includes("couldn't verify")) fail(`tan(10^(-5000)) note was ${JSON.stringify(tan.note)}`);
+            const long = (tan.tasks || []).filter((duration) => duration > 50);
+            if (long.length) fail(`tan(10^(-5000)) long tasks ${JSON.stringify(tan.tasks)}`);
+            if (tan.chips) fail(`collapsed view rendered ${tan.chips} chips`);
+            if (tan.hidden) fail(`aria-hidden contains ${tan.hidden} tab stops`);
+
+            const ln130Note = "K 671 · 121 shared · depth 90 · program #1509…5127 (198 digits) · ln 0 · pure · float underflows";
+            const ln130 = await compute("ln(1+10^(-130))", `(shown) => shown.text === "1\\u00d710^\\u2212130" && shown.note === ${JSON.stringify(ln130Note)}`, 30000, false);
+            console.log("ln(1+10^(-130))", JSON.stringify(ln130));
+            if (ln130.text !== "1×10^−130") fail(`ln(1+10^(-130)) result was ${JSON.stringify(ln130.text)}`);
+            if (ln130.note !== ln130Note) fail(`ln(1+10^(-130)) note was ${JSON.stringify(ln130.note)}`);
+
+            const followed = await evalJs(`(async () => {
+              const input = ${field};
+              if (!input || !input.form) return { error: "no expression field" };
+              const result = document.querySelector(".ti-lcd-result");
+              let generation = 0;
+              const observer = new MutationObserver(() => { generation += 1; });
+              observer.observe(result, { subtree: true, characterData: true, childList: true });
+              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              const submit = (source) => {
+                set.call(input, source);
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.form.requestSubmit();
+              };
+              submit("ln(1+3*10^(-130))");
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              const started = generation;
+              submit("1+1");
+              const deadline = Date.now() + 10000;
+              let text = "";
+              while (Date.now() < deadline) {
+                text = result?.textContent?.trim() ?? "";
+                if (generation > started && text !== "computing" && text === "2") {
+                  observer.disconnect();
+                  return text;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 40));
+              }
+              observer.disconnect();
+              return text;
+            })()`);
+            console.log("slow then 1+1", JSON.stringify(followed));
+            if (followed !== "2") fail(`slow job then 1+1 result was ${JSON.stringify(followed)}`);
+
+            const again = await compute("1+1", "(shown) => shown.text === \"2\"", 15000, false);
+            console.log("1+1 again", JSON.stringify(again));
+            if (again.text !== "2") fail(`repeated 1+1 result was ${JSON.stringify(again.text)}`);
+
+            const signed = await compute("ln(-2-10^(-20)*i)", "(shown) => shown.text === \"0.69314718056 \\u2212 3.14159265359i\"", 30000, false);
+            console.log("tiny imaginary", JSON.stringify(signed));
+            if (signed.text !== "0.69314718056 − 3.14159265359i") fail(`tiny imaginary sign result was ${JSON.stringify(signed.text)}`);
+
+            const workers = await evalJs(`window.__workerUrls || []`);
+            console.log("workers", JSON.stringify(workers));
+            if (!Array.isArray(workers) || workers.length === 0) fail("exact worker was not created");
+            for (const url of workers) {
+              if (!String(url).includes("/eml-and-one/")) fail(`worker URL is outside /eml-and-one: ${url}`);
+            }
+            if (bad.length) fail(`failed requests ${JSON.stringify(bad)}`);
+
+            if (failures.length) {
+              console.error(`${failures.length} failed`);
+              process.exitCode = 1;
+            } else {
+              console.log("chrome regression passed");
+            }
+          } catch (err) {
+            console.error(err);
+            process.exitCode = 1;
+          } finally {
+            if (chrome && !chrome.killed) chrome.kill();
           }
-
-          const two = await compute("2*2", "(shown) => shown.trim().startsWith(\"4\")");
-          console.log("2*2", JSON.stringify(two));
-          if (two.text !== "4") fail(`2*2 result was ${JSON.stringify(two.text)}`);
-
-          const ln = await compute("ln(-1)", "(shown) => /iπ|3\\.14159/.test(shown)");
-          console.log("ln(-1)", JSON.stringify(ln));
-          if (!/iπ|3\.14159/.test(`${ln.text} ${ln.note}`)) fail(`ln(-1) result was ${JSON.stringify(ln.text)}`);
-
-          const tan = await compute("tan(10^(-5000))", "(shown) => shown.includes(\"—\") || /couldn.t verify/i.test(shown)");
-          console.log("tan", JSON.stringify(tan));
-          const tanShown = `${tan.text} ${tan.note}`;
-          if (!tanShown.includes("—") && !/couldn.t verify/i.test(tanShown)) fail(`tan(10^(-5000)) result was ${JSON.stringify(tan)}`);
-          const long = (tan.tasks || []).filter((duration) => duration > 50);
-          if (long.length) fail(`tan(10^(-5000)) long tasks ${JSON.stringify(tan.tasks)}`);
-          if (tan.chips) fail(`collapsed view rendered ${tan.chips} chips`);
-          if (tan.hidden) fail(`aria-hidden contains ${tan.hidden} tab stops`);
-
-          chrome.kill();
-          if (failures.length) {
-            console.error(`${failures.length} failed`);
-            process.exit(1);
-          }
-          console.log("chrome regression passed");
           END
+      - name: Upload the tested site
+        if: github.event_name == 'workflow_call'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: site-out
+          path: out
+          retention-days: 1
+          if-no-files-found: error
