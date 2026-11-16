@@ -26,7 +26,7 @@ const EXAMPLES = [
 export function CalculatorView(props: CalculatorModel) {
   const {
     model, xText, setXText, yText, setYText, expr, setExpr, programField, setProgramField,
-    mode, twoButtons, heldShortcut, setHeldShortcut, freeInput, setFreeInput, fieldError, costs, expansions, writeTwoButtons,
+    mode, twoButtons, heldShortcut, setHeldShortcut, freeInput, setFreeInput, fieldError, costs, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
     compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded,
   } = props;
@@ -43,6 +43,10 @@ export function CalculatorView(props: CalculatorModel) {
   const onlyOnes = model.stack.every((item) => item.text === "1" || item.caption === "1");
   const lightOne = model.stack.length < 2 && (model.stack.length === 0 || onlyOnes);
   const lightEml = model.stack.length === 2 && onlyOnes;
+  const liveX = model.stack.length >= 2 ? model.stack[model.stack.length - 2]?.text ?? null : freeInput ? xText : null;
+  const liveY = model.stack.length >= 2 ? model.stack[model.stack.length - 1]?.text ?? null : freeInput ? yText : null;
+  const liveTip = (action: string) =>
+    liveX !== null && liveY !== null ? `${action} if you press this now, with x = ${liveX} and y = ${liveY}` : action;
   const [showCard, setShowCard] = useState(false);
   useEffect(() => {
     let open = false;
@@ -249,9 +253,9 @@ export function CalculatorView(props: CalculatorModel) {
           <div className="ti-block">
           <details className="ti-fold">
             <summary>Advanced stack</summary>
-            <label className="ti-label">
-              <input type="checkbox" checked={freeInput} onChange={(event) => setFreeInput(event.target.checked)} />
-              {" "}free input
+            <label className="ti-check-row">
+              <input className="ti-check" type="checkbox" checked={freeInput} onChange={(event) => setFreeInput(event.target.checked)} />
+              free input
             </label>
             <div className="ti-keys">
               <KeyButton onClick={() => pushScalar(xText, "x")} title="Push the value of x" onReveal={setHeldShortcut}>
@@ -319,7 +323,7 @@ export function CalculatorView(props: CalculatorModel) {
                 <KeyButton
                   key={key.id}
                   onClick={() => pushNode(constantNode(key.id), key.label, key.label)}
-                  title={expansions[key.id]}
+                  title={key.label}
                   secondary={costs[key.id]}
                   onReveal={setHeldShortcut}
                 >
@@ -333,7 +337,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>One value</h2>
             <div className="ti-keys">
               {UNARY_KEYS.map((key) => (
-                <KeyButton key={key.id} onClick={() => applyUnary(key.id, key.label)} title={`${expansions[key.id] ?? ""} if you press this now, with x = ${xText} and y = ${yText}`} secondary={costs[key.id]} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} onClick={() => applyUnary(key.id, key.label)} title={liveTip(key.label)} secondary={costs[key.id]} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}
@@ -344,7 +348,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h2>Two values · older x, top y</h2>
             <div className="ti-keys">
               {BINARY_KEYS.map((key) => (
-                <KeyButton key={key.id} title={`${expansions[key.id] ?? key.hint} if you press this now, with x = ${xText} and y = ${yText}`} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
+                <KeyButton key={key.id} title={liveTip(key.hint)} secondary={costs[key.id]} onClick={() => applyBinary(key.id, key.label)} onReveal={setHeldShortcut}>
                   {key.label}
                 </KeyButton>
               ))}

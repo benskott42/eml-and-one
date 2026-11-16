@@ -35,6 +35,7 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-device {
+  position: relative;
   width: min(100%, 480px);
   background: linear-gradient(180deg, #727b84 0%, #525b64 22px, #3d454d 90px, #343b43 100%);
   color: #f3f0e8;
@@ -260,6 +261,8 @@ html.ti-two-buttons .ti-btn-eml {
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
   padding: 8px 10px;
   font: inherit;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 
 .ti-field:focus-visible,
@@ -437,8 +440,11 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-chip {
-  padding: 6px 10px;
-  font-size: 0.85rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  box-sizing: border-box;
 }
 
 .ti-text-btn {
@@ -455,7 +461,11 @@ html.ti-two-buttons .ti-btn-eml {
   transform: translateY(-140%);
   background: #f4e7a1;
   color: #1a1c19;
+  min-height: 44px;
   padding: 8px 12px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
   z-index: 2;
 }
 
@@ -464,11 +474,36 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-onboard {
-  margin: 8px 8px 0;
+  position: absolute;
+  z-index: 4;
+  top: 52px;
+  left: 12px;
+  right: 12px;
+  margin: 0;
   padding: 10px;
   border-radius: 8px;
   background: #1c242b;
   color: #f7f4ee;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.ti-fold > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.ti-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.ti-check {
+  width: 44px;
+  height: 44px;
+  margin: 0;
 }
 
 .ti-onboard-actions {
