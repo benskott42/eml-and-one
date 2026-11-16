@@ -115,6 +115,34 @@ export function CalculatorView(props: CalculatorModel) {
     const timer = window.setTimeout(() => setHeldShortcut(null), 6000);
     return () => window.clearTimeout(timer);
   }, [heldShortcut, setHeldShortcut]);
+  useEffect(() => {
+    const lcd = document.querySelector(".ti-lcd");
+    const result = document.querySelector(".ti-lcd-result");
+    if (!(lcd instanceof HTMLElement) || !(result instanceof HTMLElement)) return;
+    result.scrollTop = 0;
+    const lcdBox = lcd.getBoundingClientRect();
+    const resultBox = result.getBoundingClientRect();
+    if (resultBox.top < lcdBox.top - 1 || resultBox.top > lcdBox.bottom - 24) {
+      lcd.scrollTop += resultBox.top - lcdBox.top;
+    }
+    const mark = () => {
+      const resultMore = result.scrollHeight > result.clientHeight + 1;
+      const lcdMore = lcd.scrollHeight > lcd.clientHeight + lcd.scrollTop + 1;
+      result.classList.toggle("has-more", resultMore);
+      lcd.classList.toggle("has-more", lcdMore);
+    };
+    mark();
+    lcd.addEventListener("scroll", mark);
+    result.addEventListener("scroll", mark);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(mark);
+    observer?.observe(lcd);
+    observer?.observe(result);
+    return () => {
+      lcd.removeEventListener("scroll", mark);
+      result.removeEventListener("scroll", mark);
+      observer?.disconnect();
+    };
+  }, [readout]);
   function onModeKey(event: KeyboardEvent<HTMLButtonElement>) {
     const key = event.key;
     if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "ArrowUp" && key !== "ArrowDown") return;

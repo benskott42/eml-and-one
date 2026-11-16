@@ -197,10 +197,23 @@ html.ti-two-buttons .ti-btn-eml {
   font-size: clamp(1.35rem, 6.5vw, 2.4rem);
   line-height: 1.05;
   letter-spacing: 0.01em;
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: auto;
   white-space: normal;
   overflow-wrap: normal;
   text-overflow: clip;
+}
+
+.ti-lcd-result.has-more::after,
+.ti-lcd.has-more::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  display: block;
+  height: 12px;
+  margin-top: -12px;
+  background: linear-gradient(to bottom, rgba(183, 195, 164, 0), #b7c3a4);
+  pointer-events: none;
 }
 
 .ti-lcd-term {
@@ -818,9 +831,20 @@ html.ti-two-buttons .ti-btn-eml {
   }
 
   .ti-lcd {
+    display: flex;
+    flex-direction: column;
     max-height: 15rem;
     overflow-x: hidden;
     overflow-y: auto;
+  }
+
+  .ti-lcd-pin {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .ti-lcd-result {
+    max-height: 7.5rem;
   }
 
   .ti-lcd-stack {
@@ -874,7 +898,21 @@ html.ti-two-buttons .ti-btn-eml {
     overscroll-behavior: contain;
   }
 
-  .ti-lcd-pin,
+  .ti-lcd-pin {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .ti-lcd-readout {
+    min-height: 0;
+  }
+
+  .ti-lcd-result {
+    max-height: 4rem;
+  }
+
   .ti-sequence,
   .ti-lcd > .ti-press,
   .ti-lcd > .ti-lcd-flag,
@@ -906,7 +944,15 @@ html.ti-two-buttons .ti-btn-eml {
     min-height: 0;
     /* A two-line value plus the Copy chip needs a little more than 8.25rem.
        1 and EML still fit on a 568px screen. */
-    max-height: 9.5rem;
+    max-height: 10.25rem;
+  }
+
+  .ti-lcd-stack {
+    min-height: 0;
+  }
+
+  .ti-lcd-result {
+    max-height: 3.2rem;
   }
 
   /* Firefox wraps these one line further than Chromium once a scrollbar

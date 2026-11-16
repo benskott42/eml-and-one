@@ -69,7 +69,9 @@ export function displayedCopy(shown: string): { text: string; approximate: boole
 /** Display text uses ×10^ and a unicode minus. A paste uses e and ASCII '-'. */
 function machineNumber(shown: string): string {
   const plain = shown
-    .replace(/[\u200b\u2009\u200a\u202f\u00a0]/g, "")
+    // Breaks inserted so a long integer can wrap: zero-width space, word
+    // joiner, soft hyphen, and thin or narrow spaces.
+    .replace(/[\u00ad\u00a0\u200b\u200c\u200d\u2060\u2009\u200a\u202f\ufeff]/g, "")
     .replaceAll("×10^−", "e-")
     .replaceAll("×10^+", "e")
     .replaceAll("×10^", "e")

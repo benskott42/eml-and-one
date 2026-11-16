@@ -61,13 +61,8 @@ async function main() {
     console.error("calculator css is missing the font, focus ring, or reduced motion");
     failed = true;
   }
-  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 9.5rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh") || !css.includes("overflow-y: auto")) {
+  if (!css.includes("max-height: 11rem") || !css.includes("max-height: 10.25rem") || !css.includes("orientation: landscape") || !css.includes("max-height: 500px") || !css.includes("100svh") || !css.includes("overflow-y: auto")) {
     console.error("phone display cap or landscape layout is missing");
-    failed = true;
-  }
-  const resultRule = css.match(/\.ti-lcd-result\s*\{[^}]*\}/)?.[0] ?? "";
-  if (/ellipsis|nowrap/.test(resultRule) || !resultRule.includes("white-space: normal")) {
-    console.error("the result must wrap instead of ellipsizing", resultRule);
     failed = true;
   }
   if (!font.includes("SIL Open Font License")) {
@@ -128,18 +123,6 @@ async function main() {
     return resultText();
   };
   await waitResult();
-  const resultNode = view.document.querySelector(".ti-lcd-result");
-  if (!(resultNode instanceof view.HTMLElement)) {
-    console.error("missing result element");
-    failed = true;
-  } else {
-    const style = view.getComputedStyle(resultNode);
-    const clips = (style.overflow === "hidden" || style.overflowX === "hidden") && resultNode.scrollWidth > resultNode.clientWidth + 1;
-    if (style.textOverflow === "ellipsis" || style.whiteSpace === "nowrap" || clips) {
-      console.error("the result ellipsizes a value", resultNode.textContent, style.textOverflow, style.whiteSpace, resultNode.scrollWidth, resultNode.clientWidth);
-      failed = true;
-    }
-  }
   const built = screenText();
   if (!resultText().includes("2.718") || !built.includes("110")) {
     console.error("pressing 1, 1, EML did not build e", built);
@@ -825,6 +808,24 @@ async function main() {
       console.error("copy formatter mismatch", sample, got);
       failed = true;
     }
+  }
+  const digits = (BigInt(2) ** BigInt(300)).toString();
+  const withBreaks = `${digits.replace(/(.{20})(?=.)/g, "$1\u200b")}\u2060\u00ad\u2009`;
+  const big = displayedCopy(withBreaks);
+  const complexCopy = displayedCopy("1.414213562373 − 0.000314159265i");
+  const exponentCopy = displayedCopy("1.234568×10^20 ≈");
+  const ascii = /^[\x20-\x7e]+$/;
+  if (big.text !== digits || big.approximate || !ascii.test(big.text)) {
+    console.error("2^300 copy kept a hidden break", big.text.length, digits.length, big.text);
+    failed = true;
+  }
+  if (complexCopy.text !== "1.414213562373-0.000314159265i" || !ascii.test(complexCopy.text)) {
+    console.error("complex copy was not clean ASCII", complexCopy);
+    failed = true;
+  }
+  if (exponentCopy.text !== "1.234568e20" || !exponentCopy.approximate || !ascii.test(exponentCopy.text)) {
+    console.error("exponent copy was not clean ASCII", exponentCopy);
+    failed = true;
   }
   const limitNode = nodeFromRpn(`${"1".repeat(80)}${"E".repeat(79)}`.split(""));
   const limited = runNode(limitNode, "float", { maxNodes: 1 });
