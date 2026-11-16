@@ -74,6 +74,10 @@ export function CalculatorView(props: CalculatorModel) {
   useEffect(() => {
     if (!showCard) return;
     function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        dismissCard();
+        return;
+      }
       const target = event.target;
       if (target instanceof HTMLElement && target.closest("input, textarea")) return;
       if (event.key === "1" || event.key === "e" || event.key === "E") dismissCard();
@@ -86,15 +90,6 @@ export function CalculatorView(props: CalculatorModel) {
     const target = event.target;
     if (target instanceof HTMLElement && target.closest("button")) dismissCard();
   }
-  useEffect(() => {
-    if (!showCard) return;
-    function onKey(event: globalThis.KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      dismissCard();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [showCard]);
   useEffect(() => {
     if (!heldShortcut) return;
     const timer = window.setTimeout(() => setHeldShortcut(null), 6000);

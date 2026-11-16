@@ -726,6 +726,41 @@ async function main() {
     failed = true;
   }
 
+  const escapeDom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const escapeView = escapeDom.window;
+  globals.window = escapeView;
+  globals.self = escapeView;
+  globals.document = escapeView.document;
+  globals.HTMLElement = escapeView.HTMLElement;
+  const escapeMount = escapeView.document.getElementById("root");
+  if (!escapeMount) {
+    console.error("missing escape root");
+    failed = true;
+  } else {
+    const escapeRoot = createRoot(escapeMount);
+    await act(async () => {
+      escapeRoot.render(<EmlCalculator />);
+    });
+    if (!escapeView.document.querySelector("[aria-label='First visit']")) {
+      console.error("welcome card missing before Escape");
+      failed = true;
+    }
+    await act(async () => {
+      escapeView.dispatchEvent(new escapeView.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    if (escapeView.document.querySelector("[aria-label='First visit']")) {
+      console.error("Escape left the welcome card up");
+      failed = true;
+    }
+    await act(async () => {
+      escapeRoot.unmount();
+    });
+  }
+  escapeView.close();
+
   if (failed) process.exit(1);
   console.log("calculator smoke passed");
 }
