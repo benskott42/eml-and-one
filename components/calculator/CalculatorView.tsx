@@ -107,11 +107,11 @@ export function CalculatorView(props: CalculatorModel) {
 
         <div className="ti-face">
         <div className="ti-bezel">
-          <div className="ti-lcd" role="region" aria-label="Calculator screen" tabIndex={0}>
+          <div className="ti-lcd" role="region" aria-label="Calculator screen">
             <p className="ti-lcd-status">
               <span>{mode === "exact" ? "exact mode · 120 digits" : "float (hardware)"}</span>
             </p>
-            <div className="ti-lcd-stack">
+            <div className="ti-lcd-stack" tabIndex={0} aria-label="Stack history">
               {buried.map((item, index) => (
                 <p key={`${item.caption}-${index}`}>
                   {item.text}
@@ -120,19 +120,28 @@ export function CalculatorView(props: CalculatorModel) {
                 </p>
               ))}
             </div>
+            <div className="ti-lcd-pin">
             <div className="ti-lcd-readout">
               <p className={fieldError && top ? "ti-lcd-result is-previous" : "ti-lcd-result"} aria-live="polite">
                 {readout}
                 {fieldError && top ? " previous" : ""}
               </p>
-              {canCopyValue && top ? (
-                <CopyChip key={top.text} text={top.text} label="Copy value" ariaLabel="Copy displayed value" onError={reportError} />
-              ) : null}
+              <div className="ti-lcd-copies">
+                {canCopyValue && top ? (
+                  <CopyChip key={top.text} text={top.text} label="Copy value" ariaLabel="Copy displayed value" onError={reportError} />
+                ) : null}
+                {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
+              </div>
             </div>
             <p className="ti-lcd-caption">
               {top ? (top.caption.length > 80 ? `${preview?.presses.toString() ?? "many"} presses` : top.caption) : "Press 1, then 1, then EML. That is e."}
               {named ? ` · ${named}` : ""}
             </p>
+            <p className={model.error ? "ti-lcd-error" : "ti-lcd-error ti-lcd-error-empty"} role="alert">
+              {model.error ?? ""}
+            </p>
+            {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
+            </div>
             {top?.sequence ? <SequencePanel sequence={top.sequence} typed={top.caption.length > 80 || /^\d+ presses$/.test(top.caption) ? "a loaded word" : top.caption} result={top.text} /> : null}
             {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
             {top && shownSingular(top) ? <p className="ti-lcd-flag">{shownSingular(top)}</p> : null}
@@ -143,12 +152,7 @@ export function CalculatorView(props: CalculatorModel) {
               {preview?.full ? <p className="ti-press-meta">bits {preview.full}</p> : null}
               <p className="ti-press-meta">1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</p>
               {preview?.copyable ? <CopyChip text={preview.full} label="Copy presses" ariaLabel="Copy press string" onError={reportError} /> : null}
-              {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
             </details>
-            <p className={model.error ? "ti-lcd-error" : "ti-lcd-error ti-lcd-error-empty"} role="alert">
-              {model.error ?? ""}
-            </p>
-            {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
         </div>
         <div className="ti-pad">

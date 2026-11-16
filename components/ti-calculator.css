@@ -23,7 +23,11 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-stage {
-  min-height: 100dvh;
+  /* svh tracks the visible viewport while the mobile toolbar is open.
+     100vh, and Firefox's 100dvh on the first paint, follow the large
+     viewport and leave the bottom of the page under that toolbar. */
+  min-height: 100vh;
+  min-height: 100svh;
   background:
     radial-gradient(900px 420px at 50% -80px, #59636d, transparent 70%),
     #1c2126;
@@ -153,6 +157,11 @@ html.ti-two-buttons .ti-btn-eml {
   line-height: 1.15;
 }
 
+.ti-lcd-stack:focus-visible {
+  outline: 2px solid var(--lcd-ink);
+  outline-offset: -2px;
+}
+
 .ti-lcd-stack p {
   margin: 0;
   overflow: hidden;
@@ -160,16 +169,19 @@ html.ti-two-buttons .ti-btn-eml {
   white-space: nowrap;
 }
 
-.ti-lcd:focus-visible {
-  outline: 2px solid var(--lcd-ink);
-  outline-offset: -4px;
-}
-
 .ti-lcd-readout {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 0.4rem;
+}
+
+.ti-lcd-copies {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
 .ti-lcd-result {
@@ -730,7 +742,8 @@ html.ti-two-buttons .ti-btn-eml {
 
   .ti-device {
     width: 100%;
-    min-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100svh;
     border-radius: 0;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
   }
@@ -741,18 +754,65 @@ html.ti-two-buttons .ti-btn-eml {
   }
 
   .ti-lcd {
+    display: flex;
+    flex-direction: column;
+    /* 10.5rem min-height would beat this cap in Firefox, which lets
+       min-height win when the two conflict. Zero it in the same rule. */
+    min-height: 0;
     max-height: 11rem;
+    overflow: hidden;
+  }
+
+  .ti-lcd-stack {
+    flex: 1 1 auto;
+    min-height: 1.15rem;
     overflow: auto;
     overscroll-behavior: contain;
+  }
+
+  .ti-lcd-pin {
+    flex: 0 0 auto;
   }
 }
 
 /* 320x568 is shorter than the 11rem screen plus the keypad. A lower cap
    keeps 1 and EML on the first page. 375x667 stays on the 11rem cap. */
 @media (max-width: 400px) and (max-height: 640px) {
+  html {
+    /* A classic scrollbar narrows the page in Firefox and wraps the result
+       onto a line the capped screen cannot show. */
+    scrollbar-width: none;
+  }
+
+  .ti-device {
+    padding: 10px 12px 12px;
+  }
+
   .ti-lcd {
     min-height: 0;
     max-height: 8.25rem;
+  }
+
+  /* Firefox wraps these one line further than Chromium once a scrollbar
+     appears, and that extra line is what pushes 1 and EML off a 568px screen. */
+  .ti-field {
+    appearance: none;
+    line-height: 1.2;
+    padding: 6px 8px;
+  }
+
+  .ti-modes .ti-btn {
+    font-size: 0.72rem;
+    line-height: 1.05;
+    padding: 6px 3px;
+  }
+
+  .ti-compute-slot .ti-case-note {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 }
 
@@ -760,7 +820,8 @@ html.ti-two-buttons .ti-btn-eml {
    landscape phone gets a side-by-side screen and keypad instead. */
 @media (orientation: landscape) and (max-height: 500px) {
   .ti-stage {
-    min-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100svh;
     padding: 6px;
     background:
       radial-gradient(900px 420px at 50% -80px, #59636d, transparent 70%),
@@ -770,8 +831,10 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-device {
     width: min(100%, 980px);
     min-height: 0;
-    height: calc(100dvh - 12px);
-    max-height: calc(100dvh - 12px);
+    height: calc(100vh - 12px);
+    height: calc(100svh - 12px);
+    max-height: calc(100vh - 12px);
+    max-height: calc(100svh - 12px);
     border-radius: 16px;
     display: flex;
     flex-direction: column;
@@ -793,11 +856,23 @@ html.ti-two-buttons .ti-btn-eml {
   }
 
   .ti-lcd {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     max-height: none;
+    overflow: hidden;
+  }
+
+  .ti-lcd-stack {
+    flex: 1 1 auto;
+    min-height: 1.15rem;
     overflow: auto;
     overscroll-behavior: contain;
+  }
+
+  .ti-lcd-pin {
+    flex: 0 0 auto;
   }
 
   .ti-pad {
