@@ -4,7 +4,7 @@ This is the v1 list of what is unfinished. None of it blocks the calculator. 0 a
 
 ## Records
 
-−iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
+−iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 55 does not use ln 0. That word lies on the negative axis and comes out as +iπ under the principal Log at some precisions. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
 
 Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21 and at K 23, and −2 at K 25, are shortest known as well: unresolved tower trees remain, so those lengths are not proven minimal.
 
@@ -12,7 +12,7 @@ Phase-free infinities do not make subtraction or addition work at b = 0. sub(5, 
 
 ## Float
 
-Float is a hardware view of the same gates. It is not patched toward the exact value. The screen compares the real and imaginary parts separately. With 12 digits shown, a relative error of about 5×10^(−12) or larger on either component is flagged, and so is a component that float dropped. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That precision starts at 120 digits and rises, up to 480, when the rounding would hide a value. It is not a fixed snap at 10^(−112). A known magnitude of 10^(−432) still resolves. 10^(−433) is past the cap, and the screen says it could not verify. A compare that hits the node limit says the same, and a too-large circuit does not also say it left the finite numbers. A zero that a series shortcut produced is not certified.
+Float is a hardware view of the same gates. It is not patched toward the exact value. The screen compares the real and imaginary parts separately. With 12 digits shown, a relative error of about 5×10^(−12) or larger on either component is flagged, and so is a component that float dropped. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That precision starts at 120 digits and rises, up to 480, when the rounding would hide a value. It is not a fixed snap at 10^(−112). A known magnitude of 10^(−432) still resolves. 10^(−433) is past the cap, and the screen says it could not verify. ln/log(1+10^(−k)) for k above about 324 may show a confident 0 in exact mode, because 10^(−k) underflows a 64-bit float before the precision hint is set (fix planned for v1.1). A compare that hits the node limit says the same, and a too-large circuit does not also say it left the finite numbers. A zero that a series shortcut produced is not certified.
 
 These float results stay wrong, and the flag is what publishes that. There is no second float formula for them:
 

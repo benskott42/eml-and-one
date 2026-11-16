@@ -112,7 +112,7 @@ These are the branch rules the scaled circuit relies on when a runtime subtrahen
 
 Float mode is a hardware view. It shows what these gates do in IEEE float64, and it is not adjusted to match the exact value. Exact mode is the default: it evaluates the same circuit, the screen says computing until that finishes, and Cancel clears that result instead of leaving the previous number up. When the two disagree by more than float can claim, the float stays visible and the screen flags “float differs from exact” with the exact value beside it.
 
-Add and subtract share one lift. Below magnitude 10^(−4) the short gates only have about 10^(−16) of absolute accuracy, so both multiply by the power of ten that brings the magnitude up to about 1, and neither uses a power past 10^307, the last finite power of ten. The other cut-offs are named: the short identity stops at magnitude 20, unscaled rotSub stops at a real part of about 700, and a known large real scales by exp(n) only through exp(800).
+Add and subtract share one lift. Below magnitude 10^(−4) the short gates only have about 10^(−16) of absolute accuracy, so both multiply by the power of ten that brings the magnitude up to about 1, and neither uses a power past 10^307. The other cut-offs are named: the short identity stops at magnitude 20, unscaled rotSub stops at a real part of about 700, and a known large real scales by exp(n) only through exp(800).
 
 With the lower bank, c = +iπ, and m2 = −2π² k for k = floor((Im b + π) / 2π):
 
