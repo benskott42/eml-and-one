@@ -881,6 +881,42 @@ for (const [source, re, im] of regressions) {
     console.log("FAIL", source, got, re, im);
   }
 }
+
+// (a − c) − c is a − 2c. mpmath at 50 digits. Hardware is the float circuit;
+// exact is compared at 40 digits, which these circuits actually reach.
+{
+  const rows: Array<{ source: string; re: string; im: string; vars?: Record<string, Node> }> = [
+    { source: "e-1-1", re: "0.71828182845904523536028747135266249775724709369996", im: "0" },
+    { source: "pi-1-1", re: "1.1415926535897932384626433832795028841971693993751", im: "0" },
+    { source: "10-3-3", re: "4", im: "0" },
+    { source: "2*e-e-e", re: "0", im: "0" },
+    { source: "arcosh(e-1)", re: "1.1364211033963852565125274801058381954056538237393", im: "0" },
+    { source: "arcosh(pi-1)", re: "1.3950997261071488078584719796130035077474855890456", im: "0" },
+    { source: "sin(1.5-1-1)", re: "-0.4794255386042030002732879352155713880818033679406", im: "0" },
+    { source: "pi-1-1-1", re: "0.14159265358979323846264338327950288419716939937511", im: "0" },
+    { source: "(1.5-7)-7+7", re: "-5.5", im: "0" },
+    { source: "x-y-y", re: "-3.5", im: "0", vars: { x: literalNode("0.5"), y: literalNode("2") } },
+    { source: "(2+3i)-1-1", re: "0", im: "3" },
+    // The two identities subComplement still folds.
+    { source: "e-(e-1)", re: "1", im: "0" },
+    { source: "(e-1)-e", re: "-1", im: "0" },
+  ];
+  for (const row of rows) {
+    const node = compileExpression(row.source, row.vars ?? {});
+    const hw = evaluateReport(node);
+    const ex = exactReport(node);
+    const want = c(Number(row.re), Number(row.im));
+    const err = Math.hypot(hw.value.re - want.re, hw.value.im - want.im);
+    const scale = Math.max(Math.hypot(want.re, want.im), 1);
+    const hardwareOk = !hw.singular && err <= 1e-12 * scale;
+    const exactOk = ex.singular === null && exactClose(ex.value, row.re, row.im, 40);
+    if (!hardwareOk || !exactOk) {
+      failed += 1;
+      console.log("FAIL repeated subtraction", row.source, hw.value, hw.singular, formatExact(ex.value), ex.singular, "want", row.re, row.im);
+    }
+  }
+}
+
 const zeroSubtrahends = ["3-ln(2/2)", "1+ln(2/2)", "1-ln(1/1)", "1-log(2,1)", "1-sin(0*pi)"];
 for (const source of zeroSubtrahends) {
   const node = compileExpression(source, {});
@@ -1603,6 +1639,27 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   if (typedExact.singular !== SINGULAR_INDET || !typedExact.value.re.isNaN()) {
     failed += 1;
     console.log("FAIL exact typed 0*inf", formatExact(typedExact.value), typedExact.singular);
+  }
+  for (const source of ["ln(0)*0", "0*ln(0)", "ln(0)*(1-1)"]) {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, { maxNodes: 20_000 });
+    const ex = exactReport(node, {}, { maxNodes: 20_000 });
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    if (
+      hw.singular === null ||
+      !Number.isNaN(hw.value.re) ||
+      !Number.isNaN(hw.value.im) ||
+      ex.singular !== SINGULAR_INDET ||
+      !ex.value.re.isNaN() ||
+      !ex.value.im.isNaN() ||
+      text === "0" ||
+      text === "−0"
+    ) {
+      failed += 1;
+      console.log("FAIL 0 times ln 0", source, hw.singular, hw.value, ex.singular, text);
+    } else {
+      console.log("indet", source, text, ex.singular);
+    }
   }
   const gap = compileExpression("inf-inf", {});
   const gapReport = evaluateReport(gap);
