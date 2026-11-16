@@ -72,6 +72,10 @@ Unfinished work is listed in [docs/known-limitations.md](docs/known-limitations.
 
 Float is a hardware view. Each component is compared with the exact value at the 12 digits on screen, and a dropped component is flagged. The exact reference raises its precision, up to 480 digits, when a cancellation would otherwise become 0. When the spelling stores the exponent, a known magnitude of 10^(−432) still resolves. 10^(−433) in that spelling says it could not verify. A series shortcut keeps the leading term only when the next term is past that cap: |x| ≤ 10^(−241) for sin, tan, tanh, arctan, and cos(x)−1, and |x| ≤ 10^(−480) for ln(1+x), exp(x)−1, and sqrt(1+x)−1. Sin keeps odd powers for |x| ≤ 10^(−61). tan, tanh, and arctan keep odd powers, and cos(x)−1 keeps even powers, for |x| ≤ 10^(−20), until the next term is past the cap. A one-digit literal such as tan(1e-5000) or exp(1e-1000)−1 prints that value. The power spellings tan(10^(−5000)) and exp(10^(−1000))−1 do not resolve inside the cap, so they say could not verify rather than 0. A zero from a series shortcut is not certified. These float results are still wrong, and the flag says so: a variable just off the branch cut, a dropped real or imaginary part, tan of a large real such as 50000, exp(10^(−6)) − 1, and cos(10^(−200)) − 1. arccos(2) is +i·arcosh(2). arctan(−2i) is −π/2 − (artanh 2)i on this cut, in both modes, matching mpmath. A relative error at or below about 5×10^(−12), a signed zero at the smallest positive float, and a cancellation with no known leaf at that scale are not flagged. artanh of a real greater than 1 is ½ ln|(1+x)/(1−x)| − iπ/2, matching mpmath atanh. C99 catanh of that real with a +0 imaginary part returns +iπ/2.
 
+## License
+
+The code is under the MIT license in [LICENSE](LICENSE). The font file `public/fonts/VT323-Regular.ttf` is VT323, copyright 2011, The VT323 Project Authors (peter.hull@oikoi.com). It is bundled under the SIL Open Font License, Version 1.1, not under the MIT license. The MIT license does not apply to that font. The full OFL 1.1 text is in `public/fonts/VT323-OFL.txt`.
+
 ## Develop
 
 ```bash
