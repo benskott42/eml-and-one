@@ -1,5 +1,5 @@
 import table from "./best-known.json";
-import { onCircuitIsolate, type Node, circuitStats } from "./node";
+import { onCircuitIsolate, type Node, circuitStats, rpnLengthOf } from "./node";
 
 /**
  * Labels recorded while a circuit is built. They are not recovered by
@@ -87,8 +87,7 @@ const RANK: Record<LabelKind, number> = {
 };
 
 export function lengthOf(node: Node): bigint {
-  if (node.type !== "eml") return BigInt(1);
-  return circuitStats(node).rpnLength;
+  return rpnLengthOf(node);
 }
 
 export type Outline = {
@@ -124,23 +123,17 @@ function displayName(label: Label | null): string {
 
 const memo = new Map<number, Outline>();
 
-function relative(node: Node, seen: Set<number>): Outline {
-  const hit = memo.get(node.id);
-  if (hit) return hit;
+function shouldBubble(node: Node, label: Label | null): boolean {
+  if (label?.opaque) return false;
+  if (label?.kind === "gadget" && label.template && label.holes) return false;
+  if (node.type !== "eml" || !node.a || !node.b) return false;
+  return !label || label.kind === "expr";
+}
+
+function makeOutline(node: Node, seen: Set<number>, children: Outline[]): Outline {
   const length = lengthOf(node);
   const label = chosen(node);
-  const repeat = seen.has(node.id);
-  const nextSeen = new Set(seen);
-  nextSeen.add(node.id);
-  let children: Outline[] = [];
-  if (label?.kind === "gadget" && label.template && label.holes && !label.opaque) {
-    children = holesFromTemplate(label.template, label.holes, nextSeen);
-  } else if (label && !label.opaque && node.type === "eml" && node.a && node.b && label.kind === "expr") {
-    children = bubble(node, nextSeen);
-  } else if (!label && node.type === "eml" && node.a && node.b) {
-    children = bubble(node, nextSeen);
-  }
-  const outline: Outline = {
+  return {
     node,
     start: BigInt(0),
     end: length,
@@ -151,11 +144,99 @@ function relative(node: Node, seen: Set<number>): Outline {
     name: displayName(label),
     opaque: label?.opaque === true,
     record: labelsOf(node).find((item) => item.kind === "record") ?? null,
-    repeat,
+    repeat: seen.has(node.id),
     children,
   };
-  memo.set(node.id, outline);
-  return outline;
+}
+
+/**
+ * Explicit stack. A loaded word is a chain tens of thousands of gates deep,
+ * and the recursive walk overflowed the call stack.
+ */
+function relative(node: Node, seen: Set<number>): Outline {
+  type Frame = {
+    node: Node;
+    seen: Set<number>;
+    phase: 0 | 1 | 2;
+    childSeen?: Set<number>;
+    left?: Outline;
+    leftRepeat?: boolean;
+    rightRepeat?: boolean;
+    addedParent?: boolean;
+    addedLeft?: boolean;
+    leftNode?: Node;
+    rightNode?: Node;
+  };
+  const stack: Frame[] = [{ node, seen, phase: 0 }];
+  let produced: Outline | null = null;
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (!frame) break;
+    if (frame.phase === 0) {
+      const hit = memo.get(frame.node.id);
+      if (hit) {
+        stack.pop();
+        produced = hit;
+        continue;
+      }
+      const label = chosen(frame.node);
+      if (!shouldBubble(frame.node, label)) {
+        let children: Outline[] = [];
+        if (label?.kind === "gadget" && label.template && label.holes && !label.opaque) {
+          const nextSeen = new Set(frame.seen);
+          nextSeen.add(frame.node.id);
+          children = holesFromTemplate(label.template, label.holes, nextSeen);
+        }
+        const outline = makeOutline(frame.node, frame.seen, children);
+        memo.set(frame.node.id, outline);
+        stack.pop();
+        produced = outline;
+        continue;
+      }
+      if (frame.node.type !== "eml" || !frame.node.a || !frame.node.b) break;
+      const leftNode = frame.node.a;
+      const rightNode = frame.node.b;
+      frame.leftNode = leftNode;
+      frame.rightNode = rightNode;
+      frame.childSeen = frame.seen;
+      frame.addedParent = !frame.seen.has(frame.node.id);
+      frame.leftRepeat = frame.seen.has(leftNode.id);
+      if (frame.addedParent) frame.seen.add(frame.node.id);
+      frame.phase = 1;
+      stack.push({ node: leftNode, seen: frame.seen, phase: 0 });
+      continue;
+    }
+    if (frame.phase === 1) {
+      frame.left = produced ?? undefined;
+      const childSeen = frame.childSeen;
+      const leftNode = frame.leftNode;
+      const rightNode = frame.rightNode;
+      if (!childSeen || !leftNode || !rightNode) break;
+      frame.addedLeft = !childSeen.has(leftNode.id);
+      if (frame.addedLeft) childSeen.add(leftNode.id);
+      frame.rightRepeat = childSeen.has(rightNode.id);
+      frame.phase = 2;
+      stack.push({ node: rightNode, seen: childSeen, phase: 0 });
+      continue;
+    }
+    const right = produced;
+    const left = frame.left;
+    if (frame.addedLeft && frame.leftNode) frame.seen.delete(frame.leftNode.id);
+    if (frame.addedParent) frame.seen.delete(frame.node.id);
+    stack.pop();
+    if (!left || !right) break;
+    const parts: Outline[] = [];
+    if (left.label) parts.push(place(left, BigInt(0), null, frame.leftRepeat === true));
+    else for (const child of left.children) parts.push(place(child, child.start, child.hole, child.repeat));
+    const shift = left.length;
+    if (right.label) parts.push(place(right, shift, null, frame.rightRepeat === true));
+    else for (const child of right.children) parts.push(place(child, shift + child.start, child.hole, child.repeat));
+    const outline = makeOutline(frame.node, frame.seen, parts);
+    memo.set(frame.node.id, outline);
+    produced = outline;
+  }
+  if (!produced) return makeOutline(node, seen, []);
+  return produced;
 }
 
 function holesFromTemplate(template: string, holes: Hole[], seen: Set<number>): Outline[] {
@@ -176,23 +257,6 @@ function holesFromTemplate(template: string, holes: Hole[], seen: Set<number>): 
       offset += BigInt(1);
     }
   }
-  return parts;
-}
-
-function bubble(node: Node, seen: Set<number>): Outline[] {
-  if (node.type !== "eml" || !node.a || !node.b) return [];
-  const leftRepeat = seen.has(node.a.id);
-  const left = relative(node.a, seen);
-  seen.add(node.a.id);
-  const rightRepeat = seen.has(node.b.id);
-  const right = relative(node.b, seen);
-  seen.add(node.b.id);
-  const parts: Outline[] = [];
-  if (left.label) parts.push(place(left, BigInt(0), null, leftRepeat));
-  else for (const child of left.children) parts.push(place(child, child.start, child.hole, child.repeat));
-  const shift = left.length;
-  if (right.label) parts.push(place(right, shift, null, rightRepeat));
-  else for (const child of right.children) parts.push(place(child, shift + child.start, child.hole, child.repeat));
   return parts;
 }
 
@@ -221,6 +285,7 @@ export type PressOutline = {
 /** Lazy outline. Offsets are bigint press indexes, 0-based, end exclusive. */
 export function pressSpans(root: Node): PressOutline {
   memo.clear();
+  if (root.type === "eml") circuitStats(root);
   const presses = lengthOf(root);
   const outline = relative(root, new Set());
   return { tooLong: presses > BigInt(20_000), presses, root: outline };

@@ -433,6 +433,16 @@ export type CircuitStats = {
   depth: number;
 };
 
+const treeCache = new WeakMap<Node, bigint>();
+
+/** RPN length. One shape walk fills every node, so later calls do not walk again. */
+export function rpnLengthOf(node: Node): bigint {
+  if (node.type !== "eml") return BigInt(1);
+  const known = treeCache.get(node);
+  if (known !== undefined) return known * BigInt(2) + BigInt(1);
+  return circuitStats(node).rpnLength;
+}
+
 function walkShape(root: Node): { tree: bigint; depth: number; dag: number } {
   const treeOf = new Map<number, bigint>();
   const depthOf = new Map<number, number>();
@@ -448,6 +458,7 @@ function walkShape(root: Node): { tree: bigint; depth: number; dag: number } {
       if (n) {
         treeOf.set(n.id, BigInt(0));
         depthOf.set(n.id, 0);
+        treeCache.set(n, BigInt(0));
       }
       continue;
     }
@@ -461,12 +472,14 @@ function walkShape(root: Node): { tree: bigint; depth: number; dag: number } {
       continue;
     }
     visiting.delete(n.id);
-    const lt = treeOf.get(n.a.id) ?? BigInt(0);
-    const rt = treeOf.get(n.b.id) ?? BigInt(0);
+    const lt = treeOf.get(n.a.id) ?? treeCache.get(n.a) ?? BigInt(0);
+    const rt = treeOf.get(n.b.id) ?? treeCache.get(n.b) ?? BigInt(0);
     const ld = depthOf.get(n.a.id) ?? 0;
     const rd = depthOf.get(n.b.id) ?? 0;
-    treeOf.set(n.id, lt + rt + BigInt(1));
+    const tree = lt + rt + BigInt(1);
+    treeOf.set(n.id, tree);
     depthOf.set(n.id, 1 + Math.max(ld, rd));
+    treeCache.set(n, tree);
     dag += 1;
   }
 

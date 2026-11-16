@@ -177,7 +177,15 @@ export function resultError(item: Entry): string | null {
 let watchSerial = 1;
 
 export function entry(node: Node, caption: string, mode: Mode): Entry {
-  const sequence = snapshotSequence(node);
+  // Labels exist only until the next isolate, which the key-cost pass does
+  // on the following render. The walk is iterative, so this stays off the
+  // multi-second path that used to throw on a long loaded word.
+  let sequence: SequenceSnapshot | undefined;
+  try {
+    sequence = snapshotSequence(node);
+  } catch {
+    sequence = undefined;
+  }
   return { node, caption, watch: watchSerial++, sequence, ...runNode(node, mode) };
 }
 

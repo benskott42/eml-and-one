@@ -71,12 +71,13 @@ import {
 } from "./programIndex";
 import { encodePresses, previewPresses, pressPreviewForNode } from "./presses";
 import { agreementNote, compileExpression, referenceExpression } from "./parse";
-import { explainCircuit, pressSpans, pressWord, spanCovers, type Outline } from "./provenance";
+import { explainCircuit, pressSpans, pressWord, snapshotSequence, spanCovers, type Outline } from "./provenance";
 import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
 
 let failed = 0;
+console.log("eml:check: running");
 const isolateCases: { source: string; env: Record<string, { re: number; im: number }> }[] = [];
 
 function relClose(got: { re: number; im: number }, want: { re: number; im: number }, tol = 1e-12): boolean {
@@ -3052,6 +3053,20 @@ function expectSpan(label: string, ok: boolean) {
   const opaqueChild = tinySpans.root.children.find((child) => child.opaque);
   expectSpan("tiny tiles", spansTile(tinySpans.root, tinyWord.oneE));
   expectSpan("tiny opaque", opaqueChild?.name === "subOfExp" && opaqueChild.opaque && opaqueChild.children.length === 0);
+
+  const wideCount = 20_000;
+  const wideWord = `${"1".repeat(wideCount + 1)}${"E".repeat(wideCount)}`;
+  const wideStarted = Date.now();
+  let wideThrew = false;
+  try {
+    const wideNode = nodeFromRpn(wideWord.split(""));
+    const wideSnap = snapshotSequence(wideNode);
+    expectSpan("40k presses", wideSnap.presses === String(wideWord.length) && wideSnap.tooLong && wideSnap.oneE === "");
+  } catch {
+    wideThrew = true;
+  }
+  expectSpan("40k no throw", !wideThrew);
+  expectSpan("40k budget", Date.now() - wideStarted < 2_000);
 }
 
 if (failed) {
