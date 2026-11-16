@@ -1,5 +1,6 @@
 import table from "./best-known.json";
 import { EmlError, onCircuitIsolate, type Node, nodeFromRpn, substitute } from "./node";
+import { noteGadget, noteProgram } from "./provenance";
 
 /**
  * 1-and-EML programs, measured by K (RPN length).
@@ -35,14 +36,26 @@ export function programNode(id: string): Node {
   const rpn = SHORT_PROGRAMS[id];
   if (!rpn) throw new EmlError(`Unknown program ${id}.`);
   const hit = cache.get(id);
-  if (hit) return hit;
+  if (hit) {
+    noteProgram(hit, id);
+    return hit;
+  }
   const node = nodeFromCompact(rpn);
   cache.set(id, node);
+  noteProgram(node, id);
   return node;
 }
 
 export function applyProgram(id: string, bindings: Record<string, Node> = {}): Node {
-  return substitute(programNode(id), bindings);
+  const template = SHORT_PROGRAMS[id];
+  if (!template) throw new EmlError(`Unknown program ${id}.`);
+  const node = substitute(programNode(id), bindings);
+  const holes: { name: string; node: Node }[] = [];
+  for (const ch of template) {
+    const bound = ch === "x" || ch === "y" ? bindings[ch] : undefined;
+    if (bound) holes.push({ name: ch, node: bound });
+  }
+  return noteGadget(node, id, template, holes);
 }
 
 export function programK(id: string): number {

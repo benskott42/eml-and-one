@@ -1,4 +1,5 @@
 import type { C } from "./complex";
+import { noteBuilder } from "./provenance";
 import {
   beginInteger,
   domainAdd,
@@ -135,7 +136,7 @@ const seriesNotes = new WeakMap<Node, string>();
 
 function markSeries(node: Node, note: string): Node {
   seriesNotes.set(node, note);
-  return markSeriesShortcut(node);
+  return noteBuilder(markSeriesShortcut(node), "series");
 }
 
 /** The note for a result whose circuit used a series shortcut. Null when it did not. */
