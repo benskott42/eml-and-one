@@ -5,9 +5,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useExactScheduler } from "@/components/calculator/useExactScheduler";
 import { EMPTY, type Entry, type Model } from "@/components/calculator/screen";
 import { runCutRule } from "@/lib/eml/countCutDebug";
-import { choose, type CountChoice } from "@/lib/eml/countModel";
+import { choose, pagePill, type CountChoice } from "@/lib/eml/countModel";
 import { noteBeside } from "@/lib/eml/recordLabel";
-import { PROVEN_MINIMAL, provedMinimal, statusPill } from "@/lib/eml/statusLabels";
+import { PROVEN_MINIMAL, provedMinimal } from "@/lib/eml/statusLabels";
 import { exactStatus, floatCertified, type ExactMsg } from "@/lib/eml/countStatus";
 import { formatC } from "@/lib/eml/format";
 import { type History } from "@/lib/eml/history";
@@ -31,31 +31,29 @@ function clamp(n: number): number {
 }
 
 const hashListeners = new Set<() => void>();
-let routeState: unknown = null;
+let lastPush = -1e9;
 
 function notifyHash(): void {
   for (const onStoreChange of hashListeners) onStoreChange();
 }
 
-function hasRouteState(state: unknown): boolean {
-  return Boolean(state && typeof state === "object" && "__NA" in state && (state as { __NA?: unknown }).__NA);
-}
-
-function rememberRouteState(): void {
-  if (hasRouteState(window.history.state)) routeState = window.history.state;
-}
-
-/** Replace the current entry. Pushing a hash makes Back show the wrong page. */
-function replaceUrl(hash: string): void {
-  rememberRouteState();
-  const state = hasRouteState(window.history.state) ? window.history.state : routeState;
-  if (!state) return;
+function urlFor(hash: string): string {
   const params = new URLSearchParams(window.location.search);
   params.delete("back");
   const search = params.toString();
-  const suffix = `${search ? `?${search}` : ""}${hash}`;
-  if (`${window.location.search}${window.location.hash}` === suffix && hasRouteState(window.history.state)) return;
-  History.prototype.replaceState.call(window.history, state, "", `${window.location.pathname}${suffix}`);
+  return `${window.location.pathname}${search ? `?${search}` : ""}${hash}`;
+}
+
+/** Push one entry per pause. Replace only to correct the current entry. */
+function commitHash(hash: string, how: "push" | "replace"): void {
+  const next = urlFor(hash);
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (current !== next) {
+    if (how === "push") history.pushState(null, "", next);
+    else history.replaceState(null, "", next);
+  }
+  rememberCountHash(hash);
+  notifyHash();
 }
 
 type Parsed = { n: number | null; mode: Mode; error: string | null; raw: string | null };
@@ -80,13 +78,7 @@ function parseHash(hash: string): Parsed {
 function useLocationHash(): string | null {
   const [hash, setHash] = useState<string | null>(() => (typeof window === "undefined" ? null : window.location.hash));
   useLayoutEffect(() => {
-    const read = () => {
-      rememberRouteState();
-      if (!hasRouteState(window.history.state) && routeState) {
-        History.prototype.replaceState.call(window.history, routeState, "", window.location.hash);
-      }
-      setHash(window.location.hash);
-    };
+    const read = () => setHash(window.location.hash);
     hashListeners.add(read);
     read();
     window.addEventListener("hashchange", read);
@@ -100,18 +92,15 @@ function useLocationHash(): string | null {
   return hash;
 }
 
-function writeHash(n: number, mode: Mode): void {
+function writeHash(n: number, mode: Mode, how?: "push" | "replace"): void {
   const hash = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
-  replaceUrl(hash);
-  if (window.location.hash !== hash) {
-    window.setTimeout(() => {
-      rememberRouteState();
-      replaceUrl(hash);
-      notifyHash();
-    }, 0);
+  const now = performance.now();
+  let method = how;
+  if (!method) {
+    method = now - lastPush > 800 ? "push" : "replace";
+    if (method === "push") lastPush = now;
   }
-  rememberCountHash(hash);
-  notifyHash();
+  commitHash(hash, method);
 }
 
 function principalSentence(choice: CountChoice, agrees: boolean): string {
@@ -174,18 +163,16 @@ export function CountApp() {
     const returning = new URLSearchParams(window.location.search).get("back") === "1";
     const saved = readCountHash();
     if (returning && saved) {
-      replaceUrl(saved);
-      if (window.location.hash !== saved) window.location.hash = saved;
-      notifyHash();
+      commitHash(saved, "replace");
       return;
     }
     if (hash === "") {
-      writeHash(7, "ln0");
+      writeHash(7, "ln0", "replace");
       return;
     }
     if (parsed.error || n === null) return;
     const canonical = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
-    if (hash !== canonical) writeHash(n, mode);
+    if (hash !== canonical) writeHash(n, mode, "replace");
     else rememberCountHash(canonical);
   }, [hash, n, mode, parsed.error]);
 
@@ -263,11 +250,9 @@ export function CountApp() {
   const hits = message?.cutHits ?? 0;
   const principal = message && choice ? principalSentence(choice, agrees) : "";
   const showValue = !choice ? "" : primary === "exact" ? (message?.text ?? "checking…") : (floated?.text ?? "");
-  const schanuel = choice?.table?.note.includes("minimal conditional on Schanuel's conjecture")
-    ? "minimal conditional on Schanuel's conjecture"
-    : "";
   const proved = n !== null && provedMinimal(n, mode);
-  const pill = choice?.table?.status ?? (n === null ? "" : statusPill(proved));
+  const pill = choice ? pagePill(choice) : "";
+  const pillClass = !choice ? "known" : choice.n === 1 || !choice.table ? "upper" : proved ? "proven" : "known";
   const basis = choice?.table ? noteBeside(choice.table.note, pill) : "";
   if (message && spoken !== showValue) setSpoken(showValue);
 
@@ -388,7 +373,7 @@ export function CountApp() {
                 </span>
               </div>
               <p className="ti-lcd-caption">n = <span id="nbig">{nLabel}</span></p>
-              <p className="ti-lcd-caption" id="kline"><b>K {choice.K}</b> {choice.K === 1 ? "press" : "presses"} · {choice.source === "table" ? "word from the integer table" : "built by: counting construction"}</p>
+              <p className="ti-lcd-caption" id="kline"><b>K {choice.K}</b> {choice.K === 1 ? "press" : "presses"} · {choice.source === "table" ? "word from the integer table" : choice.familyLabel}</p>
               <p className="ti-lcd-result" id="big">
                 {!message ? <span className="count-pending">checking…</span> : showValue}
               </p>
@@ -429,15 +414,13 @@ export function CountApp() {
           <section className="count-panel">
             <h2>The count label</h2>
             <div id="label">
-              <span className={`count-pill ${proved ? "proven" : n === 1 ? "upper" : "known"}`}>{pill}</span>
+              <span className={`count-pill ${pillClass}`}>{pill}</span>
             </div>
             {basis ? <p className="count-src" id="basis">{basis}</p> : null}
-            {choice.source === "family" ? <p className="count-src">{choice.familyLabel}</p> : null}
             {choice.table && choice.K > 1 ? <p className="count-cutline">{CUT_LINE}</p> : null}
             {choice.K === 1 ? <p className="count-cutline">{NO_GATES}</p> : null}
             {choice.source === "table" && choice.table ? <p className="count-src">The counting-construction word here is K {choice.familyK}; the table word is shorter{choice.table.ln0 ? " and uses ln 0 = −∞" : ""}.</p> : null}
-            {schanuel ? <p className="count-note" id="schanuel">{schanuel}</p> : null}
-            {choice.table ? <p className="count-src">Source: {choice.table.source}{choice.table.note ? `; ${choice.table.note}` : ""}.</p> : null}
+            {choice.table ? <p className="count-src">Source: {choice.table.source}.</p> : null}
           </section>
           <section className="count-panel">
             <h2>Sequence · outline</h2>

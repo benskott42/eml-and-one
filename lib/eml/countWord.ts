@@ -15,8 +15,7 @@ export function countWord(n: number): string {
 export function countWordLength(n: number): number {
   if (n === 1) return 1;
   if (n === 0) return 7;
-  if (n >= 2) return 10 * n - 1;
-  return 10 * -n + 7;
+  return n >= 2 ? 10 * n - 1 : 10 * -n + 7;
 }
 
 /** One span per `EEE1EE11` block, in press order. */
@@ -26,7 +25,6 @@ export function blockSpans(n: number): Array<[number, number]> {
   const start = n >= 2 ? 2 * n + 2 : n <= -1 ? 2 * -n + 3 : 0;
   const spans: Array<[number, number]> = [];
   for (let i = 0; i < reps; i++) spans.push([start + 8 * i, start + 8 * i + 8]);
-  for (const [a, b] of spans)
-    if (w.slice(a, b) !== BLOCK) throw new Error("span bug");
+  for (const [a, b] of spans) if (w.slice(a, b) !== BLOCK) throw new Error("span bug");
   return spans;
 }

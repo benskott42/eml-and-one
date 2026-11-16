@@ -138,6 +138,12 @@
       "note": "all programs with K ≤ 5 are excluded; towers included; with or without ln 0 = −∞"
     },
     {
+      "value": "1",
+      "k": 1,
+      "label": "proven minimal",
+      "note": "does not use ln 0"
+    },
+    {
       "value": "2",
       "k": 19,
       "label": "proven minimal",

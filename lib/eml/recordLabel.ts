@@ -1,4 +1,4 @@
-import { provedFromLine, PROVEN_MINIMAL, statusPill } from "./statusLabels";
+import { provedFromLine, PROVEN_MINIMAL } from "./statusLabels";
 
 export type StatusLine = {
   value: string;
@@ -14,7 +14,7 @@ export type StatusLine = {
  */
 export function recordPill(line: StatusLine): string {
   if (line.value === "1" && line.k === 1) return "the 1 key itself · K 1";
-  if (provedFromLine(line.value, line.k)) return statusPill(true);
+  if (provedFromLine(line.value, line.k)) return line.label;
   let text = line.label;
   const unproved = `not ${PROVEN_MINIMAL}`;
   if (line.note.toLowerCase().includes(unproved) && !/not proven/.test(line.label)) text += `, ${unproved}`;

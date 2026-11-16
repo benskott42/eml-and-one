@@ -35,7 +35,6 @@ import {
   type Model,
 } from "./screen";
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "./twoButtons";
-import { readCalculatorSession, writeCalculatorSession } from "./calculatorSession";
 import { useExactScheduler } from "./useExactScheduler";
 
 type Live = {
@@ -56,19 +55,18 @@ type Live = {
 };
 
 export function useCalculatorModel() {
-  const remembered = readCalculatorSession();
-  const [model, setModel] = useState<Model>(remembered?.model ?? EMPTY);
-  const [xText, setXText] = useState(remembered?.xText ?? "0.5");
-  const [yText, setYText] = useState(remembered?.yText ?? "2");
-  const [expr, setExpr] = useState(remembered?.expr ?? "sin(pi/6)");
-  const [programField, setProgramField] = useState(remembered?.programField ?? "");
-  const [mode, setMode] = useState<Mode>(remembered?.mode ?? "exact");
+  const [model, setModel] = useState<Model>(EMPTY);
+  const [xText, setXText] = useState("0.5");
+  const [yText, setYText] = useState("2");
+  const [expr, setExpr] = useState("sin(pi/6)");
+  const [programField, setProgramField] = useState("");
+  const [mode, setMode] = useState<Mode>("exact");
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
   const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
   const modelRef = useRef(model);
   const textRef = useRef({ xText, yText });
-  const modeRef = useRef<Mode>(remembered?.mode ?? "exact");
-  const historyRef = useRef<History<Model>>(remembered?.history ?? { past: [], current: remembered?.model ?? EMPTY });
+  const modeRef = useRef<Mode>("exact");
+  const historyRef = useRef<History<Model>>({ past: [], current: EMPTY });
   const recomputeRef = useRef(false);
   const queueRef = useRef<Array<() => void>>([]);
   const jobRef = useRef(0);
@@ -94,7 +92,6 @@ export function useCalculatorModel() {
     modelRef.current = model;
     textRef.current = { xText, yText };
     modeRef.current = mode;
-    writeCalculatorSession({ model, xText, yText, expr, programField, mode, history: historyRef.current });
   });
 
   const costs = useMemo(() => {

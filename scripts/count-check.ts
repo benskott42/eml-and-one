@@ -7,11 +7,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Decimal from "decimal.js";
 import { checkCutTraces, exactTraceOf, floatTraceOf, onNegativeCutF, onNegativeCutZ, ruleSelfTest, setCutTrace } from "../lib/eml/cut";
-import { choose, wordsForCutRule } from "../lib/eml/countModel";
+import { choose, pagePill, wordsForCutRule } from "../lib/eml/countModel";
 import { linesFor, ln0Use } from "../lib/eml/countTable";
-import { noteBeside, recordLine, recordPill } from "../lib/eml/recordLabel";
+import { noteBeside, recordLine } from "../lib/eml/recordLabel";
 import { BLOCK, blockSpans, countWord, countWordLength } from "../lib/eml/countWord";
-import { PROVEN_MINIMAL, provedMinimal, statusPill } from "../lib/eml/statusLabels";
+import { PROVEN_MINIMAL, provedMinimal } from "../lib/eml/statusLabels";
 import { floatCertified, targetText } from "../lib/eml/countStatus";
 import { exactParts, exactReport, formatExact, type ExactReport } from "../lib/eml/exact";
 import { evaluateReport, nodeFromRpn, type EvalReport, type Node } from "../lib/eml/node";
@@ -62,17 +62,31 @@ function resolves(n: number, mode: "ln0" | "strict"): boolean {
 
 type Row = (typeof rows)[number];
 
+const USES_LN0 = `${PROVEN_MINIMAL} (uses ln 0)`;
+const WITHOUT_LN0 = `${PROVEN_MINIMAL} without ln 0`;
+const CONSTRUCTION = "a construction, not a search record";
+const ONE_PILL = "the 1 key itself · K 1";
+
 function expectStatus(row: Row, mode: "ln0" | "strict", label: string): void {
-  const proved = provedMinimal(row.n, mode);
   if (row.n === 1) {
-    if (label !== "the 1 key itself · K 1") fail(`n = 1 pill is ${JSON.stringify(label)}`);
-    if (proved) fail("n = 1 is not a proved row");
+    if (label !== ONE_PILL) fail(`n = 1 pill is ${JSON.stringify(label)}`);
+    if (provedMinimal(row.n, mode)) fail("n = 1 is shown as proved");
     return;
   }
   const line = linesFor(row.n).find((item) => item.k === (mode === "ln0" ? row.presses : row.pressesNoLn0));
-  const want = proved ? statusPill(true) : line ? recordPill(line) : statusPill(false);
+  if (!line) {
+    if (label !== CONSTRUCTION) fail(`${row.n}/${mode} has no row but shows ${JSON.stringify(label)}`);
+    return;
+  }
+  const provedLabel = line.label === PROVEN_MINIMAL || line.label === USES_LN0 || line.label === WITHOUT_LN0;
+  let want = line.label;
+  if (!provedLabel) {
+    const unproved = `not ${PROVEN_MINIMAL}`;
+    if (line.note.toLowerCase().includes(unproved) && !line.label.toLowerCase().includes("not proven")) want += `, ${unproved}`;
+    const tie = /ties [^;]+/.exec(line.note);
+    if (tie && !want.includes(tie[0])) want += ` (${tie[0]})`;
+  }
   if (label !== want) fail(`${row.n}/${mode} status ${JSON.stringify(label)} want ${JSON.stringify(want)}`);
-  if ((label === PROVEN_MINIMAL) !== proved) fail(`${row.n}/${mode} pill does not follow the proved flag`);
 }
 
 for (let n = -50; n <= 50; n += 1) {
@@ -214,7 +228,6 @@ if (!huge.underflowed || floatCertified({
 let d3 = 0;
 for (const mode of ["ln0", "strict"] as const) {
   for (let n = -50; n <= 50; n += 1) {
-    if (n === 1) continue;
     d3 += 1;
     const choice = choose(n, mode);
     const has = choice.table !== null;
@@ -222,40 +235,52 @@ for (const mode of ["ln0", "strict"] as const) {
   }
 }
 
-function fixed(n: number, mode: "ln0" | "strict", k: number): void {
+function fixed(n: number, mode: "ln0" | "strict", k: number, status: string): void {
   const choice = choose(n, mode);
   if (choice.K !== k) fail(`fixed K ${n}/${mode} is ${choice.K}, expected ${k}`);
-  const want = n === 1
-    ? "the 1 key itself · K 1"
-    : provedMinimal(n, mode)
-      ? statusPill(true)
-      : recordPill(linesFor(n).find((item) => item.k === k) ?? { value: String(n), k, label: "", note: "" });
-  if (choice.table?.status !== want) fail(`fixed status ${n}/${mode} ${JSON.stringify(choice.table?.status)} want ${JSON.stringify(want)}`);
+  const shown = pagePill(choice);
+  if (shown !== status) fail(`fixed status ${n}/${mode} ${JSON.stringify(shown)} want ${JSON.stringify(status)}`);
 }
-fixed(-1, "ln0", 15);
-fixed(-1, "strict", 17);
-fixed(0, "ln0", 7);
-fixed(0, "strict", 7);
-fixed(1, "ln0", 1);
-fixed(1, "strict", 1);
-fixed(2, "ln0", 19);
-fixed(2, "strict", 19);
-fixed(-2, "ln0", 25);
-fixed(-2, "strict", 27);
+fixed(-1, "ln0", 15, USES_LN0);
+fixed(-1, "strict", 17, WITHOUT_LN0);
+fixed(0, "ln0", 7, PROVEN_MINIMAL);
+fixed(0, "strict", 7, PROVEN_MINIMAL);
+fixed(1, "ln0", 1, ONE_PILL);
+fixed(1, "strict", 1, ONE_PILL);
+fixed(2, "ln0", 19, PROVEN_MINIMAL);
+fixed(2, "strict", 19, PROVEN_MINIMAL);
+fixed(-2, "ln0", 25, `shortest known (depends on ln 0; unresolved tower trees remain), not ${PROVEN_MINIMAL}`);
+fixed(-2, "strict", 27, `shortest known without ln 0, not ${PROVEN_MINIMAL}`);
+fixed(3, "ln0", 29, `shortest known, not ${PROVEN_MINIMAL} (ties Kaseorg's code-golf answer)`);
+fixed(40, "ln0", 399, CONSTRUCTION);
+fixed(-20, "strict", 207, CONSTRUCTION);
+fixed(26, "ln0", 259, CONSTRUCTION);
+fixed(-50, "ln0", 507, CONSTRUCTION);
+if (choose(40, "ln0").table || choose(-20, "ln0").table) fail("40 and −20 are table rows");
+if (choose(0, "ln0").familyLabel !== "ln(1) via the ln template 11xE1EE: 7 presses") fail(`family 0 ${choose(0, "ln0").familyLabel}`);
+if (choose(1, "ln0").familyLabel !== "the 1 key: 1 press") fail(`family 1 ${choose(1, "ln0").familyLabel}`);
+if (choose(1, "ln0").familyLabel.includes("counting construction")) fail("the 1 key is called a counting construction");
+if (choose(4, "ln0").familyLabel !== "counting construction: K = 10n − 1 (gives exactly n on both cuts, without ln 0)") fail(`family 4 ${choose(4, "ln0").familyLabel}`);
+if (choose(-1, "strict").familyLabel !== "counting construction: K = 10m + 7, m = −n (gives exactly n on both cuts, without ln 0)") fail(`family −1 ${choose(-1, "strict").familyLabel}`);
+const oneRow = rows.find((row) => row.n === 1);
+if (oneRow?.status !== "proven-minimal" || oneRow.minimal !== true || oneRow.minimalNoLn0 !== true) fail("n = 1 data row");
+if (choose(1, "ln0").table?.status !== ONE_PILL || choose(1, "strict").table?.status !== ONE_PILL) fail("n = 1 table status");
+const oneLine = known.minimality.find((row) => row.value === "1" && row.k === 1);
+if (!oneLine) fail("missing 1, K 1 minimality line");
+else if (recordLine(oneLine).includes(PROVEN_MINIMAL)) fail(`1 is labelled ${recordLine(oneLine)}`);
 if (!choose(-2, "strict").table?.note.includes("minimal conditional on Schanuel's conjecture")) fail("−2 strict is missing the Schanuel footnote");
-fixed(-3, "ln0", 35);
-fixed(-3, "strict", 35);
+fixed(-3, "ln0", 35, `shortest known, not ${PROVEN_MINIMAL}`);
+fixed(-3, "strict", 35, `shortest known, not ${PROVEN_MINIMAL}`);
 for (const [n, k] of [[-4, 45], [-5, 55], [-6, 65], [-7, 75], [-9, 79]] as const) {
   for (const mode of ["ln0", "strict"] as const) {
-    fixed(n, mode, k);
+    fixed(n, mode, k, `shortest known, not ${PROVEN_MINIMAL}`);
     if (choose(n, mode).table?.ln0) fail(`${n}/${mode} should not use ln 0`);
   }
 }
-fixed(-8, "ln0", 77);
-fixed(-8, "strict", 79);
+fixed(-8, "ln0", 77, `shortest known, not ${PROVEN_MINIMAL}`);
+fixed(-8, "strict", 79, `shortest known, not ${PROVEN_MINIMAL}`);
 if (!choose(-8, "ln0").table?.ln0 || choose(-8, "strict").table?.ln0) fail("−8 ln 0 flags");
-fixed(3, "ln0", 29);
-fixed(3, "strict", 29);
+fixed(3, "strict", 29, `shortest known, not ${PROVEN_MINIMAL} (ties Kaseorg's code-golf answer)`);
 
 for (const row of rows) {
   for (const mode of ["ln0", "strict"] as const) {
@@ -267,28 +292,33 @@ for (const row of rows) {
     const stored = byWord.get(choice.word);
     if (!stored) fail(`table row ${row.n}/${mode} was not evaluated`);
     else if (stored.exact.touchedLn0 !== uses) fail(`table row ${row.n}/${mode} touchedLn0 ${stored.exact.touchedLn0} vs ${uses}`);
-    expectStatus(row, mode, choice.table?.status ?? "");
+    expectStatus(row, mode, pagePill(choice));
   }
 }
 
+const provedLabels = new Set([PROVEN_MINIMAL, USES_LN0, WITHOUT_LN0]);
 const proved = new Set<string>();
 for (const mode of ["ln0", "strict"] as const) {
   for (let n = -50; n <= 50; n += 1) {
     const choice = choose(n, mode);
     const flag = provedMinimal(n, mode);
-    const pill = choice.table?.status ?? statusPill(flag);
-    if (pill === PROVEN_MINIMAL) proved.add(`${n}/${mode}`);
-    if ((pill === PROVEN_MINIMAL) !== flag) fail(`pill follows the flag ${n}/${mode} ${pill}`);
+    const pill = pagePill(choice);
+    if (n !== 1 && choice.table === null && pill !== CONSTRUCTION) fail(`construction pill ${n}/${mode} ${pill}`);
+    if (provedLabels.has(pill)) proved.add(`${n}/${mode}`);
+    if (provedLabels.has(pill) !== flag) fail(`pill follows the flag ${n}/${mode} ${pill}`);
     const basis = noteBeside(choice.table?.note ?? "", pill);
     if (n === 1 && basis !== "") fail(`n = 1 basis ${basis}`);
     if (flag && (basis.includes(PROVEN_MINIMAL) || basis.toLowerCase().includes("shortest known"))) fail(`proved basis ${n}/${mode} ${basis}`);
   }
-  const zero = noteBeside(choose(0, mode).table?.note ?? "", statusPill(true));
-  if (!zero.includes("K ≤ 5") || !zero.includes("with or without ln 0")) fail(`basis 0/${mode} ${zero}`);
-  const neg = noteBeside(choose(-1, mode).table?.note ?? "", statusPill(true));
-  if (mode === "ln0" && (!neg.includes("K ≤ 13") || !neg.includes("uses ln 0"))) fail(`basis −1/${mode} ${neg}`);
-  if (mode === "strict" && !neg.includes("the only shorter −1 is the K 15 word, and that word uses ln 0")) fail(`basis −1/${mode} ${neg}`);
-  const two = noteBeside(choose(2, mode).table?.note ?? "", statusPill(true));
+  const zeroPill = pagePill(choose(0, mode));
+  const zero = noteBeside(choose(0, mode).table?.note ?? "", zeroPill);
+  if (zeroPill !== PROVEN_MINIMAL || !zero.includes("K ≤ 5") || !zero.includes("with or without ln 0")) fail(`basis 0/${mode} ${zeroPill} ${zero}`);
+  const negChoice = choose(-1, mode);
+  const negPill = pagePill(negChoice);
+  const neg = noteBeside(negChoice.table?.note ?? "", negPill);
+  if (mode === "ln0" && (negPill !== USES_LN0 || !neg.includes("K ≤ 13"))) fail(`basis −1/${mode} ${negPill} ${neg}`);
+  if (mode === "strict" && (negPill !== WITHOUT_LN0 || !neg.includes("the only shorter −1 is the K 15 word, and that word uses ln 0"))) fail(`basis −1/${mode} ${negPill} ${neg}`);
+  const two = noteBeside(choose(2, mode).table?.note ?? "", pagePill(choose(2, mode)));
   if (!two.includes("2056")) fail(`basis 2/${mode} ${two}`);
 }
 const provedWant = ["0/ln0", "0/strict", "-1/ln0", "-1/strict", "2/ln0", "2/strict"];

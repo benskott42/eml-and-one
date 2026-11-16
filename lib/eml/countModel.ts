@@ -1,5 +1,6 @@
 import { BLOCK, blockSpans, countWord, countWordLength } from "./countWord";
 import { linesFor, ln0Use, tableEntry, type CountEntry } from "./countTable";
+import { CONSTRUCTION_RECORD } from "./statusLabels";
 
 export { BLOCK };
 
@@ -17,10 +18,10 @@ export type CountChoice = {
 };
 
 export function familyLabel(n: number): string {
-  if (n >= 2) return "built by: counting construction, K = 10n − 1";
-  if (n <= -1) return "built by: counting construction, K = 10m + 7, m = −n";
-  if (n === 1) return "built by: counting construction, the 1 key";
-  return "built by: counting construction, ln(1) via 11xE1EE";
+  if (n >= 2) return "counting construction: K = 10n − 1 (gives exactly n on both cuts, without ln 0)";
+  if (n <= -1) return "counting construction: K = 10m + 7, m = −n (gives exactly n on both cuts, without ln 0)";
+  if (n === 1) return "the 1 key: 1 press";
+  return "ln(1) via the ln template 11xE1EE: 7 presses";
 }
 
 export function choose(n: number, mode: "ln0" | "strict"): CountChoice {
@@ -51,6 +52,13 @@ export function choose(n: number, mode: "ln0" | "strict"): CountChoice {
     spans,
     chunks,
   };
+}
+
+/** The pill the count page shows. n = 1 stays neutral; a missing row is a construction. */
+export function pagePill(choice: CountChoice): string {
+  if (choice.n === 1) return "the 1 key itself · K 1";
+  if (!choice.table) return CONSTRUCTION_RECORD;
+  return choice.table.status;
 }
 
 /** Words the page can show, plus every program word the selection rule resolves. */

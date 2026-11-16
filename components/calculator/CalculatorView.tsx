@@ -199,7 +199,6 @@ export function CalculatorView(props: CalculatorModel) {
             <label className="ti-label">
               Expression, compiled into EML
               <input
-                id="expr"
                 value={expr}
                 onChange={(event) => setExpr(event.target.value)}
                 className="ti-field"

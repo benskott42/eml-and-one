@@ -1,6 +1,6 @@
 # Known limitations
 
-This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), and 2 at K 19 are proved minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
+This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), and 2 at K 19 are proven minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
 
 ## Records
 

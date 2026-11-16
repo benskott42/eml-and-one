@@ -1,6 +1,6 @@
 import table from "./best-known.json";
 import { recordPill } from "./recordLabel";
-import { provedMinimal, statusPill } from "./statusLabels";
+import { provedMinimal } from "./statusLabels";
 
 export type CountEntry = {
   word: string;
@@ -64,7 +64,7 @@ export function tableEntry(n: number, mode: "ln0" | "strict", familyWord: string
     return {
       word,
       k: line.k,
-      status: proved ? statusPill(true) : recordPill(line),
+      status: recordPill(line),
       note: line.note,
       kind: proved ? "proven" : "known",
       ln0: ln0Use(line) === "yes",
