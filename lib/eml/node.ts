@@ -166,10 +166,9 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
 }
 
 /**
- * A function the library replaced by its leading term. The next term is past
- * the 480-digit cap, so the value is the argument (or −x²/2, x/2). A later
- * cancellation that makes the whole result 0 is not a certified zero: the
- * dropped term could have been the answer.
+ * A function the library replaced by a short series. The next term is past
+ * the 480-digit cap. A later cancellation that makes the whole result 0 is
+ * not a certified zero: the dropped term could have been the answer.
  */
 const seriesShortcuts = new WeakSet<Node>();
 

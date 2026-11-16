@@ -207,13 +207,18 @@ function noteSeen(v: Z): void {
  * accuracy, so its size is not counted.
  */
 let emlWork = Number.NEGATIVE_INFINITY;
+let emlWorkRe = Number.NEGATIVE_INFINITY;
+let emlWorkIm = Number.NEGATIVE_INFINITY;
 /** Working precision is never raised past this. A value that still needs more is not certified. */
 const PRECISION_CAP = 480;
 
-function noteWork(left: Decimal, right: Decimal, diff: Decimal): void {
+function noteWork(left: Decimal, right: Decimal, diff: Decimal, part: "re" | "im"): void {
   const scale = D.max(left.abs(), right.abs());
   if (!scale.isFinite() || scale.isZero()) return;
-  if (diff.isZero() || scale.e - diff.abs().e >= 2) emlWork = Math.max(emlWork, scale.e);
+  if (!(diff.isZero() || scale.e - diff.abs().e >= 2)) return;
+  emlWork = Math.max(emlWork, scale.e);
+  if (part === "re") emlWorkRe = Math.max(emlWorkRe, scale.e);
+  else emlWorkIm = Math.max(emlWorkIm, scale.e);
 }
 
 function noteLoss(scale: Decimal, residual: Decimal): void {
@@ -222,9 +227,9 @@ function noteLoss(scale: Decimal, residual: Decimal): void {
   if (Number.isFinite(gap) && gap > lossGap) lossGap = gap;
 }
 
-function cancelled(diff: Decimal, left: Decimal, right: Decimal): Decimal {
+function cancelled(diff: Decimal, left: Decimal, right: Decimal, part: "re" | "im"): Decimal {
   if (!diff.isFinite()) return diff;
-  noteWork(left, right, diff);
+  noteWork(left, right, diff, part);
   // Keep a signed zero. exp(−∞ + iπ) is −0, and wiping that sign makes √0 infinite.
   if (diff.isZero()) return diff.isNeg() ? new D(-0) : ZERO;
   const scale = D.max(left.abs(), right.abs());
@@ -268,8 +273,8 @@ function exactEml(x: Z, y: Z): Z {
   const b = lnEml(y);
   if (a.re.isNaN() || a.im.isNaN() || b.re.isNaN() || b.im.isNaN()) return { re: NAN, im: NAN };
   if (sameInfinity(a.re, b.re) || sameInfinity(a.im, b.im)) return { re: NAN, im: NAN };
-  const re = cancelled(a.re.sub(b.re), a.re, b.re);
-  const im = cancelled(a.im.sub(b.im), a.im, b.im);
+  const re = cancelled(a.re.sub(b.re), a.re, b.re, "re");
+  const im = cancelled(a.im.sub(b.im), a.im, b.im, "im");
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
   return { re, im };
 }
@@ -286,13 +291,17 @@ export type ExactReport = {
   unverified?: boolean;
   /** Largest cancelling term size outside the 2^k lift gates (decimal exponent). */
   workExp?: number;
+  /** Per-component cancellation size. A part with no finite work was not a residue. */
+  workRe?: number;
+  workIm?: number;
   /** Precision the value was computed at. */
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
 };
 
-type Cached = { value: Z; why: string | null; logged: boolean; work: number };
+type Work = { all: number; re: number; im: number };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -431,6 +440,80 @@ function certifyZero(report: ExactReport): ExactReport {
   return { ...present(report), unverified: true };
 }
 
+/** A component this far below the terms that cancelled is not yet a result. */
+function residueFloor(work: number, digits: number): Decimal {
+  return new D(10).pow(work - (digits - 12));
+}
+
+/**
+ * Parts that are small beside the terms that cancelled, exact zeros included.
+ * A true zero beside an ordinary value, such as the imaginary part of sin(1),
+ * is not on this list: its sibling is not small next to those terms.
+ */
+function residueParts(report: ExactReport): Array<"re" | "im"> {
+  if (vanished(report.value) || report.unverified) return [];
+  const digits = report.digits ?? D.precision;
+  const out: Array<"re" | "im"> = [];
+  const consider = (name: "re" | "im", part: Decimal, work: number | undefined, other: Decimal) => {
+    if (work === undefined || !Number.isFinite(work) || !part.isFinite()) return;
+    if (!part.isZero()) {
+      if (part.abs().lt(residueFloor(work, digits))) out.push(name);
+      return;
+    }
+    const siblingSmall = other.isFinite() && !other.isZero() && other.abs().lt(new D(10).pow(work - 12));
+    if (siblingSmall) out.push(name);
+  };
+  consider("re", report.value.re, report.workRe, report.value.im);
+  consider("im", report.value.im, report.workIm, report.value.re);
+  return out;
+}
+
+/** Same relative move the dust check uses. An exact zero that becomes nonzero has moved. */
+function residueMoved(before: Decimal, after: Decimal): boolean {
+  if (!before.isFinite() || !after.isFinite()) return !before.eq(after);
+  if (before.isZero() && after.isZero()) return false;
+  if (before.isZero() || after.isZero()) return true;
+  return after.sub(before).abs().gt(before.abs().mul("1e-6"));
+}
+
+/**
+ * Re-evaluate a residue with more digits. A part that stays put is real, the
+ * same way dust is kept. A part that moves is not certified at this precision:
+ * raise it, up to 480 digits, or leave the result unverified.
+ */
+function settleResidue(
+  report: ExactReport,
+  root: Node,
+  env: Record<string, C | Z>,
+  budget: EvalBudget,
+): ExactReport {
+  let current = report;
+  for (let hop = 0; hop < 8; hop += 1) {
+    const which = residueParts(current);
+    if (which.length === 0) return current;
+    const digits = current.digits ?? D.precision;
+    const hinted = demandedTinyDigits(root, env);
+    if (digits >= PRECISION_CAP) return certifyZero(current);
+    // A known magnitude past the cap cannot come back. That only withholds a
+    // zero component. A nonzero value that does not move on the next check stays.
+    if (hinted > PRECISION_CAP && which.some((name) => current.value[name].isZero())) return certifyZero(current);
+    const step = hop === 0 ? 24 : 96;
+    const raised = hinted > digits && hinted <= PRECISION_CAP ? hinted : 0;
+    const next = Math.min(PRECISION_CAP, Math.max(digits + step, raised));
+    if (next <= digits) return certifyZero(current);
+    let again: ExactReport;
+    try {
+      again = atPrecision(next, root, env, budget);
+    } catch {
+      return certifyZero(current);
+    }
+    const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
+    if (!changed) return current;
+    current = again;
+  }
+  return residueParts(current).length === 0 ? current : certifyZero(current);
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -479,6 +562,8 @@ export function exactReport(
     const digits = Math.min(PRECISION_CAP, Math.max(Math.max(report.value.re.e, report.value.im.e) + 48, D.precision + 32));
     if (digits > D.precision) settled = atPrecision(digits, root, env, budget);
   }
+  settled = settleResidue(settled, root, env, budget);
+  if (settled.unverified) return settled;
   return confirmDust(present(settled), root, env, budget);
 }
 
@@ -492,7 +577,7 @@ function exactReportOnce(
   const memo = new Map<Node, Z>();
   const why = new Map<Node, string | null>();
   const logged = new Map<Node, boolean>();
-  const work = new Map<Node, number>();
+  const work = new Map<Node, Work>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
@@ -570,9 +655,20 @@ function exactReportOnce(
     if (!a || !b) throw new EmlError("Could not evaluate this circuit.");
     const childLog = logged.get(n.a) === true || logged.get(n.b) === true || zZero(b);
     emlWork = Number.NEGATIVE_INFINITY;
+    emlWorkRe = Number.NEGATIVE_INFINITY;
+    emlWorkIm = Number.NEGATIVE_INFINITY;
     const value = exactEml(a, b);
-    const own = inScaledShell(n) ? Number.NEGATIVE_INFINITY : emlWork;
-    const nodeWork = Math.max(own, work.get(n.a) ?? Number.NEGATIVE_INFINITY, work.get(n.b) ?? Number.NEGATIVE_INFINITY);
+    const shell = inScaledShell(n);
+    const own: Work = shell
+      ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
+      : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
+    const left = work.get(n.a);
+    const right = work.get(n.b);
+    const nodeWork: Work = {
+      all: Math.max(own.all, left?.all ?? Number.NEGATIVE_INFINITY, right?.all ?? Number.NEGATIVE_INFINITY),
+      re: Math.max(own.re, left?.re ?? Number.NEGATIVE_INFINITY, right?.re ?? Number.NEGATIVE_INFINITY),
+      im: Math.max(own.im, left?.im ?? Number.NEGATIVE_INFINITY, right?.im ?? Number.NEGATIVE_INFINITY),
+    };
     work.set(n, nodeWork);
     const nan = value.re.isNaN() || value.im.isNaN();
     let singular: string | null = null;
@@ -598,11 +694,14 @@ function exactReportOnce(
   // A pole is a pole in both engines, including when the gates produced NaN.
   if (flag === SINGULAR_POLE) singular = flag;
   else if (!singular && flag) singular = flag;
+  const rootWork = work.get(root);
   return {
     value: out,
     singular,
     touchedLn0: logged.get(root) === true,
-    workExp: work.get(root),
+    workExp: rootWork?.all,
+    workRe: rootWork?.re,
+    workIm: rootWork?.im,
     digits: D.precision,
     sawLead,
   };

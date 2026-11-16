@@ -9,8 +9,10 @@ import {
   isNonfiniteNode,
   knownValue,
   noteDecade,
+  noteTinyReal,
   naiveSub,
   negativeZero,
+  shieldLift,
   noteExp,
   noteLn,
   noteNonfinite,
@@ -117,10 +119,15 @@ const onePlus = new WeakMap<Node, Node>();
  */
 const SERIES_ODD = -241;
 /**
- * Shortest odd-polynomial shortcut. |x| ≤ 10^(−61) needs at most four terms
- * before the next one is past 480 digits. A larger argument stays on the circuit.
+ * Sin keeps at most four odd powers. |x| ≤ 10^(−61) is the widest argument
+ * whose next term is past 480 digits with those three corrections.
  */
 const SERIES_POLY = -61;
+/**
+ * tan, tanh, arctan, and cos(x)−1 carry enough terms for about |x| ≤ 10^(−20).
+ * A wider argument stays on the circuit rather than a truncated polynomial.
+ */
+const SERIES_WIDE = -20;
 const SERIES_REL = -480;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
@@ -149,14 +156,33 @@ export function seriesShortcutNote(root: Node): string | null {
   return null;
 }
 
+/** Decade of a real known to sit in one power of ten, or null when it might not. */
 function tinyScale(node: Node, limit: number): number | null {
   const decade = decadeOf(node);
   if (decade !== undefined && decade <= limit) return decade;
   const known = knownValue(node);
-  if (!known || known.im !== 0 || !Number.isFinite(known.re) || known.re === 0) return null;
-  const decadeKnown = Math.floor(Math.log10(Math.abs(known.re)));
-  if (decadeKnown > limit) return null;
-  return decadeKnown;
+  if (known && known.im === 0 && Number.isFinite(known.re) && known.re !== 0) {
+    const decadeKnown = Math.floor(Math.log10(Math.abs(known.re)));
+    if (decadeKnown > limit) return null;
+    return decadeKnown;
+  }
+  // 3·10^(−45) is a product, so its range is a few ulps wide and not a point.
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return null;
+  const lo = range.re.lo;
+  const hi = range.re.hi;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === 0 || hi === 0 || Math.sign(lo) !== Math.sign(hi)) return null;
+  const dLo = Math.floor(Math.log10(Math.abs(lo)));
+  const dHi = Math.floor(Math.log10(Math.abs(hi)));
+  if (dLo !== dHi || dLo > limit) return null;
+  return dLo;
+}
+
+function realIsNegative(node: Node): boolean {
+  const known = knownValue(node);
+  if (known && known.im === 0 && known.re !== 0) return known.re < 0;
+  const range = rangeOf(node);
+  return !!range.re && range.re.hi < 0;
 }
 
 function isOneNode(node: Node): boolean {
@@ -166,9 +192,27 @@ function isOneNode(node: Node): boolean {
 }
 
 /**
- * cos(x) − 1 = −x²/2 + x⁴/24 − … . The next term is past the 480-digit cap
- * only for |x| ≤ 10^(−241). A larger argument stays on the exp circuit.
+ * cos(x) − 1 = −x²/2 + x⁴/24 − … . One term is past the 480-digit cap only for
+ * |x| ≤ 10^(−241). Up to |x| ≤ 10^(−20) the even powers continue until the next
+ * one is past that cap. A larger argument stays on the exp circuit.
  */
+/** (2k)! for k = 1..13. 26! is 27 digits, inside the 40-digit integer builder. */
+const COS_FACTORIAL = [
+  "2",
+  "24",
+  "720",
+  "40320",
+  "3628800",
+  "479001600",
+  "87178291200",
+  "20922789888000",
+  "6402373705728000",
+  "2432902008176640000",
+  "1124000727777607680000",
+  "620448401733239439360000",
+  "403291461126605635584000000",
+];
+
 function cosMinusOne(a: Node, b: Node): Node | null {
   let arg: Node | undefined;
   let sign = 1;
@@ -179,13 +223,38 @@ function cosMinusOne(a: Node, b: Node): Node | null {
     arg = cosArg.get(b);
     sign = -1;
   }
-  const scale = arg ? tinyScale(arg, SERIES_ODD) : null;
+  const scale = arg ? tinyScale(arg, SERIES_WIDE) : null;
   if (!arg || scale === null) return null;
+  const count = termCount(scale, COS_FACTORIAL.length);
+  if (count === null) return null;
   // Negation of a float-sized 0 would become the −0 leaf. 10^(−400) is 0 in
   // float64 and a real decimal, so scale the square by −1 with the raw product.
-  const halfSquare = tHalfOf(tMul(arg, arg));
-  const series = sign > 0 ? rawMul(tNeg(ONE), halfSquare) : halfSquare;
-  return markSeries(noteDecade(series, scale * 2), "series shortcut: −x²/2, for |x| ≤ 10^(−241)");
+  if (count === 1) {
+    const halfSquare = tHalfOf(tMul(arg, arg));
+    const series = sign > 0 ? rawMul(tNeg(ONE), halfSquare) : halfSquare;
+    return markSeries(noteDecade(series, scale * 2), "series shortcut: −x²/2, for |x| ≤ 10^(−241)");
+  }
+  let power = rawMul(arg, arg);
+  let acc: Node | null = null;
+  for (let k = 1; k <= count; k += 1) {
+    const den = COS_FACTORIAL[k - 1];
+    if (!den) return null;
+    // Dividing the power by the factorial collapses once the power underflows
+    // in the float range. Multiply by the reciprocal instead.
+    const mag = rawMul(power, tInv(digitsToInteger(1, den)));
+    // cos(x)−1 has sign (−1)^k. 1−cos flips that.
+    const negative = sign > 0 ? k % 2 === 1 : k % 2 === 0;
+    if (acc === null) acc = negative ? rawMul(tNeg(ONE), mag) : mag;
+    else acc = retainSum(acc, mag, scale * 2, negative);
+    if (k < count) power = rawMul(power, rawMul(arg, arg));
+  }
+  if (!acc) return null;
+  // The powers and the lift are not the expression's cancellation.
+  // cos(x)−1 leads with −x²/2. 1−cos leads with the opposite sign.
+  return markSeries(
+    noteTinyReal(shieldLift(acc, [arg]), scale * 2, sign > 0),
+    "series shortcut: even powers kept until the remainder is past the 480-digit cap",
+  );
 }
 
 /** The circuit is chosen from the structural range of a and b. */
@@ -370,11 +439,7 @@ export function tCosh(t: Node): Node {
 export function tTanh(t: Node): Node {
   const small = tinyRealArgument(t);
   if (small) return small;
-  const series = oddSeries(t, [
-    { num: 1, den: 3, sign: -1 },
-    { num: 2, den: 15, sign: 1 },
-    { num: 17, den: 315, sign: -1 },
-  ]);
+  const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
   if (series) return series;
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
@@ -400,44 +465,103 @@ function tinyRealArgument(t: Node): Node | null {
   return markSeries(t, LEAD_NOTE);
 }
 
-/** How many odd powers to keep so the next one is past the 480-digit cap. */
-function oddTerms(decade: number): number {
+type SignedRatio = { num: string; den: string; sign: -1 | 1 };
+
+/**
+ * How many powers to keep so the next one is past the 480-digit cap.
+ * Each extra power of x² sits 2|log10 x| digits below the previous one.
+ * Null when the coefficient list runs out while that next term is still visible.
+ */
+function termCount(decade: number, maxTerms: number): number | null {
   const depth = -decade;
   let terms = 1;
-  while (depth * 2 * terms <= 480 && terms < 8) terms += 1;
+  while (depth * 2 * terms <= 480 && terms < maxTerms) terms += 1;
+  if (depth * 2 * terms <= 480) return null;
   return terms;
+}
+
+function rationalNode(num: string, den: string): Node {
+  const top = num === "1" ? ONE : digitsToInteger(1, num);
+  return tDiv(top, digitsToInteger(1, den));
+}
+
+/**
+ * Add or subtract a correction that may sit far below `acc`.
+ * Lift both by a power of ten so the exact circuit can see the small term,
+ * then scale back. The lift's own cancellation is not the result's work.
+ */
+function retainSum(acc: Node, term: Node, leadDecade: number, subtract: boolean): Node {
+  const k = Math.max(0, -leadDecade);
+  if (k === 0) return subtract ? naiveSub(acc, term) : naiveSub(acc, rawMul(tMinusOne(), term));
+  const scale = pow10(Math.min(k, 900));
+  const liftedA = rawMul(acc, scale);
+  const liftedB = rawMul(term, scale);
+  const mixed = subtract ? naiveSub(liftedA, liftedB) : naiveSub(liftedA, rawMul(tMinusOne(), liftedB));
+  return shieldLift(rawDiv(mixed, scale), [acc, term]);
 }
 
 /**
  * x plus the next odd powers. The leading term alone is only past the cap for
  * |x| ≤ 10^(−241). This is an accelerator: a zero that comes out of it is not certified.
  */
-function oddSeries(t: Node, corrections: { num: number; den: number; sign: -1 | 1 }[]): Node | null {
-  const scale = tinyScale(t, SERIES_POLY);
+function oddSeries(t: Node, corrections: SignedRatio[], limit: number): Node | null {
+  const scale = tinyScale(t, limit);
   if (scale === null || scale <= SERIES_ODD) return null;
-  const count = oddTerms(scale);
-  if (count < 2 || count - 1 > corrections.length) return null;
+  const count = termCount(scale, corrections.length + 1);
+  if (count === null || count < 2) return null;
   let acc = t;
   let power = t;
   for (let i = 0; i < count - 1; i += 1) {
     const coeff = corrections[i];
     if (!coeff) return null;
     power = rawMul(power, rawMul(t, t));
-    const factor = coeff.num === 1 ? tDiv(ONE, integerNode(coeff.den)) : tDiv(integerNode(coeff.num), integerNode(coeff.den));
-    const term = rawMul(factor, power);
-    acc = coeff.sign < 0 ? naiveSub(acc, term) : naiveSub(acc, rawMul(tMinusOne(), term));
+    const term = rawMul(rationalNode(coeff.num, coeff.den), power);
+    acc = retainSum(acc, term, scale, coeff.sign < 0);
   }
-  return markSeries(noteDecade(acc, scale), POLY_NOTE);
+  // Coefficients and the lift are not the expression's cancellation. The argument is.
+  return markSeries(noteTinyReal(shieldLift(acc, [t]), scale, realIsNegative(t)), POLY_NOTE);
 }
+
+/** sin x = x − x³/6 + x⁵/120 − x⁷/5040 + … */
+const SIN_ODD: SignedRatio[] = [
+  { num: "1", den: "6", sign: -1 },
+  { num: "1", den: "120", sign: 1 },
+  { num: "1", den: "5040", sign: -1 },
+];
+
+/**
+ * tan x = x + (1/3)x³ + (2/15)x⁵ + … through x²⁵.
+ * The fractions are the Taylor coefficients; every sign is positive.
+ */
+const TAN_ODD: SignedRatio[] = [
+  { num: "1", den: "3", sign: 1 },
+  { num: "2", den: "15", sign: 1 },
+  { num: "17", den: "315", sign: 1 },
+  { num: "62", den: "2835", sign: 1 },
+  { num: "1382", den: "155925", sign: 1 },
+  { num: "21844", den: "6081075", sign: 1 },
+  { num: "929569", den: "638512875", sign: 1 },
+  { num: "6404582", den: "10854718875", sign: 1 },
+  { num: "443861162", den: "1856156927625", sign: 1 },
+  { num: "18888466084", den: "194896477400625", sign: 1 },
+  { num: "113927491862", den: "2900518163668125", sign: 1 },
+  { num: "58870668456604", den: "3698160658676859375", sign: 1 },
+];
+
+/** tanh has the same absolute coefficients, with the x³ term negative. */
+const TANH_ODD: SignedRatio[] = TAN_ODD.map((coeff, i) => ({ ...coeff, sign: i % 2 === 0 ? -1 : 1 }));
+
+/** arctan x = x − x³/3 + x⁵/5 − x⁷/7 + … through x²⁵. */
+const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
+  num: "1",
+  den: String(2 * (i + 1) + 1),
+  sign: (i % 2 === 0 ? -1 : 1) as -1 | 1,
+}));
 
 export function tSin(t: Node): Node {
   const small = tinyRealArgument(t);
   if (small) return small;
-  const series = oddSeries(t, [
-    { num: 1, den: 6, sign: -1 },
-    { num: 1, den: 120, sign: 1 },
-    { num: 1, den: 5040, sign: -1 },
-  ]);
+  const series = oddSeries(t, SIN_ODD, SERIES_POLY);
   if (series) return series;
   const it = tMul(tI(), t);
   const num = tSub(tExp(it), tExp(tNeg(it)));
@@ -454,11 +578,7 @@ export function tCos(t: Node): Node {
 export function tTan(t: Node): Node {
   const small = tinyRealArgument(t);
   if (small) return small;
-  const series = oddSeries(t, [
-    { num: 1, den: 3, sign: 1 },
-    { num: 2, den: 15, sign: 1 },
-    { num: 17, den: 315, sign: 1 },
-  ]);
+  const series = oddSeries(t, TAN_ODD, SERIES_WIDE);
   if (series) return series;
   // tan(z) = −i tanh(i z), and tanh(w) = 1 − 2/(exp(2w)+1).
   // A large positive exponent overflows to +∞ and the quotient vanishes,
@@ -589,11 +709,7 @@ export function tArccos(t: Node): Node {
 export function tArctan(t: Node): Node {
   const small = tinyRealArgument(t);
   if (small) return small;
-  const series = oddSeries(t, [
-    { num: 1, den: 3, sign: -1 },
-    { num: 1, den: 5, sign: 1 },
-    { num: 1, den: 7, sign: -1 },
-  ]);
+  const series = oddSeries(t, ARCTAN_ODD, SERIES_WIDE);
   if (series) return series;
   // A pure imaginary iy with |y| > 1 is i·artanh(y) on this cut.
   // artanh(−2) = −artanh(2), so arctan(−2i) = −π/2 − (artanh 2) i.

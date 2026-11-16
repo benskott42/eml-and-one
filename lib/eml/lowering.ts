@@ -63,7 +63,7 @@ onCircuitIsolate(() => {
   zero = undefined;
   turn = undefined;
   ints.clear();
-  powersOfTwo.clear();
+  powersOfTen.clear();
 });
 
 const CUT_MARGIN = 1e-3;
@@ -75,7 +75,7 @@ const CUT_MARGIN = 1e-3;
 const REAL_CAP = 500;
 /**
  * Below this magnitude the short add and the short sub lose digits: their
- * absolute error is about 10^(−16). Both operations lift by the same power of two.
+ * absolute error is about 10^(−16). Both operations lift by the same power of ten.
  */
 const TINY_MAG = 1e-4;
 /**
@@ -99,8 +99,8 @@ const EXP_SCALE_MAX = 800;
  * zero for choosing a circuit. The node itself still evaluates.
  */
 const EXP_UNDERFLOW_RE = -700;
-/** 2^1022 is the last finite power of two in float64. Add and sub share this lift. */
-const TWO_POW_MAX = 1022;
+/** 10^308 is not a finite float64. Add and sub share this lift. */
+const TEN_POW_MAX = 307;
 const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 function keepsInteger(range: Range, value: bigint): boolean {
@@ -781,37 +781,35 @@ function safeNeg(b: Node): Node {
   return node;
 }
 
-const powersOfTwo = new Map<number, Node>();
+const powersOfTen = new Map<number, Node>();
 
-/** 2^k built by doubling 1. Float64 represents every power through 2^1022 exactly. */
-function twoPow(k: number): Node {
-  const hit = powersOfTwo.get(k);
+/** 10^k by squaring. An integer power stays exact far past the point where 2^k·x does not. */
+function tenPow(k: number): Node {
+  const hit = powersOfTen.get(k);
   if (hit) return hit;
-  let node: Node = ONE;
-  for (let i = 1; i <= k; i += 1) {
-    const cached = powersOfTwo.get(i);
-    if (cached) {
-      node = cached;
-      continue;
-    }
-    // domainAdd, not rawAdd: the bare add program overflows once the power exceeds about 20.
-    node = domainAdd(node, node);
-    powersOfTwo.set(i, node);
+  let result: Node = ONE;
+  let base = smallInt(10);
+  let n = k;
+  while (n > 0) {
+    if (n % 2 === 1) result = result === ONE ? base : rawMul(result, base);
+    n = Math.floor(n / 2);
+    if (n > 0) base = rawMul(base, base);
   }
-  return node;
+  powersOfTen.set(k, result);
+  return result;
 }
 
 /**
- * Power of two that lifts `mag` up to about 1, where a 10^(−16) absolute error
- * is a relative error. Add and subtract use this same exponent, and neither
- * passes 2^1022.
+ * Power of ten that lifts `mag` up to about 1. A term a hundred digits below
+ * the operands then sits inside the 120-digit circuit. 10^308 is not a finite float.
  */
 function liftExponent(mag: number): number {
-  return Math.min(TWO_POW_MAX, Math.max(1, Math.ceil(Math.log2(1 / mag))));
+  if (!(mag > 0) || !Number.isFinite(mag)) return 1;
+  return Math.min(TEN_POW_MAX, Math.max(1, Math.ceil(-Math.log10(mag))));
 }
 
 /**
- * (a·2^k + b·2^k) / 2^k. The unscaled add only has about 10^(−16) of absolute
+ * (a·10^k + b·10^k) / 10^k. The unscaled add only has about 10^(−16) of absolute
  * accuracy, so two values near 10^(−10) need to be lifted before they are added.
  */
 const twoScaled = new WeakSet<Node>();
@@ -823,11 +821,26 @@ export function noteDecade(node: Node, exp: number): Node {
   return node;
 }
 
+/**
+ * A real whose leading term sits at `decade`, signed when that sign is known.
+ * The interval is wide enough that the next series term stays inside it, and
+ * narrow enough that a later cancellation still sees a tiny real.
+ * Past the float range only the decade is recorded.
+ */
+export function noteTinyReal(node: Node, decade: number, negative: boolean): Node {
+  const marked = noteDecade(node, decade);
+  const mag = 10 ** decade;
+  if (!(mag > 0) || !Number.isFinite(mag)) return marked;
+  const lo = negative ? -10 * mag : mag / 10;
+  const hi = negative ? -mag / 10 : 10 * mag;
+  return setRange(marked, { re: { lo, hi }, im: { lo: 0, hi: 0 } });
+}
+
 export function decadeOf(node: Node): number | undefined {
   return decades.get(node);
 }
 
-/** A sum or difference lifted by 2^k. Its small component is the value, not dust. */
+/** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
 export function markTwoScaled(node: Node): Node {
   twoScaled.add(node);
   return node;
@@ -838,10 +851,10 @@ export function isTwoScaled(node: Node): boolean {
 }
 
 /**
- * Gates built only to lift a tiny pair by 2^k and bring it back. Their terms
- * reach 2^k, which says nothing about the size the circuit works at, so the
- * exact engine leaves them out when it sizes rounding dust. The lifted
- * operands are not in the set.
+ * Gates built only to lift a tiny pair by a power of ten and bring it back.
+ * Their terms reach that scale, which says nothing about the size the circuit
+ * works at, so the exact engine leaves them out when it sizes rounding dust.
+ * The lifted operands are not in the set.
  */
 const scaledShell = new WeakSet<Node>();
 
@@ -853,12 +866,20 @@ export function noteScaledShell(node: Node): void {
   scaledShell.add(node);
 }
 
+/** Hide a lift's internal cancellation so it is not mistaken for the value's work. */
+export function shieldLift(root: Node, operands: Node[]): Node {
+  return markShell(root, operands);
+}
+
 function markShell(root: Node, operands: Node[]): Node {
   const stop = new Set(operands);
+  const seen = new Set<Node>();
   const stack: Node[] = [root];
   while (stack.length) {
     const node = stack.pop();
-    if (!node || stop.has(node) || node.type !== "eml" || scaledShell.has(node)) continue;
+    if (!node || stop.has(node) || seen.has(node)) continue;
+    seen.add(node);
+    if (node.type !== "eml") continue;
     scaledShell.add(node);
     stack.push(node.a, node.b);
   }
@@ -866,16 +887,16 @@ function markShell(root: Node, operands: Node[]): Node {
 }
 
 function scaledTiny(a: Node, b: Node, k: number): Node {
-  const scale = twoPow(k);
+  const scale = tenPow(k);
   return markTwoScaled(markShell(rawDiv(rawAdd(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
 }
 
-/** (a·2^k − b·2^k) / 2^k. The short subtraction loses a difference near 10^(−20). */
+/** (a·10^k − b·10^k) / 10^k. The short subtraction loses a difference near 10^(−20). */
 function scaledTinySub(a: Node, b: Node): Node | null {
   if (nearCut(rangeOf(a)) || nearCut(rangeOf(b))) return null;
   const mag = maxMag(a, b);
   if (mag === null || !(mag > 0 && mag < TINY_MAG)) return null;
-  const scale = twoPow(liftExponent(mag));
+  const scale = tenPow(liftExponent(mag));
   return markTwoScaled(markShell(rawDiv(naiveSub(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
 }
 

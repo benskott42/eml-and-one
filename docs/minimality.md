@@ -13,7 +13,7 @@ Each program was excluded in one of four ways:
 - the value is infinite, or an invalid ∞ − ∞
 - a tower is peeled by monotonicity: one real exponential or logarithm is split off, and the target is pulled back into what remains
 
-Two checkers did this independently. One reduces the word by exact identities and then encloses the result. The other evaluates the RPN directly, tracks the imaginary part as an exact multiple of π, and replaces an exponential that overflows with a level and a mean-value bound. Four programs at K 17 that the second checker left open were proved by hand. In the ranges below, every program is decided, and none of the exclusions is only numerical.
+The certificate was produced with separate verification scripts, which aren't included. One reduces the word by exact identities and then encloses the result. The other evaluates the RPN directly, tracks the imaginary part as an exact multiple of π, and replaces an exponential that overflows with a level and a mean-value bound. Four programs at K 17 that the second script left open were proved by hand. In the ranges below, every program is decided, and none of the exclusions is only numerical.
 
 - **0 at K 7.** All 4 programs with K ≤ 5 are excluded. The word `111E1EE` is 0 with or without ln 0.
 - **−1 at K 15, using ln 0.** All 197 programs with K ≤ 13 are excluded. The K 15 word uses ln 0. Without ln 0, −1 is proved minimal at K 17: the only shorter −1 is that K 15 word.
