@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
@@ -76,6 +77,18 @@ import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } 
 import table from "./best-known.json";
 
 let failed = 0;
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+
+/** A fresh node process. `npx` and `URL.pathname` both break on Windows. */
+function runTsx(script: string, input: string) {
+  return spawnSync(process.execPath, [tsxCli, path.join(repoRoot, script)], {
+    cwd: repoRoot,
+    input,
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+}
 const isolateCases: { source: string; env: Record<string, { re: number; im: number }> }[] = [];
 
 function relClose(got: { re: number; im: number }, want: { re: number; im: number }, tol = 1e-12): boolean {
@@ -2938,13 +2951,7 @@ failed += runPropertyChecks();
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
-  const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-  const fresh = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
-    cwd: rootDir,
-    input: JSON.stringify(jobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
   if (fresh.status !== 0) {
     failed += 1;
     console.log("FAIL fresh exact process", fresh.status, fresh.stderr);
@@ -3171,13 +3178,7 @@ failed += runPropertyChecks();
     const packed = packCircuit(compileExpression(row.source, {}));
     return { source: row.source, tokens: packed.tokens, root: packed.root, re: row.re, im: row.im, digits: row.digits };
   });
-  const wireRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-  const wire = spawnSync("npx", ["tsx", "scripts/fresh-exact.ts"], {
-    cwd: wireRoot,
-    input: JSON.stringify(wireJobs),
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const wire = runTsx("scripts/fresh-exact.ts", JSON.stringify(wireJobs));
   if (wire.status !== 0) {
     failed += 1;
     console.log("FAIL fresh huge integer", wire.status, wire.stderr);
@@ -3189,6 +3190,147 @@ failed += runPropertyChecks();
       if (row.unverified || row.singular !== null || row.close !== true || (want?.text !== undefined && text !== want.text)) {
         failed += 1;
         console.log("FAIL fresh huge", row.source, row.unverified ? "unverified" : text, row.singular, row.close);
+      }
+    }
+  }
+
+  // Identical nodes cancel to 0. mpmath at 1,200 digits is 0.
+  // Two huge-carried terms whose small parts are not both exact integers are unverified, never a value.
+  // (10^400+1)+(10^400+1) is the integer 2×10^400+2. A 1,200-digit compare sees the units digit.
+  // The parser has no juxtaposition, so 2(10^400+pi) is written 2*(10^400+pi).
+  const twoPlus = `2${"0".repeat(399)}2`;
+  const cancelRows = [
+    "(10^400+pi)+(-(10^400+pi))",
+    "(10^400+i)+(-(10^400+i))",
+    "(10^400+sqrt(2))+(-(10^400+sqrt(2)))",
+    "(10^400+e)+(-(10^400+e))",
+    "(10^400+0.5)+(-(10^400+0.5))",
+    "(10^400+pi)-(10^400+pi)",
+    "(10^400+i)-(10^400+i)",
+    "(10^400+sqrt(2))-(10^400+sqrt(2))",
+    "(10^400+e)-(10^400+e)",
+  ];
+  const flagRows = [
+    "(10^400+pi)+(-(10^400+e))",
+    "(10^400+pi)-(10^400+1)",
+    "(10^400+1)-(10^400+i)",
+    "(10^400+i)-(10^400+(-i))",
+    "(10^400+sqrt(2))-(10^400+0.5)",
+    "(10^400+pi)-(10^400+e)",
+    "2*(10^400+pi)-2*10^400",
+    "(10^400+i)-(10^400-i)",
+    "-(10^400+pi)+10^400",
+    "(10^400+1)+(-(10^400+i))",
+    "(10^400+pi)+(-(10^400+1))",
+    "(10^400+3)+(-(10^400+pi))",
+    "(10^400+e)-(10^400+0.5)",
+    "(10^400+i)+(10^400+i)",
+    "(10^400+i)+(10^400+(-i))",
+  ];
+  const bareRows = ["10^400+pi", "10^400+i", "10^400-0.5"];
+  const hugeJobs: { source: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number; re?: string; digits?: number }[] = [];
+  const timeCancel = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    const ok =
+      ms < 200 &&
+      hw.unverified !== true &&
+      ex.unverified !== true &&
+      hw.singular === null &&
+      ex.singular === null &&
+      close(hw.value, c(0, 0), 1e-12) &&
+      text === "0" &&
+      exactClose(ex.value, "0", "0", 1200);
+    if (!ok) {
+      failed += 1;
+      console.log("FAIL identical cancel", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : text);
+    } else {
+      console.log("cancel", source, "exact 0", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root, re: "0", digits: 1200 });
+  };
+  for (const source of cancelRows) timeCancel(source);
+  const timeFlag = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    if (ms >= 200 || hw.unverified !== true || ex.unverified !== true) {
+      failed += 1;
+      console.log("FAIL unverified huge pair", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : formatExact(ex.value));
+    } else {
+      console.log("flag", source, "unverified", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root });
+  };
+  for (const source of flagRows) timeFlag(source);
+  const timeBare = (source: string) => {
+    const started = performance.now();
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, budget);
+    const ex = exactReport(node, {}, budget);
+    const ms = performance.now() - started;
+    const text = formatExact(ex.value).replace(/\u200b/g, "");
+    const floatDropped = hw.unverified !== true && Number.isFinite(hw.value.re) && Number.isFinite(hw.value.im);
+    if (ms >= 200 || ex.unverified !== true || floatDropped) {
+      failed += 1;
+      console.log("FAIL bare huge sum", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : text);
+    } else {
+      console.log("bare", source, "unverified", `${ms.toFixed(1)}ms`);
+    }
+    const packed = packCircuit(node);
+    hugeJobs.push({ source, tokens: packed.tokens, root: packed.root });
+  };
+  for (const source of bareRows) timeBare(source);
+  const intSource = "(10^400+1)+(10^400+1)";
+  const intStarted = performance.now();
+  const intNode = compileExpression(intSource, {});
+  const intHw = evaluateReport(intNode, {}, budget);
+  const intEx = exactReport(intNode, {}, budget);
+  const intMs = performance.now() - intStarted;
+  const intText = formatExact(intEx.value).replace(/\u200b/g, "");
+  if (
+    intMs >= 200 ||
+    intHw.unverified === true ||
+    intEx.unverified === true ||
+    intHw.value.re !== Infinity ||
+    intHw.value.im !== 0 ||
+    intEx.singular !== null ||
+    intText !== twoPlus ||
+    !exactClose(intEx.value, twoPlus, "0", 1200) ||
+    exactClose(intEx.value, `2${"0".repeat(400)}`, "0", 1200)
+  ) {
+    failed += 1;
+    console.log("FAIL exact 2*10^400+2", `${intMs.toFixed(1)}ms`, intHw.value, intHw.unverified, intEx.unverified ? "unverified" : intText.slice(0, 12), intEx.singular);
+  } else {
+    console.log("int", intSource, "2×10^400+2", `${intMs.toFixed(1)}ms`);
+  }
+  const intPacked = packCircuit(intNode);
+  hugeJobs.push({ source: intSource, tokens: intPacked.tokens, root: intPacked.root, re: twoPlus, digits: 1200 });
+  const hugeWire = runTsx("scripts/fresh-exact.ts", JSON.stringify(hugeJobs));
+  if (hugeWire.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh huge pairs", hugeWire.status, hugeWire.stderr);
+  } else {
+    const rows = JSON.parse(hugeWire.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number }>;
+    for (const row of rows) {
+      const text = row.text.replace(/\u200b/g, "");
+      const wantFlag = flagRows.includes(row.source) || bareRows.includes(row.source);
+      const freshOk = wantFlag
+        ? row.unverified === true && row.ms < 200
+        : row.unverified !== true && row.singular === null && row.close === true && row.ms < 200 && (row.source === intSource ? text === twoPlus : text === "0");
+      if (!freshOk) {
+        failed += 1;
+        console.log("FAIL fresh huge pair", row.source, `${row.ms}ms`, row.unverified ? "unverified" : text, row.singular, row.close);
+      } else {
+        console.log("fresh", row.source, wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
       }
     }
   }

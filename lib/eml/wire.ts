@@ -1,11 +1,11 @@
 import { decadeOf, inScaledShell, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isSeriesShortcut, markSeriesShortcut, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isSeriesShortcut, isUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string; int?: string }
+  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1 }
   | {
       i: number;
       k: "E";
@@ -22,6 +22,8 @@ export type Wire =
       ki?: number;
       /** Exact integer when the float has already rounded or overflowed. */
       int?: string;
+      /** A dropped term. Exact mode must not certify the gates. */
+      unver?: 1;
     };
 
 function exactIntDigits(node: Node): string | undefined {
@@ -53,6 +55,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         const token: Wire = { i, k: "in", re: frame.n.value.re, im: frame.n.value.im, label: frame.n.label };
         const digits = exactIntDigits(frame.n);
         if (digits !== undefined) token.int = digits;
+        if (isUnverified(frame.n)) token.unver = 1;
         tokens.push(token);
       }
       continue;
@@ -84,6 +87,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     const digits = exactIntDigits(frame.n);
     if (digits !== undefined) token.int = digits;
+    if (isUnverified(frame.n)) token.unver = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -96,6 +100,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
     else if (tok.k === "in") {
       const node = input({ re: tok.re, im: tok.im }, tok.label);
+      if (tok.unver) markUnverified(node);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
     }
     else {
@@ -112,6 +117,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
+      if (tok.unver) markUnverified(node);
     }
   }
   const node = nodes[root];

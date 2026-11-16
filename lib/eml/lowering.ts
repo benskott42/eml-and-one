@@ -1,4 +1,4 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -393,7 +393,9 @@ export function rawMul(a: Node, b: Node): Node {
   const range = combine(rangeOf(a), rangeOf(b), "mul");
   const node = setRange(applyProgram("mul", { x: a, y: b }), range);
   const tagged = range.int !== undefined ? attachInt(node, range.int) : node;
-  return markMaybeInfinite(tagged, a, b);
+  const out = markMaybeInfinite(tagged, a, b);
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) unresolvedHuge.add(out);
+  return out;
 }
 
 function poleSignOf(node: Node): -1 | 1 | null {
@@ -610,12 +612,44 @@ function axisAligned(a: Node, b: Node): boolean {
   return (pureReal(a) && pureImag(b)) || (pureImag(a) && pureReal(b));
 }
 
+/**
+ * A non-integer kept beside an integer past 2^1024, or a later use of that node.
+ * Cancelling the recorded huge integer is exact. Any other meeting is not a value.
+ */
+const unresolvedHuge = new WeakSet<Node>();
+
+function noteUnresolvedHuge(node: Node, a: Node, b: Node): void {
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) {
+    unresolvedHuge.add(node);
+    return;
+  }
+  const leftHuge = floatOverflowInt(a) !== null;
+  const rightHuge = floatOverflowInt(b) !== null;
+  if (leftHuge === rightHuge) return;
+  const other = leftHuge ? b : a;
+  if (rangeOf(other).int === undefined) unresolvedHuge.add(node);
+}
+
 function noteRealSum(node: Node, left: Node, right: Node): void {
-  if (node !== left && node !== right) realSum.set(node, { left, right });
+  if (node === left || node === right) return;
+  realSum.set(node, { left, right });
+  noteUnresolvedHuge(node, left, right);
 }
 
 function rememberSub(node: Node, left: Node, right: Node): Node {
-  if (node !== left && node !== right) realSub.set(node, { left, right });
+  if (node === left || node === right) return node;
+  realSub.set(node, { left, right });
+  noteUnresolvedHuge(node, left, right);
+  return node;
+}
+
+let unverifiedCount = 0;
+
+/** The existing uncertified result: no number, in either mode. */
+function unverifiedResult(): Node {
+  unverifiedCount += 1;
+  const node = markUnverified(input({ re: 0, im: 0 }, `unverified:${unverifiedCount}`));
+  unresolvedHuge.add(node);
   return node;
 }
 
@@ -653,7 +687,13 @@ function finiteBeside(node: Node): boolean {
   if (floatOverflowInt(node)) return false;
   if (rangeOf(node).int !== undefined) return true;
   const v = knownValue(node);
-  return v !== null && Number.isFinite(v.re) && Number.isFinite(v.im);
+  if (v !== null && Number.isFinite(v.re) && Number.isFinite(v.im)) return true;
+  // 0.5 is a narrow interval, not a point. Dust such as 10^(−15) stays on the ordinary circuit.
+  if (!provenFinite(node)) return false;
+  const range = rangeOf(node);
+  const re = range.re ? Math.max(Math.abs(range.re.lo), Math.abs(range.re.hi)) : 0;
+  const im = range.im ? Math.max(Math.abs(range.im.lo), Math.abs(range.im.hi)) : 0;
+  return Math.max(re, im) >= 1e-6;
 }
 
 /** An unknown range is not a proof, and a typed infinity is not finite. */
@@ -803,6 +843,8 @@ function rememberHugeReal(huge: Node, other: Node, op: "add" | "sub"): Node {
   const node = rawMul(huge, one);
   if (op === "add") noteRealSum(node, huge, other);
   else rememberSub(node, huge, other);
+  // The factor's label is how exact mode sees that this mul is not the sum.
+  // Evaluating the mul would certify the bare integer and drop the small term.
   return node;
 }
 
@@ -854,21 +896,25 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   if (complement) return domainNeg(complement);
   const rest = subComplement(a, b);
   if (rest) return rest;
-  const carried = overflowIntDiff(a, b);
-  if (carried) return carried;
-  // A finite non-integer beside an integer past the float range is not dropped.
-  // The real difference rotates through ln 0 and comes out negative, so the node only remembers both operands.
-  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "sub");
+  // Same-sign infinities are indeterminate. That check stays ahead of the identical-node fold.
   const pa = poleSignOf(a);
   const pb = poleSignOf(b);
   if (pa !== null && pb !== null && pa === pb) return rememberSub(naiveSub(a, b), a, b);
-  // A marked node stays on the ordinary circuit. That circuit is undefined, with a singular flag.
+  // Identical nodes cancel before a huge term is rewritten. A marked node stays on the ordinary circuit.
   if (a === b && !mayBeInfinite(a)) {
     // The shared zero leaf must stay unmarked. A series shortcut that returned
     // its argument makes f(x) − x the same node twice; that zero is not certified.
     if (isSeriesShortcut(a)) return markSeriesShortcut(naiveSub(ONE, ONE));
     return zeroNode();
   }
+  const carried = overflowIntDiff(a, b);
+  if (carried) return carried;
+  // A finite non-integer beside an integer past the float range is not dropped.
+  // The real difference rotates through ln 0 and comes out negative, so the node only remembers both operands.
+  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "sub");
+  // Two huge-carried terms whose small parts are not both exact integers.
+  // The real circuit drops one of them and would certify the rest.
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined) {
@@ -1060,12 +1106,15 @@ export function domainAdd(a: Node, b: Node): Node {
 }
 
 function domainAddBuild(a: Node, b: Node): Node {
+  const cancelled = sumOfNegation(a, b);
+  if (cancelled) return cancelled;
   const carried = overflowIntSum(a, b);
   if (carried) return carried;
   // A finite non-integer beside an integer past the float range is not dropped.
   // Building the sum rotates through ln 0 and comes out negative, so the node only remembers both operands.
   if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "add");
   if (floatOverflowInt(b) && finiteBeside(a)) return rememberHugeReal(b, a, "add");
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
@@ -1105,6 +1154,7 @@ export function sumOfNegation(a: Node, b: Node): Node | null {
 export function domainNeg(b: Node): Node {
   const out = markMaybeInfinite(domainNegBuild(b), b);
   if (out !== b && !negOf.has(out)) negOf.set(out, b);
+  if (unresolvedHuge.has(b)) unresolvedHuge.add(out);
   return out;
 }
 
