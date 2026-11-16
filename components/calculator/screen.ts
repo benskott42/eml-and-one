@@ -91,9 +91,18 @@ export function runNode(node: Node, mode: Mode, budget?: { maxNodes?: number }):
   try {
     const report = evaluateReport(node, {}, { maxNodes: budget?.maxNodes ?? 80_000 });
     let text = formatC(report.value);
-    // 10^(-400) underflows to a zero whose imaginary part is −0, and the
-    // formatter prints that as −0. The value is not negative. Show 0, flagged.
-    if (report.underflowed && (text === "−0" || text === "-0")) text = "0 ≈";
+    // A printed −0 can be a negative real or only a stray imaginary −0.
+    // The real part's own sign decides. 10^(−400) is +0; a negative underflow stays −0.
+    if (report.underflowed) {
+      const re = report.value.re;
+      const im = report.value.im;
+      const reZero = re === 0 || Object.is(re, -0);
+      const imZero = im === 0 || Object.is(im, -0);
+      if (reZero && imZero && (text === "−0" || text === "-0" || text === "0")) {
+        const negative = Object.is(re, -0) || re < 0 || Object.is(1 / re, -Infinity);
+        text = negative ? "−0 ≈" : "0 ≈";
+      }
+    }
     return {
       value: report.value,
       text,

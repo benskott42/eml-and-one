@@ -607,6 +607,11 @@ async function main() {
     console.error("a 400k paste was not rejected quickly", pasteMs, uiAlert());
     failed = true;
   }
+  await setUiProgram(`#${"1".repeat(50_002)}`);
+  if (uiAlert() !== "Too long: program numbers are limited to 50,001 digits.") {
+    console.error("a long program number was refused as presses", uiAlert());
+    failed = true;
+  }
   const storedProgram = uiView.document.querySelector("input[placeholder='#110, 110, or 11E']");
   if (storedProgram instanceof uiView.HTMLInputElement && storedProgram.value.length > 50_001) {
     console.error("an oversized word stayed in the program field", storedProgram.value.length);
@@ -827,15 +832,66 @@ async function main() {
     console.error("exponent copy was not clean ASCII", exponentCopy);
     failed = true;
   }
+  const infinityCopy = displayedCopy("∞");
+  const negativeInfinityCopy = displayedCopy("−∞");
+  if (infinityCopy.text !== "Infinity" || negativeInfinityCopy.text !== "-Infinity") {
+    console.error("infinity copy was not ASCII", infinityCopy, negativeInfinityCopy);
+    failed = true;
+  }
   const { compileExpression } = await import("../lib/eml/parse");
+  const { floatRoundTrip } = await import("../components/calculator/chrome");
+  const floatPower = runNode(compileExpression("2^300", {}), "float");
+  const floatCopied = floatRoundTrip(floatPower.value);
+  if (
+    floatCopied === "2.037036e90" ||
+    Number(floatCopied) !== floatPower.value.re ||
+    !floatCopied.includes("e") ||
+    floatCopied.startsWith("-")
+  ) {
+    console.error("float 2^300 copy was not the full double", floatCopied, floatPower.value.re, floatPower.text);
+    failed = true;
+  }
   const underflowed = runNode(compileExpression("10^(-400)", {}), "float");
-  if (underflowed.text !== "0 ≈" || underflowed.text.startsWith("−") || underflowed.text.startsWith("-") || !underflowed.underflowed) {
-    console.error("float 10^(-400) printed a negative zero", underflowed.text, underflowed.underflowed);
+  const underflowCopy = floatRoundTrip(underflowed.value);
+  const positiveReal = !Object.is(underflowed.value.re, -0) && !(underflowed.value.re < 0);
+  if (underflowed.text !== "0 ≈" || underflowCopy !== "0" || !positiveReal || !underflowed.underflowed) {
+    console.error("float 10^(-400) kept a spurious minus", underflowed.text, underflowCopy, underflowed.value);
+    failed = true;
+  }
+  const negativeUnder = runNode(compileExpression("(0-1)*tan(10^(-5000))", {}), "float");
+  const negativeCopy = floatRoundTrip(negativeUnder.value);
+  const negativeReal = Object.is(negativeUnder.value.re, -0) || negativeUnder.value.re < 0 || Object.is(1 / negativeUnder.value.re, -Infinity);
+  if (!negativeReal || negativeUnder.text !== "−0 ≈" || negativeCopy !== "-0") {
+    console.error("a negative underflow lost its sign", negativeUnder.text, negativeCopy, negativeUnder.value.re, 1 / negativeUnder.value.re);
     failed = true;
   }
   const signedZero = runNode(compileExpression("-0", {}), "float");
   if (signedZero.text !== "−0") {
     console.error("a real negative zero was rewritten", signedZero.text);
+    failed = true;
+  }
+  const { resolveExactCopy } = await import("../lib/eml/exact");
+  const seventh = resolveExactCopy(compileExpression("1/7", {}));
+  if (!seventh.complete || !seventh.text.startsWith("0.142857142857") || seventh.text.includes("e") || seventh.text.length < 40) {
+    console.error("1/7 copy was not the full fraction", seventh);
+    failed = true;
+  }
+  const near = resolveExactCopy(compileExpression("10^20+10^(-10)", {}));
+  if (!near.complete || near.text.includes("e") || !near.text.includes("100000000000000000000.0000000001")) {
+    console.error("10^20+10^(-10) copy collapsed", near.text);
+    failed = true;
+  }
+  const powerCopy = resolveExactCopy(compileExpression("2^300", {}));
+  const powerAgain = resolveExactCopy(compileExpression(powerCopy.text, {}));
+  if (!powerCopy.complete || powerCopy.text !== digits || powerAgain.text !== powerCopy.text) {
+    console.error("2^300 copy did not paste back", powerCopy.text.length, powerAgain.text.length);
+    failed = true;
+  }
+  const thousand = (BigInt(2) ** BigInt(1000)).toString();
+  const thousandCopy = resolveExactCopy(compileExpression("2^1000", {}));
+  const thousandAgain = resolveExactCopy(compileExpression(thousandCopy.text, {}));
+  if (!thousandCopy.complete || thousandCopy.text !== thousand || thousandAgain.text !== thousandCopy.text) {
+    console.error("2^1000 copy was not every digit", thousandCopy.complete, thousandCopy.text.length, thousandAgain.text.length);
     failed = true;
   }
   const limitNode = nodeFromRpn(`${"1".repeat(80)}${"E".repeat(79)}`.split(""));
@@ -845,6 +901,56 @@ async function main() {
     console.error("float limit did not explain the dash", limited.text, limited.notice, limitedReason);
     failed = true;
   }
+
+  const { EARLY_KEY_SCRIPT } = await import("../components/calculator/earlyKeys");
+  const earlyDom = new JSDOM("<!doctype html><html><body><button class=\"ti-btn-one\">1</button><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const earlyView = earlyDom.window;
+  globals.window = earlyView;
+  globals.self = earlyView;
+  globals.document = earlyView.document;
+  globals.HTMLElement = earlyView.HTMLElement;
+  earlyView.eval(EARLY_KEY_SCRIPT);
+  const earlyButton = earlyView.document.querySelector(".ti-btn-one");
+  earlyButton?.dispatchEvent(new earlyView.MouseEvent("click", { bubbles: true, cancelable: true }));
+  earlyView.document.dispatchEvent(new earlyView.KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true }));
+  const earlyMount = earlyView.document.getElementById("root");
+  if (!earlyMount || !earlyButton) {
+    console.error("missing early-press root");
+    failed = true;
+  } else {
+    const earlyRoot = createRoot(earlyMount);
+    await act(async () => {
+      earlyRoot.render(<EmlCalculator />);
+    });
+    const replayed = earlyView.document.querySelectorAll(".ti-lcd-stack p").length;
+    if (earlyView.document.querySelector("[aria-label='First visit']")) {
+      console.error("an early click left the welcome card open");
+      failed = true;
+    }
+    if (replayed !== 1 || earlyView.document.querySelector(".ti-lcd-result")?.textContent?.trim() !== "1") {
+      console.error("an early click and key were not replayed once", replayed, earlyView.document.querySelector(".ti-lcd-result")?.textContent);
+      failed = true;
+    }
+    await act(async () => {
+      earlyView.document.dispatchEvent(new earlyView.KeyboardEvent("keydown", { key: "1", bubbles: true, cancelable: true }));
+    });
+    const afterLive = earlyView.document.querySelectorAll(".ti-lcd-stack p").length;
+    if (afterLive !== 2) {
+      console.error("a later key press was doubled or dropped", afterLive);
+      failed = true;
+    }
+    await act(async () => {
+      earlyRoot.unmount();
+    });
+  }
+  earlyView.close();
+  globals.window = uiView;
+  globals.self = uiView;
+  globals.document = uiView.document;
+  globals.HTMLElement = uiView.HTMLElement;
 
   const escapeDom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/",

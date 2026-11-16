@@ -71,16 +71,29 @@ export function CalculatorView(props: CalculatorModel) {
   const needsValue = !freeInput && model.stack.length < 1;
   const needsPair = !freeInput && model.stack.length < 2;
   const [showCard, setShowCard] = useState(false);
+  const dismissCard = useCallback(() => {
+    setShowCard(false);
+    try {
+      window.localStorage.setItem("eml-onboarding", "1");
+    } catch {
+      /* the card stays dismissed for this visit */
+    }
+  }, []);
   useEffect(() => {
     const earlyWindow = window as Window & { __emlLive?: boolean; __emlEarly?: string[] };
     const queued = earlyWindow.__emlEarly ?? [];
     earlyWindow.__emlLive = true;
     earlyWindow.__emlEarly = [];
+    if (queued.length > 0) {
+      // The presses already happened, before this render. Close the card with them.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      dismissCard();
+    }
     for (const key of queued) {
       if (key === "1") pushOne();
       else applyEml();
     }
-  }, [applyEml, pushOne]);
+  }, [applyEml, dismissCard, pushOne]);
   useEffect(() => {
     let open = false;
     try {
@@ -92,14 +105,6 @@ export function CalculatorView(props: CalculatorModel) {
     // Client-only: the server render stays without the card so hydration matches.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowCard(true);
-  }, []);
-  const dismissCard = useCallback(() => {
-    setShowCard(false);
-    try {
-      window.localStorage.setItem("eml-onboarding", "1");
-    } catch {
-      /* the card stays dismissed for this visit */
-    }
   }, []);
   useEffect(() => {
     if (!showCard) return;
@@ -211,7 +216,7 @@ export function CalculatorView(props: CalculatorModel) {
               </p>
               <div className="ti-lcd-copies">
                 {canCopyValue && top ? (
-                  <CopyValue key={top.text} shown={top.text} onError={reportError} />
+                  <CopyValue key={top.text} shown={top.text} node={top.mode === "exact" ? top.node : null} value={top.mode === "float" ? top.value : null} bound={top.bound} onError={reportError} />
                 ) : null}
                 {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} onError={reportError} /> : null}
               </div>
@@ -233,7 +238,7 @@ export function CalculatorView(props: CalculatorModel) {
               <summary>Details</summary>
               {model.note ? <p className="ti-lcd-note"><span title={fullNumber ?? undefined}>{model.note}</span></p> : null}
               {preview?.full ? <p className="ti-press-meta">bits {preview.full}</p> : null}
-              <p className="ti-press-meta">1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</p>
+              <p className="ti-press-meta">1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E. A word over 20,000 presses cannot be copied or loaded again.</p>
               {preview?.copyable ? <CopyChip text={preview.full} label="Copy presses" ariaLabel="Copy press string" onError={reportError} /> : null}
             </details>
           </div>

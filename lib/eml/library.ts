@@ -25,7 +25,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, noteExactLiteral, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -851,9 +851,20 @@ installIntegerBuilder(integerNode);
  * A decimal literal. Integers and short decimals become pure EML circuits.
  * Anything too large to build from 1 is an input terminal.
  */
+/** Long enough for a copied exact integer, including 2^1000, to be pasted back. */
+const LITERAL_DIGITS = 4_000;
+
+function exactRealInput(text: string): Node {
+  const numeric = Number(text);
+  const re = Number.isFinite(numeric) ? numeric : text.startsWith("-") ? -Infinity : Infinity;
+  return noteExactLiteral(input({ re, im: 0 }, text), text);
+}
+
 function digitsToInteger(sign: number, digits: string): Node {
   const body = digits.replace(/^0+(?=\d)/, "") || "0";
-  if (body.length > 40) throw new EmlError("That integer is too long to build from 1.");
+  if (body.length > LITERAL_DIGITS) throw new EmlError("That integer is too long to build from 1.");
+  // A copied 2^300 is 91 digits. Building each digit as a multiply is too slow to paste.
+  if (body.length > 40) return exactRealInput(`${sign < 0 ? "-" : ""}${body}`);
   if (body.length <= 15) {
     const n = Number(body);
     if (Number.isSafeInteger(n)) return integerNode(sign * n);
@@ -897,7 +908,7 @@ function literalNodeBuild(text: string): Node {
     const frac = sci[3] ?? "";
     const digits = `${sci[2]}${frac}`.replace(/^0+(?=\d)/, "") || "0";
     const expAdj = exp - frac.length;
-    if (digits.length > 40) throw new EmlError("That integer is too long to build from 1.");
+    if (digits.length > LITERAL_DIGITS) throw new EmlError("That integer is too long to build from 1.");
     if (!Number.isInteger(exp) || Math.abs(expAdj) > 1_000_000) {
       throw new EmlError("That exponent is too large to build.");
     }
@@ -924,6 +935,10 @@ function literalNodeBuild(text: string): Node {
     if (digits.length <= 40 && frac.length <= 40) {
       const magnitude = tDiv(digitsToInteger(1, digits), pow10(frac.length));
       return sign < 0 ? tNeg(magnitude) : magnitude;
+    }
+    if (digits.length <= LITERAL_DIGITS && frac.length <= LITERAL_DIGITS) {
+      const wholeText = whole || "0";
+      return exactRealInput(`${sign < 0 ? "-" : ""}${wholeText}.${frac}`);
     }
   }
   throw new EmlError(`Cannot read the number ${text}.`);

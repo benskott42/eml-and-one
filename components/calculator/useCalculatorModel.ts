@@ -39,12 +39,26 @@ import { useExactScheduler } from "./useExactScheduler";
 
 const MAX_WORD_PRESSES = 50_001;
 const WORD_TOO_LONG = "Too long: words are limited to 50,001 presses.";
+const PROGRAM_TOO_LONG = "Too long: program numbers are limited to 50,001 digits.";
 
 function isPressWhitespace(code: number): boolean {
   return code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32
     || code === 160 || code === 0xfeff
     || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
     || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000;
+}
+
+function leadingHash(source: string): boolean {
+  for (let i = 0; i < source.length; i += 1) {
+    const code = source.charCodeAt(i);
+    if (isPressWhitespace(code)) continue;
+    return code === 35;
+  }
+  return false;
+}
+
+function tooLongMessage(source: string): string {
+  return leadingHash(source) ? PROGRAM_TOO_LONG : WORD_TOO_LONG;
 }
 
 function wordExceedsPressLimit(source: string): boolean {
@@ -704,7 +718,7 @@ export function useCalculatorModel() {
     // keeping it in state makes the next render paint the whole string.
     if (wordExceedsPressLimit(value)) {
       oversizedProgram.current = true;
-      fail(WORD_TOO_LONG);
+      fail(tooLongMessage(value));
       return;
     }
     oversizedProgram.current = false;
@@ -714,7 +728,7 @@ export function useCalculatorModel() {
   const loadProgramText = useCallback((source: string) => {
     if (oversizedProgram.current || wordExceedsPressLimit(source)) {
       oversizedProgram.current = false;
-      fail(WORD_TOO_LONG);
+      fail(tooLongMessage(source));
       return;
     }
     try {

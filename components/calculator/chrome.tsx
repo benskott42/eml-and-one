@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
+import { resolveExactCopy } from "@/lib/eml/exact";
+import { type C } from "@/lib/eml/complex";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 
@@ -20,6 +22,7 @@ export function CopyChip({
   title,
   onError,
   copiedLabel = "Copied",
+  prepare,
 }: {
   text: string;
   label: string;
@@ -27,8 +30,10 @@ export function CopyChip({
   title?: string;
   onError?: (message: string) => void;
   copiedLabel?: string;
+  prepare?: () => { text: string; copiedLabel?: string };
 }) {
   const [copied, setCopied] = useState(false);
+  const [note, setNote] = useState(copiedLabel);
   useEffect(() => {
     if (!copied) return;
     const timer = window.setTimeout(() => setCopied(false), 2000);
@@ -48,12 +53,16 @@ export function CopyChip({
           onError?.("Could not copy. The clipboard is not available.");
           return;
         }
-        void write(text).then(() => setCopied(true)).catch((err: unknown) => {
+        const prepared = prepare ? prepare() : { text, copiedLabel };
+        void write(prepared.text).then(() => {
+          setNote(prepared.copiedLabel ?? copiedLabel);
+          setCopied(true);
+        }).catch((err: unknown) => {
           onError?.(clipboardError(err));
         });
       }}
     >
-      {copied ? copiedLabel : label}
+      {copied ? note : label}
     </button>
   );
 }
@@ -75,18 +84,76 @@ function machineNumber(shown: string): string {
     .replaceAll("×10^−", "e-")
     .replaceAll("×10^+", "e")
     .replaceAll("×10^", "e")
-    .replaceAll("−", "-");
+    .replaceAll("−", "-")
+    .replaceAll("∞", "Infinity");
   return plain.replace(/(\d)\s*([+-])\s*(?=\d|i)/g, "$1$2");
 }
 
-export function CopyValue({ shown, onError }: { shown: string; onError?: (message: string) => void }) {
+/** Shortest round-trip for one float64, with the sign of zero kept. */
+function floatPart(n: number): string {
+  if (Object.is(n, -0)) return "-0";
+  if (n === 0) return "0";
+  if (!Number.isFinite(n)) {
+    if (Number.isNaN(n)) return "NaN";
+    return n > 0 ? "Infinity" : "-Infinity";
+  }
+  return n.toString().replace("e+", "e");
+}
+
+/** Every significant digit the double holds. A stray imaginary −0 is not part of a real. */
+export function floatRoundTrip(value: C): string {
+  const reNeg = Object.is(value.re, -0);
+  const imNeg = Object.is(value.im, -0);
+  const reZero = value.re === 0 || reNeg;
+  const imZero = value.im === 0 || imNeg;
+  if (reZero && imZero) return reNeg ? "-0" : "0";
+  if (imZero) return floatPart(value.re);
+  if (reZero) {
+    const imag = floatPart(value.im);
+    if (imag === "1") return "i";
+    if (imag === "-1") return "-i";
+    return `${imag}i`;
+  }
+  const re = floatPart(value.re);
+  const imAbs = floatPart(Math.abs(value.im));
+  const sign = value.im < 0 || imNeg ? "-" : "+";
+  const imag = imAbs === "1" ? "i" : `${imAbs}i`;
+  return `${re}${sign}${imag}`;
+}
+
+export function CopyValue({
+  shown,
+  node,
+  value,
+  bound,
+  onError,
+}: {
+  shown: string;
+  node?: Node | null;
+  value?: C | null;
+  bound?: Record<string, C>;
+  onError?: (message: string) => void;
+}) {
   const copy = displayedCopy(shown);
+  const copiedLabel = copy.approximate ? "Copied · ≈ not certified" : "Copied";
   return (
     <CopyChip
       text={copy.text}
       label="Copy value"
       ariaLabel="Copy displayed value"
-      copiedLabel={copy.approximate ? "Copied · ≈ not certified" : "Copied"}
+      copiedLabel={copiedLabel}
+      prepare={node ? () => {
+        try {
+          const exact = resolveExactCopy(node, bound ?? {});
+          return {
+            text: exact.text,
+            copiedLabel: exact.complete ? "Copied" : `Copied as shown (${exact.digits} digits)`,
+          };
+        } catch {
+          const digits = copy.text.match(/\d/g)?.length ?? 0;
+          return { text: copy.text, copiedLabel: `Copied as shown (${digits} digits)` };
+        }
+      } : value ? () => ({ text: floatRoundTrip(value), copiedLabel }) : undefined}
       onError={onError}
     />
   );

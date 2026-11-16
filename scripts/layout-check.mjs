@@ -1,11 +1,41 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const site = process.env.SITE || "http://127.0.0.1:4173/eml-and-one/";
-const port = Number(process.env.LAYOUT_CHROME_PORT || 9413);
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const chosen = address && typeof address === "object" ? address.port : 0;
+      server.close(() => resolve(chosen));
+    });
+  });
+}
+
+async function choosePort() {
+  const preferred = process.env.LAYOUT_CHROME_PORT ? Number(process.env.LAYOUT_CHROME_PORT) : 0;
+  if (preferred) {
+    const open = await new Promise((resolve) => {
+      const server = createServer();
+      server.once("error", () => resolve(false));
+      server.listen(preferred, "127.0.0.1", () => {
+        server.close(() => resolve(true));
+      });
+    });
+    if (open) return preferred;
+    console.error(`debugging port ${preferred} is busy; choosing a free port`);
+  }
+  return freePort();
+}
+
+const port = await choosePort();
 const chromeBin = process.env.CHROME || "google-chrome";
 const failures = [];
 let chrome;
@@ -17,14 +47,19 @@ function fail(message) {
 
 function launch() {
   const profile = mkdtempSync(join(tmpdir(), "layout-chrome-"));
-  return spawn(chromeBin, [
+  const child = spawn(chromeBin, [
     "--headless=new",
     "--disable-gpu",
     "--no-sandbox",
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  let log = "";
+  child.stdout.on("data", (chunk) => { log += chunk; });
+  child.stderr.on("data", (chunk) => { log += chunk; });
+  child.chromeLog = () => log;
+  return child;
 }
 
 async function connect(timeoutMs) {
@@ -57,10 +92,17 @@ const viewports = [
 ];
 const samples = [
   { name: "one", expr: "2+2", includes: "4", copy: "4" },
-  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i", copy: "1.414213562373-0.000314159265i" },
+  { name: "complex", expr: "sqrt(2)-0.000314159265*i", includes: "i", copy: "1.41421356237309504880168872420969807856967187537694807317667973799073247846210703885038753432764-0.000314159265i" },
   { name: "exponent", expr: "1.234568*10^20", includes: "1234568" },
   { name: "power", expr: "2^300", includes: "2037035976", copy: (BigInt(2) ** BigInt(300)).toString() },
 ];
+
+const timer = setTimeout(() => {
+  console.error("layout check timed out");
+  if (chrome && typeof chrome.chromeLog === "function") console.error(chrome.chromeLog());
+  if (chrome && !chrome.killed) chrome.kill();
+  process.exit(1);
+}, 180_000);
 
 try {
   chrome = launch();
@@ -149,6 +191,49 @@ try {
       }
       parent = parent.parentElement;
     }
+    const colorAlpha = (value) => {
+      if (!value || value === "currentcolor") return 1;
+      if (value === "transparent") return 0;
+      const slash = /\\/\\s*([0-9.]+)(%?)\\s*\\)/.exec(value);
+      if (slash) return slash[2] ? Number(slash[1]) / 100 : Number(slash[1]);
+      const comma = /rgba\\(\\s*[\\d.]+\\s*,\\s*[\\d.]+\\s*,\\s*[\\d.]+\\s*,\\s*([\\d.]+)\\s*\\)/.exec(value);
+      if (comma) return Number(comma[1]);
+      return 1;
+    };
+    const sampleMisses = (el) => {
+      if (!el) return ["missing"];
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return ["box"];
+      const spots = [[0.5, 0.5], [0.15, 0.5], [0.85, 0.5], [0.5, 0.25], [0.5, 0.75]];
+      const misses = [];
+      for (const [x, y] of spots) {
+        const node = document.elementFromPoint(r.left + r.width * x, r.top + r.height * y);
+        if (!node || (el !== node && !el.contains(node))) misses.push(x + "," + y);
+      }
+      return misses;
+    };
+    const hidden = [];
+    const conceal = (el, label) => {
+      if (!el) return;
+      let host = el;
+      let opacity = 1;
+      while (host && host.nodeType === 1) {
+        const style = getComputedStyle(host);
+        const own = Number(style.opacity);
+        if (Number.isFinite(own)) opacity *= own;
+        const painted = style.contain === "paint" || style.contain === "strict" || (style.contain || "").split(" ").includes("paint");
+        if (painted) hidden.push(label + " contain");
+        host = host.parentElement;
+      }
+      if (opacity === 0) hidden.push(label + " opacity");
+      const style = getComputedStyle(el);
+      const fill = style.webkitTextFillColor || style.getPropertyValue("-webkit-text-fill-color");
+      if (colorAlpha(style.color) === 0 || (fill && fill !== "currentcolor" && colorAlpha(fill) === 0)) hidden.push(label + " text");
+      const misses = sampleMisses(el);
+      if (misses.length) hidden.push(label + " clip " + misses.join(" "));
+    };
+    conceal(result, "result");
+    conceal(chip, "chip");
     const view = { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
     const inside = (inner, outer) => !!inner && inner.top >= outer.top - 1 && inner.left >= outer.left - 1 && inner.bottom <= outer.bottom + 1 && inner.right <= outer.right + 1 && inner.height > 8;
     const resultMore = !!result && result.scrollHeight > result.clientHeight + 1;
@@ -177,6 +262,7 @@ try {
       eml: box(eml),
       resultHit: hit(result),
       chipHit: hit(chip),
+      hidden,
       chipInView: inside(box(chip), view),
       chipInLcd: inside(box(chip), box(lcd)),
       oneInView: inside(box(one), view),
@@ -277,6 +363,7 @@ try {
       if (!shown.chipInView || !shown.chipInLcd) fail(`${label} Copy chip is not fully visible`);
       if (shown.resultHit !== "self") fail(`${label} result is covered by ${shown.resultHit}`);
       if (shown.chipHit !== "self") fail(`${label} Copy chip is covered by ${shown.chipHit}`);
+      if (shown.hidden?.length) fail(`${label} hides the result or chip via ${shown.hidden.join(", ")}`);
       const copied = await evalJs(`(() => {
         window.__copied = "";
         const chip = [...document.querySelectorAll("button")].find((el) => (el.textContent || "").includes("Copy value"));
@@ -296,6 +383,48 @@ try {
       if ((shown.resultMore && !shown.resultCue) || (shown.lcdMore && !shown.lcdCue)) {
         fail(`${label} has more content below without a cue`);
       }
+      if (sample.name === "power" && viewport.width === 320 && copied && copied === sample.copy) {
+        await evalJs(`(() => {
+          const input = document.querySelector("#expression");
+          const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+          set.call(input, ${JSON.stringify(copied)});
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        })()`);
+        const pasteDeadline = Date.now() + 5_000;
+        let pasted = false;
+        while (Date.now() < pasteDeadline) {
+          pasted = await evalJs(`(() => {
+            const input = document.querySelector("#expression");
+            const key = Object.keys(input).find((name) => name.startsWith("__reactProps"));
+            return key ? input[key].value === ${JSON.stringify(copied)} : false;
+          })()`);
+          if (pasted) break;
+          await delay(40);
+        }
+        if (!pasted) {
+          fail(`${label} did not commit the copied digits`);
+        } else {
+          await evalJs(`document.querySelector("#expression").form.requestSubmit()`);
+          let again = null;
+          const againDeadline = Date.now() + 30_000;
+          while (Date.now() < againDeadline) {
+            again = await evalJs(measureSource);
+            if ((again?.text ?? "").includes(sample.includes)) break;
+            await delay(80);
+          }
+          const recopied = await evalJs(`(() => {
+            window.__copied = "";
+            const chip = [...document.querySelectorAll("button")].find((el) => (el.textContent || "").includes("Copy value"));
+            if (!chip) return "";
+            const r = chip.getBoundingClientRect();
+            chip.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+            return window.__copied;
+          })()`);
+          if (!again?.text?.includes(sample.includes) || recopied !== copied) {
+            fail(`${label} pasted copy did not round-trip (${JSON.stringify(recopied).slice(0, 80)})`);
+          }
+        }
+      }
       console.log(label, JSON.stringify({
         text: shown.text.slice(0, 60),
         resultMore: shown.resultMore,
@@ -305,6 +434,20 @@ try {
       }));
     }
   }
+  const mutations = [
+    ["a center-only clip-path", "clip-path: inset(42% 42% 42% 42%)"],
+    ["transparent text", "color: transparent"],
+    ["opacity 0", "opacity: 0"],
+    ["contain: paint", "contain: paint"],
+  ];
+  for (const [name, style] of mutations) {
+    await evalJs(`(() => { document.querySelector(".ti-lcd-result").style.cssText = ${JSON.stringify(style)}; })()`);
+    const guarded = await evalJs(measureSource);
+    const caught = (guarded?.hidden || []).some((item) => String(item).startsWith("result"));
+    if (!caught) fail(`guard allowed ${name} (${JSON.stringify(guarded?.hidden || [])})`);
+    else console.log(`guard caught ${name}`);
+    await evalJs(`document.querySelector(".ti-lcd-result").style.cssText = ""`);
+  }
   if (failures.length) {
     console.error(`${failures.length} failed`);
     process.exitCode = 1;
@@ -313,7 +456,9 @@ try {
   }
 } catch (err) {
   console.error(err);
+  if (chrome && typeof chrome.chromeLog === "function" && chrome.chromeLog()) console.error(chrome.chromeLog());
   process.exitCode = 1;
 } finally {
+  clearTimeout(timer);
   if (chrome && !chrome.killed) chrome.kill();
 }

@@ -90,7 +90,7 @@ export function SequencePanel({ source, typed, result }: { source: SequenceSourc
                 </button>
               </div>
             ) : (
-              <p>too long to list</p>
+              <p>Programs over 20,000 presses cannot be copied or reloaded as a word.</p>
             )}
             <div className="ti-press-actions" role="group" aria-label="Sequence view">
               <button type="button" className="ti-text-btn" aria-pressed={show === "outline"} onClick={() => setShow("outline")}>Outline</button>
