@@ -74,6 +74,7 @@ import {
   unrankRpn,
 } from "./programIndex";
 import { encodePresses, previewPresses, pressPreviewForNode } from "./presses";
+import { runNode } from "../../components/calculator/screen";
 import { agreementNote, compileExpression, referenceExpression, referenceLostTerm } from "./parse";
 import { packCircuit, readWireNum, unpackCircuit, wireNum, type WireNum } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
@@ -1926,6 +1927,26 @@ if (inShard("core")) {
   if (!infUnverified && (infIsOne || infExactIsOne || !Number.isNaN(infFold.value.re) || !infExact.value.re.isNaN() || !infFold.singular || !infExact.singular)) {
     failed += 1;
     console.log("FAIL (1+∞)-∞", infFold.value, infFold.singular, formatExact(infExact.value), infExact.singular);
+  }
+  // v1.1 (reviewbot rebase2 re-review): the text the screen shows for (1+1/0)−1/0. Float mode
+  // is runNode (the screen's own function): "—" with "couldn't verify". Exact mode is the worker
+  // path: the packed circuit, unpacked in a fresh process, must come back unverified, which the
+  // scheduler shows as "—" / "couldn't verify" (useExactScheduler), never a value.
+  {
+    const node = compileExpression("(1+1/0)-1/0", {});
+    const shown = runNode(node, "float");
+    if (shown.text !== "—" || shown.notice !== "couldn't verify") {
+      failed += 1;
+      console.log("FAIL (1+∞)-∞ float screen", shown.text, shown.notice);
+    }
+    const packed = packCircuit(node);
+    const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify([{ source: "(1+1/0)-1/0", tokens: packed.tokens, root: packed.root }]));
+    const row = fresh.status === 0 ? (JSON.parse(fresh.stdout) as Array<{ unverified: boolean; text: string }>)[0] : undefined;
+    const verdict = row ? compareVerdict({ text: row.text, unverified: row.unverified, notCertified: false, cancelledZero: false, differs: true }) : null;
+    if (!row || !row.unverified || !verdict || !("notice" in verdict) || verdict.notice !== "couldn't verify") {
+      failed += 1;
+      console.log("FAIL (1+∞)-∞ exact screen", fresh.status, row?.text, row?.unverified, fresh.stderr?.slice(0, 200));
+    }
   }
   const varFold = evaluateReport(compileExpression("(x+y)-y", { x: V("x"), y: V("y") }), { x: c(1), y: c(Infinity) });
   const varExact = exactReport(compileExpression("(x+y)-y", { x: V("x"), y: V("y") }), { x: c(1), y: c(Infinity) });
