@@ -8,9 +8,12 @@ import {
   endInteger,
   decadeOf,
   hiddenUnderflow,
+  integerQuotient,
   isLostTiny,
   isNonfiniteNode,
   knownValue,
+  markInfiniteSource,
+  markMaybeInfinite,
   noteDecade,
   noteLostTiny,
   provenFinite,
@@ -22,6 +25,7 @@ import {
   noteLn,
   noteNonfinite,
   rangeOf,
+  sumOfNegation,
   tagInteger,
   rawDiv,
   rawMul,
@@ -68,6 +72,99 @@ function imagZero(v: { re: number; im: number }): boolean {
 }
 
 /**
+ * A rational multiple of π, recorded when the node is built.
+ * tan(π/2 + kπ) is recognized from this, not from a float near the pole.
+ */
+type PiQ = { n: bigint; d: bigint };
+
+const piCoeff = new WeakMap<Node, PiQ>();
+
+function gcdBig(a: bigint, b: bigint): bigint {
+  let x = a < BigInt(0) ? -a : a;
+  let y = b < BigInt(0) ? -b : b;
+  while (y !== BigInt(0)) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  return x;
+}
+
+function piQ(n: bigint, d: bigint): PiQ | null {
+  if (d === BigInt(0)) return null;
+  if (d < BigInt(0)) {
+    n = -n;
+    d = -d;
+  }
+  const g = gcdBig(n, d);
+  return { n: n / g, d: d / g };
+}
+
+function piOf(node: Node): PiQ | null {
+  return piCoeff.get(node) ?? null;
+}
+
+function tagPi(node: Node, coeff: PiQ | null): Node {
+  if (coeff && rangeOf(node).int === undefined) piCoeff.set(node, coeff);
+  return node;
+}
+
+function intFactor(node: Node): bigint | null {
+  if (piCoeff.has(node)) return null;
+  const n = rangeOf(node).int;
+  return n === undefined ? null : n;
+}
+
+function piAdd(a: Node, b: Node): PiQ | null {
+  const left = piOf(a);
+  const right = piOf(b);
+  if (left && right) return piQ(left.n * right.d + right.n * left.d, left.d * right.d);
+  if (left && intFactor(b) === BigInt(0)) return left;
+  if (right && intFactor(a) === BigInt(0)) return right;
+  return null;
+}
+
+function piSub(a: Node, b: Node): PiQ | null {
+  const left = piOf(a);
+  const right = piOf(b);
+  if (left && right) return piQ(left.n * right.d - right.n * left.d, left.d * right.d);
+  if (left && intFactor(b) === BigInt(0)) return left;
+  if (right && intFactor(a) === BigInt(0)) return piQ(-right.n, right.d);
+  return null;
+}
+
+function piMul(a: Node, b: Node): PiQ | null {
+  const left = piOf(a);
+  const right = piOf(b);
+  const ia = intFactor(a);
+  const ib = intFactor(b);
+  if (left && ib !== null) return piQ(left.n * ib, left.d);
+  if (right && ia !== null) return piQ(right.n * ia, right.d);
+  return null;
+}
+
+function piDiv(a: Node, b: Node): PiQ | null {
+  const left = piOf(a);
+  const ib = intFactor(b);
+  if (!left || ib === null || ib === BigInt(0)) return null;
+  return piQ(left.n, left.d * ib);
+}
+
+function piNeg(node: Node): PiQ | null {
+  const coeff = piOf(node);
+  return coeff ? piQ(-coeff.n, coeff.d) : null;
+}
+
+/** π/2 + kπ, written as an odd multiple of π/2. A nearby float is not this. */
+function isSymbolicTanPole(arg: Node): boolean {
+  const coeff = piOf(arg);
+  if (!coeff) return false;
+  const twice = BigInt(2) * coeff.n;
+  if (twice % coeff.d !== BigInt(0)) return false;
+  return (twice / coeff.d) % BigInt(2) !== BigInt(0);
+}
+
+/**
  * A known point, or the center of an interval only a few ulps wide.
  * Negation widens ±i, and a sum widens 2+10^(−18)i, so neither is a point.
  */
@@ -108,14 +205,16 @@ export function tLn(t: Node): Node {
   if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
+  if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
   const inner = plus ?? minus;
-  if (!inner) return node;
-  const decade = decadeOf(inner);
-  // ln(1±x) shares x's decade when that decade still fits. Past the cap, or an
-  // underflow with no decade, the circuit prints 0 and that 0 is not certified.
-  if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
-  else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
-  return node;
+  if (inner) {
+    const decade = decadeOf(inner);
+    // ln(1±x) shares x's decade when that decade still fits. Past the cap, or an
+    // underflow with no decade, the circuit prints 0 and that 0 is not certified.
+    if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
+    else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
+  }
+  return markMaybeInfinite(node, t);
 }
 
 export const tE = memo(() => tagReal(programNode("e"), Math.E));
@@ -297,14 +396,14 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
 
 export function tSub(a: Node, b: Node): Node {
   const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
-  if (series) return series;
+  if (series) return tagPi(markMaybeInfinite(series, a, b), piSub(a, b));
   const node = domainSub(a, b);
   if (isOneNode(a)) oneMinus.set(node, b);
-  return node;
+  return tagPi(markMaybeInfinite(node, a, b), piSub(a, b));
 }
 
 export function tNeg(b: Node): Node {
-  return domainNeg(b);
+  return tagPi(domainNeg(b), piNeg(b));
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -319,12 +418,14 @@ function largeRealSum(a: Node, b: Node): Node | null {
 }
 
 export function tAdd(a: Node, b: Node): Node {
+  const cancelled = sumOfNegation(a, b);
+  if (cancelled) return cancelled;
   const large = largeRealSum(a, b);
-  if (large) return large;
+  if (large) return tagPi(markMaybeInfinite(large, a, b), piAdd(a, b));
   const node = domainAdd(a, b);
   if (isOneNode(a)) onePlus.set(node, b);
   else if (isOneNode(b)) onePlus.set(node, a);
-  return node;
+  return tagPi(node, piAdd(a, b));
 }
 
 export function tInv(b: Node): Node {
@@ -340,14 +441,22 @@ function exactZero(node: Node): boolean {
 function negativeFactor(node: Node): boolean {
   const v = knownValue(node);
   if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
+  if (!Number.isFinite(v.re)) return false;
   return v.re < 0 || Object.is(v.re, -0);
 }
 
+/** A known infinity, or a node marked non-finite. ln(0) is −∞ and is not marked. */
+function nonFiniteFactor(node: Node): boolean {
+  if (isNonfiniteNode(node)) return true;
+  const v = knownValue(node);
+  return v !== null && (!Number.isFinite(v.re) || !Number.isFinite(v.im));
+}
+
 export function tMul(a: Node, b: Node): Node {
-  // 0 · ∞ is indeterminate. Typed infinity and division by the integer 0 are both non-finite.
-  if ((exactZero(a) && isNonfiniteNode(b)) || (exactZero(b) && isNonfiniteNode(a))) {
-    const pole = isNonfiniteNode(a) ? a : b;
-    return naiveIndeterminate(pole);
+  // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
+  if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
+    const pole = nonFiniteFactor(a) ? a : b;
+    return markMaybeInfinite(naiveIndeterminate(pole), a, b);
   }
   // 0 · (−1) is the −0 leaf. The product program collapses that sign.
   if (exactZero(a) && negativeFactor(b)) return negativeZero();
@@ -356,7 +465,7 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
-  return carryTinyScale(rawMul(a, b), a, b, "mul");
+  return tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -382,7 +491,9 @@ export function tDiv(a: Node, b: Node): Node {
   const u = expArgument(a);
   const v = expArgument(b);
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
-  return carryTinyScale(rawDiv(a, b), a, b, "div");
+  const quotient = integerQuotient(a, b);
+  if (quotient) return quotient;
+  return tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
 }
 
 export function tPow(a: Node, b: Node): Node {
@@ -450,7 +561,11 @@ export const tSqrt2 = memo(() => tagReal(programNode("sqrt2"), Math.SQRT2));
 
 export const tI = memo(() => tagValue(programNode("i"), { re: 0, im: 1 }));
 
-export const tPi = memo(() => tagReal(programNode("pi"), Math.PI));
+export const tPi = memo(() => {
+  const node = tagReal(programNode("pi"), Math.PI);
+  piCoeff.set(node, { n: BigInt(1), d: BigInt(1) });
+  return node;
+});
 
 export function tHalfOf(t: Node): Node {
   return rawMul(t, tHalf());
@@ -624,7 +739,11 @@ export function tTan(t: Node): Node {
   const w = tMul(tI(), t);
   const grown = tExp(tMul(tTwo(), w));
   const tanh = tSub(ONE, tDiv(tTwo(), tAdd(grown, ONE)));
-  return flagAngle(tMul(tNeg(tI()), tanh), t, true);
+  const built = flagAngle(tMul(tNeg(tI()), tanh), t, true);
+  if (!isSymbolicTanPole(t)) return built;
+  // Those gates are a large finite, so tan(π/2) − tan(π/2) would be 0.
+  // Dividing by 0 makes this pole a real infinity. The difference is then ∞ − ∞.
+  return markInfiniteSource(flagAngle(rawDiv(built, tZero()), t, true));
 }
 
 /** The sign of Im(t) when the range proves it. 0 is a proven real. null is unknown. */
