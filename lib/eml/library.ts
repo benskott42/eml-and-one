@@ -1,17 +1,22 @@
 import type { C } from "./complex";
 import {
   beginInteger,
+  carryTinyScale,
   domainAdd,
   domainNeg,
   domainSub,
   endInteger,
   decadeOf,
+  hiddenUnderflow,
   integerQuotient,
+  isLostTiny,
   isNonfiniteNode,
   knownValue,
   markInfiniteSource,
   markMaybeInfinite,
   noteDecade,
+  noteLostTiny,
+  provenFinite,
   noteTinyReal,
   naiveSub,
   negativeZero,
@@ -194,11 +199,21 @@ export function tExp(t: Node): Node {
 }
 
 export function tLn(t: Node): Node {
-  const inner = onePlus.get(t);
+  const plus = onePlus.get(t);
+  const minus = oneMinus.get(t);
   // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
-  if (inner && tinyScale(inner, SERIES_REL) !== null) return markSeries(inner, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
   if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
+  const inner = plus ?? minus;
+  if (inner) {
+    const decade = decadeOf(inner);
+    // ln(1±x) shares x's decade when that decade still fits. Past the cap, or an
+    // underflow with no decade, the circuit prints 0 and that 0 is not certified.
+    if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
+    else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
+  }
   return markMaybeInfinite(node, t);
 }
 
@@ -210,6 +225,7 @@ const cosArg = new WeakMap<Node, Node>();
 const expArg = new WeakMap<Node, Node>();
 const sqrtArg = new WeakMap<Node, Node>();
 const onePlus = new WeakMap<Node, Node>();
+const oneMinus = new WeakMap<Node, Node>();
 
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
@@ -379,7 +395,10 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
 }
 
 export function tSub(a: Node, b: Node): Node {
-  const node = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b) ?? domainSub(a, b);
+  const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
+  if (series) return tagPi(markMaybeInfinite(series, a, b), piSub(a, b));
+  const node = domainSub(a, b);
+  if (isOneNode(a)) oneMinus.set(node, b);
   return tagPi(markMaybeInfinite(node, a, b), piSub(a, b));
 }
 
@@ -414,7 +433,9 @@ export function tInv(b: Node): Node {
 }
 
 function exactZero(node: Node): boolean {
-  return rangeOf(node).int === BigInt(0);
+  if (rangeOf(node).int === BigInt(0)) return true;
+  const known = knownValue(node);
+  return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
 }
 
 function negativeFactor(node: Node): boolean {
@@ -440,7 +461,11 @@ export function tMul(a: Node, b: Node): Node {
   // 0 · (−1) is the −0 leaf. The product program collapses that sign.
   if (exactZero(a) && negativeFactor(b)) return negativeZero();
   if (exactZero(b) && negativeFactor(a)) return negativeZero();
-  return tagPi(rawMul(a, b), piMul(a, b));
+  // 0 times a finite value is exactly 0. The other factor's cap mark stops here,
+  // so 0·10^(−500) stays a certified 0.
+  if (exactZero(a) && provenFinite(b)) return tZero();
+  if (exactZero(b) && provenFinite(a)) return tZero();
+  return tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -468,7 +493,7 @@ export function tDiv(a: Node, b: Node): Node {
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
   const quotient = integerQuotient(a, b);
   if (quotient) return quotient;
-  return tagPi(rawDiv(a, b), piDiv(a, b));
+  return tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
 }
 
 export function tPow(a: Node, b: Node): Node {
@@ -482,7 +507,19 @@ export function tPow(a: Node, b: Node): Node {
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0 && va.re > 0 && Number.isFinite(vb.re)) {
     const re = va.re ** vb.re;
-    if (Number.isFinite(re)) tagReal(node, re);
+    // A float underflow is 0, and tagReal would store that as the integer 0.
+    // The power is not that integer. The decade lets a later cancellation see it.
+    if (Number.isFinite(re) && re !== 0) tagReal(node, re);
+    else if (re === 0) {
+      const log10 = Math.log10(va.re) * vb.re;
+      const decade = Math.floor(log10 + 1e-10);
+      // Past 480 digits a power spelling stays unresolved. Inside the cap, the
+      // decade is what lets 1 ± 10^(−k) keep the small term.
+      if (Number.isFinite(decade) && -decade + 48 <= 480) noteDecade(node, decade);
+      // No decade past the cap: a series shortcut must not resolve tan(10^(−5000)).
+      // The mark only refuses a later result that collapsed to a confident 0.
+      else if (Number.isFinite(decade)) noteLostTiny(node);
+    }
   }
   return node;
 }

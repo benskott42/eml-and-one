@@ -13,7 +13,7 @@ import {
   precisionMessage,
   provenInteger,
 } from "./node";
-import { decadeOf, inScaledShell, isMarkedExactInt, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 
 /**
@@ -327,6 +327,22 @@ function vanished(v: Z): boolean {
   return v.re.isZero() && v.im.isZero();
 }
 
+/** True when a past-cap power, or a sum of two underflows, is still in the tree. */
+function lostTinyIn(root: Node): boolean {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    if (isLostTiny(node)) return true;
+    if (node.type === "eml") {
+      stack.push(node.a, node.b);
+    }
+  }
+  return false;
+}
+
 /**
  * Digits needed when a known leaf is too small for the current precision.
  * A large magnitude such as 10^300 is already exact at 120 digits; raising
@@ -586,6 +602,9 @@ export function exactReport(
   if (pass !== 0) return present(report);
   if (vanished(report.value)) {
     if (report.sawLead) return certifyZero(report);
+    // 0 − 10^(−500) and ln(1 − 10^(−500)) have no decade to recover. The zero
+    // is the cap, not a proof. A direct −10^(−500) is not zero and stays.
+    if (lostTinyIn(root)) return certifyZero(report);
     const gap = lossGap;
     // Any recorded cancellation can hide the term that should have survived.
     // A structural zero such as 1−1 records no gap and stays certified.

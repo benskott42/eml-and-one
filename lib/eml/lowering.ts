@@ -244,10 +244,14 @@ function expRange(range: Range): Range {
   const lo = Math.exp(range.re.lo);
   const hi = Math.exp(range.re.hi);
   const mag = Math.max(lo, hi);
-  // exp of a large negative real underflows to 0 in float64. That is a known
-  // zero for choosing a circuit; the node itself still evaluates.
+  // exp of a large negative real underflows in float64. A point at 0 would be
+  // the integer 0, and negation would fold to −0. The enclosure stays positive.
   if (!(mag > 0) || !Number.isFinite(mag)) {
-    if (Number.isFinite(range.re.hi) && range.re.hi < EXP_UNDERFLOW_RE) return point(0, 0);
+    if (Number.isFinite(range.re.hi) && range.re.hi < EXP_UNDERFLOW_RE) {
+      const tiny = Number.MIN_VALUE;
+      if (range.im && range.im.lo === 0 && range.im.hi === 0) return { re: { lo: 0, hi: tiny }, im: { lo: 0, hi: 0 } };
+      return { re: { lo: -tiny, hi: tiny }, im: { lo: -tiny, hi: tiny } };
+    }
     return UNKNOWN;
   }
   const M = outHi(mag);
@@ -698,9 +702,13 @@ function finiteBeside(node: Node): boolean {
   return Math.max(re, im) >= 1e-6;
 }
 
-/** An unknown range is not a proof, and a typed infinity is not finite. */
-function provenFinite(node: Node): boolean {
+/**
+ * An unknown range is not a proof, and a typed infinity is not finite.
+ * A past-cap power is finite: it is only too small to certify inside 480 digits.
+ */
+export function provenFinite(node: Node): boolean {
   if (isNonfiniteNode(node) || realInfinitySign(node) !== null) return false;
+  if (isLostTiny(node)) return true;
   const range = rangeOf(node);
   if (range.int !== undefined) return true;
   if (!range.re || !range.im) return false;
@@ -801,6 +809,20 @@ function buildSub(a: Node, b: Node, kFrom: Node = b): Node {
   if (knownInsideStrip(b)) return finish(rotSub(a, b), range);
   // Unknown, or too large for the strip: scale, then rotate.
   return finish(scaledRot(a, b, kFrom), range);
+}
+
+/**
+ * A real that float64 has already lost, or a decade below the working precision.
+ * 2·exp(−1000) is not a point at Number.MIN_VALUE: its enclosure is about 10^(−323).
+ * Anything that small is still invisible to the 120-digit subtraction.
+ */
+function underflowedReal(node: Node): boolean {
+  const decade = decadeOf(node);
+  if (decade !== undefined && decade <= -300) return true;
+  const size = extent(node);
+  if (!size) return false;
+  const mag = Math.max(size.re, size.im);
+  return mag > 0 && mag <= 1e-300;
 }
 
 const markedExactInt = new WeakSet<Node>();
@@ -927,6 +949,9 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
     const node = buildSub(a, b, kFrom);
     return rememberSub(huge ? node : attachInt(node, diff), a, b);
   }
+  // 0 − b is −b. The subtraction circuit rounds a sub-120-digit b to exact 0.
+  // A past-cap quotient such as 1/10^433 has no decade, but it is still −b.
+  if (ia === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return domainNeg(b);
   return rememberSub(buildSub(a, b, kFrom), a, b);
 }
 
@@ -987,6 +1012,72 @@ function liftExponent(mag: number): number {
  */
 const twoScaled = new WeakSet<Node>();
 const decades = new WeakMap<Node, number>();
+/** A term the 480-digit pass cannot recover. A vanished result that still holds one is not a certified 0. */
+const lostTiny = new WeakSet<Node>();
+const negationOf = new WeakMap<Node, Node>();
+
+export function noteLostTiny(node: Node): Node {
+  lostTiny.add(node);
+  return node;
+}
+
+export function isLostTiny(node: Node): boolean {
+  return lostTiny.has(node);
+}
+
+/** An underflow with no decade and no known nonzero value. Raising precision cannot recover it. */
+export function hiddenUnderflow(node: Node): boolean {
+  if (decadeOf(node) !== undefined) return false;
+  const known = knownValue(node);
+  if (known && (known.re !== 0 || known.im !== 0)) return false;
+  return underflowedReal(node);
+}
+
+function noteNegation(node: Node, arg: Node): Node {
+  negationOf.set(node, arg);
+  return node;
+}
+
+/** floor(log10 |z|) when the node is a known nonzero real or a known integer. */
+function magnitudeDecade(node: Node): number | null {
+  const decade = decadeOf(node);
+  if (decade !== undefined) return decade;
+  const known = knownValue(node);
+  if (known && known.im === 0 && known.re !== 0 && Number.isFinite(known.re)) {
+    return Math.floor(Math.log10(Math.abs(known.re)) + 1e-10);
+  }
+  const n = rangeOf(node).int;
+  if (n === undefined || n === BigInt(0)) return null;
+  const digits = (n < BigInt(0) ? -n : n).toString();
+  return digits.length - 1;
+}
+
+/**
+ * A quotient or product keeps the decade of a tiny real, so 0 − (1/10^400)
+ * and 0 − (exp(−1000)/3) see the same term a bare power would.
+ * Past the 480-digit cap the result is marked, not given a decade: a series
+ * shortcut must not resolve it.
+ */
+export function carryTinyScale(node: Node, a: Node, b: Node, op: "mul" | "div"): Node {
+  if (rangeOf(node).int === BigInt(0)) return node;
+  const da = magnitudeDecade(a);
+  const db = magnitudeDecade(b);
+  if (da !== null && db !== null) {
+    const decade = op === "div" ? da - db : da + db;
+    if (decade <= -300) {
+      if (-decade + 48 <= 480) noteDecade(node, decade);
+      else noteLostTiny(node);
+    }
+    return node;
+  }
+  // exp(−1000)/3 has no decade of its own. Dividing or scaling by a modest
+  // finite factor leaves it below the cap.
+  const hidden = (term: Node) => decadeOf(term) === undefined && (isLostTiny(term) || underflowedReal(term));
+  const modest = (decade: number | null) => decade !== null && decade >= 0 && decade <= 8;
+  if (op === "div" && hidden(a) && modest(db)) noteLostTiny(node);
+  if (op === "mul" && ((hidden(a) && modest(db)) || (hidden(b) && modest(da)))) noteLostTiny(node);
+  return node;
+}
 
 /** Signed power-of-ten exponent of a known real, including values float64 cannot hold. */
 export function noteDecade(node: Node, exp: number): Node {
@@ -1117,6 +1208,14 @@ function domainAddBuild(a: Node, b: Node): Node {
   if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "add");
   if (floatOverflowInt(b) && finiteBeside(a)) return rememberHugeReal(b, a, "add");
   if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
+  // exp(−1000)+exp(−1000) is 2·exp(−1000). The add circuit prints 0, and the
+  // product is the same node as a written 2·exp, so the difference folds to 0.
+  if (a === b && decadeOf(a) === undefined && (isLostTiny(a) || underflowedReal(a))) return rawMul(twoNode(), a);
+  // (−x) + x is 0. The sum circuit cannot see a past-cap x.
+  if (negationOf.get(a) === b || negationOf.get(b) === a) return zeroNode();
+  // 0 + b is b. The add circuit rounds an underflowed b to exact 0.
+  if (rangeOf(a).int === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
+  if (rangeOf(b).int === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
@@ -1139,6 +1238,9 @@ function domainAddBuild(a: Node, b: Node): Node {
   const tagged = range.int !== undefined ? attachInt(node, range.int) : setRange(node, range);
   noteRealSum(tagged, a, b);
   if (unknown) notePrecision(tagged, { kind: "add", left: a, right: b });
+  // exp(−1000)+exp(−1000) is a real tiny sum the circuit prints as 0.
+  // A recorded decade can still be recovered by raising precision, so leave those sums alone.
+  if (underflowedReal(a) && underflowedReal(b) && decadeOf(a) === undefined && decadeOf(b) === undefined) noteLostTiny(tagged);
   return tagged;
 }
 
@@ -1167,6 +1269,8 @@ function domainNegBuild(b: Node): Node {
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();
   // The minus program collapses a tiny value to 0. −x = (−1)·x keeps it.
   const size = extent(b);
-  if (size && Math.max(size.re, size.im) > 0 && Math.max(size.re, size.im) < TINY_MAG) return rawMul(oneNeg(), b);
+  if (size && Math.max(size.re, size.im) > 0 && Math.max(size.re, size.im) < TINY_MAG) return noteNegation(rawMul(oneNeg(), b), b);
+  // The negation stays finite, so 0 times it is an exact 0 and does not inherit the cap mark.
+  if (isLostTiny(b)) return noteLostTiny(noteNegation(rawMul(oneNeg(), b), b));
   return safeNeg(b);
 }
