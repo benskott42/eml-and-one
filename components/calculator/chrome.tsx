@@ -156,11 +156,11 @@ export function copiedValue(input: {
   if (input.node && input.value == null) {
     if (display.text === "undefined" || display.text === "NaN") return { text: "NaN", copiedLabel: "Copied" };
     const whole = provenInteger(input.node);
-    // Past the float range the carried integer can have dropped a finite term.
-    // Copy the screen instead of those digits.
-    if (whole !== undefined && Number.isFinite(Number(whole))) return { text: whole.toString(), copiedLabel: "Copied" };
+    // The carried integer is the exact value, including past the float range.
+    if (whole !== undefined) return { text: whole.toString(), copiedLabel: "Copied" };
     const digits = mantissaDigits(display.text);
-    return { text: display.text, copiedLabel: `Copied as shown (${digits} digits)` };
+    const noun = digits === 1 ? "digit" : "digits";
+    return { text: display.text, copiedLabel: `Copied as shown (${digits} ${noun})` };
   }
   const value = input.value ?? { re: Number.NaN, im: Number.NaN };
   const parts = shownParts(display.text);

@@ -897,9 +897,21 @@ async function main() {
     console.error("exact 0/0 copied a name", exactNan);
     failed = true;
   }
+  const hugeWant = (BigInt(10) ** BigInt(4100) + BigInt(1)).toString();
   const hugeCopy = copiedValue({ shown: "1×10^4100", node: compileExpression("10^4100+1", {}) });
-  if (hugeCopy.copiedLabel === "Copied" || hugeCopy.text.endsWith("0000")) {
-    console.error("10^4100+1 copied a float-truncated integer", hugeCopy.text.slice(-6), hugeCopy.copiedLabel);
+  if (hugeCopy.text !== hugeWant || hugeCopy.copiedLabel !== "Copied") {
+    console.error("10^4100+1 did not copy the exact integer", hugeCopy.text.slice(-6), hugeCopy.copiedLabel);
+    failed = true;
+  }
+  const pow400 = (BigInt(10) ** BigInt(400)).toString();
+  const copy400 = copiedValue({ shown: "1×10^400", node: compileExpression("10^400", {}) });
+  if (copy400.text !== pow400 || copy400.text.length !== 401 || copy400.copiedLabel !== "Copied" || copy400.text === "1e400") {
+    console.error("10^400 did not copy all 401 digits", copy400.text.length, copy400.text.slice(0, 8), copy400.copiedLabel);
+    failed = true;
+  }
+  const oneDigit = copiedValue({ shown: "1×10^20", node: compileExpression("pi*10^20", {}) });
+  if (oneDigit.text !== "1e20" || oneDigit.copiedLabel !== "Copied as shown (1 digit)") {
+    console.error("a one-digit screen copy used the plural", oneDigit);
     failed = true;
   }
   const signedZero = runNode(compileExpression("-0", {}), "float");
