@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 
-import { exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "./exact";
-import { unpackCircuit, type Wire } from "./wire";
+import { exactToFloat, exactUnderflowsFloat, formatExact } from "./exact";
+import { reportUnpacked, WORKER_NODE_BUDGET } from "./packed-eval";
+import type { Wire } from "./wire";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -11,8 +12,7 @@ type Request = { request: number; tokens: Wire[]; root: number; env: Env };
 self.onmessage = (event: MessageEvent<Request>) => {
   const data = event.data;
   try {
-    const node = unpackCircuit(data.tokens, data.root);
-    const report = exactReport(node, data.env ?? {}, { maxNodes: 80_000 });
+    const { report } = reportUnpacked(data.tokens, data.root, WORKER_NODE_BUDGET, data.env ?? {});
     const floated = exactToFloat(report.value);
     self.postMessage({
       type: "done",

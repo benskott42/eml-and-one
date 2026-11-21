@@ -87,6 +87,8 @@ npm run eml:smoke
 
 `npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. `npm run build` writes a static site to `out/`.
 
+`npm run eml:golden` checks the recorded exact output. `npm run eml:golden -- --update` rewrites it. An update needs a PR note that explains every changed line. See [docs/golden.md](docs/golden.md).
+
 ## Publish
 
 The workflow in `.github/workflows/pages.yml` typechecks, lints, runs the fast checks, and deploys `out/` to GitHub Pages. For a project site the workflow sets the base path from `actions/configure-pages`. Publishing means copying this directory to its own repository and enabling GitHub Pages from Actions. This tree does not create that repository.
