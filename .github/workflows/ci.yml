@@ -34,6 +34,7 @@ jobs:
       - run: npm run lint
       - run: npm run eml:smoke
       - run: npm run eml:check
+      - run: npm run eml:golden
       - run: npm run build
         env:
           PAGES_BASE_PATH: /eml-and-one
