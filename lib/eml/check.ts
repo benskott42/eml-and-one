@@ -3901,6 +3901,27 @@ if (inShard("core")) {
   }
 }
 
+if (inShard("core")) {
+  // Pre-existing on v1.1, and still true on this branch. The value is
+  // −10^(−124) + (10^10 / 3) i. Exact mode drops the real part and shows
+  // 3333333333.33i with no not-certified flag. Known-failing: the suite stays
+  // green while that part is missing. When the real part is kept, this fails
+  // so the skip can be removed. See RESUME.md. No GitHub issue.
+  const droppedReal = "(i*(1+10^(-124))-i)*i+i*10^10/3";
+  const dropped = exactReport(compileExpression(droppedReal, {}));
+  const imagOk = dropped.value.im.mul(3).div("1e10").minus(1).abs().lt("1e-9");
+  const realKept = dropped.value.re.plus("1e-124").abs().div("1e-124").lt("1e-6");
+  if (dropped.value.re.isZero() && imagOk && dropped.unverified !== true && !dropped.notCertified) {
+    console.log("KNOWN FAIL dropped real −10^(−124)", droppedReal, formatExact(dropped.value));
+  } else if (realKept && imagOk) {
+    failed += 1;
+    console.log("FAIL known-failing real part is now kept; remove the skip", droppedReal, formatExact(dropped.value));
+  } else {
+    failed += 1;
+    console.log("FAIL known-failing case changed shape", droppedReal, formatExact(dropped.value), dropped.notCertified ?? null, dropped.unverified ?? false);
+  }
+}
+
 if (inShard("core")) failed += runExprChecks();
 
 if (failed) {
