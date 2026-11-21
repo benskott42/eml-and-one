@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type C } from "@/lib/eml/complex";
 import { recognize } from "@/lib/eml/format";
 import { applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
@@ -15,7 +15,7 @@ import {
   integerNode,
   unaryNode,
 } from "@/lib/eml/library";
-import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
+import { E, ONE, type Node, circuitStats, evaluateReport, isolateCircuit, nodeFromRpn } from "@/lib/eml/node";
 import { compilePresses } from "@/lib/eml/exprSeq";
 import { compileExpression } from "@/lib/eml/parse";
 import { loadNotice, parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
@@ -56,6 +56,92 @@ type Live = {
   compilePressSource: (source: string) => void;
   stepLoaded: (delta: 1 | -1) => void;
 };
+
+const MAX_SCALAR_CACHE = 128;
+
+function costLabel(node: Node): string {
+  const k = circuitStats(node).rpnLength;
+  return k <= BigInt(9999) ? `K ${k}` : "wide";
+}
+
+let cachedConstantCosts: Record<string, string> | null = null;
+function getConstantCosts(): Record<string, string> {
+  if (cachedConstantCosts) return cachedConstantCosts;
+  const table: Record<string, string> = {};
+  for (const key of CONSTANT_KEYS) {
+    try {
+      table[key.id] = costLabel(constantNode(key.id));
+    } catch {
+      table[key.id] = "";
+    }
+  }
+  cachedConstantCosts = table;
+  return table;
+}
+
+const unaryCostCache = new WeakMap<Node, Record<string, string>>();
+function getUnaryCosts(arg: Node): Record<string, string> {
+  const hit = unaryCostCache.get(arg);
+  if (hit) return hit;
+  const table: Record<string, string> = {};
+  for (const key of UNARY_KEYS) {
+    try {
+      table[key.id] = costLabel(applyUnaryNode(key.id, arg));
+    } catch {
+      table[key.id] = "";
+    }
+  }
+  unaryCostCache.set(arg, table);
+  return table;
+}
+
+const binaryCostCache = new WeakMap<Node, WeakMap<Node, Record<string, string>>>();
+function getBinaryCosts(x: Node, y: Node): Record<string, string> {
+  let inner = binaryCostCache.get(x);
+  const hit = inner?.get(y);
+  if (hit) return hit;
+  const table: Record<string, string> = {};
+  for (const key of BINARY_KEYS) {
+    try {
+      table[key.id] = costLabel(applyBinaryNode(key.id, x, y));
+    } catch {
+      table[key.id] = "";
+    }
+  }
+  if (!inner) {
+    inner = new WeakMap();
+    binaryCostCache.set(x, inner);
+  }
+  inner.set(y, table);
+  return table;
+}
+
+let defaultXNode: Node | null = null;
+let defaultYNode: Node | null = null;
+function getDefaultXNode(): Node {
+  return (defaultXNode ??= integerNode(2));
+}
+function getDefaultYNode(): Node {
+  return (defaultYNode ??= integerNode(3));
+}
+
+const scalarCache = new Map<string, Node | null>();
+function readScalarMemo(text: string): Node | null {
+  const key = text.trim();
+  if (scalarCache.has(key)) return scalarCache.get(key) ?? null;
+  let node: Node | null = null;
+  try {
+    node = readScalar(key);
+  } catch {
+    node = null;
+  }
+  if (scalarCache.size >= MAX_SCALAR_CACHE) {
+    const oldest = scalarCache.keys().next().value;
+    if (oldest !== undefined) scalarCache.delete(oldest);
+  }
+  scalarCache.set(key, node);
+  return node;
+}
 
 export function useCalculatorModel() {
   const remembered = readCalculatorSession();
@@ -102,53 +188,45 @@ export function useCalculatorModel() {
     writeCalculatorSession({ model, xText, yText, expr, programField, mode, history: historyRef.current });
   });
 
+  const stackLen = model.stack.length;
+  const topNode = stackLen >= 1 ? model.stack[stackLen - 1].node : null;
+  const secondNode = stackLen >= 2 ? model.stack[stackLen - 2].node : null;
+  const previewXText = useDeferredValue(stackLen === 0 ? xText : "");
+  const previewYText = useDeferredValue(stackLen < 2 ? yText : "");
+
   const costs = useMemo(() => {
-    const table: Record<string, string> = {};
-    const label = (node: Node) => {
-      const k = circuitStats(node).rpnLength;
-      return k <= BigInt(9999) ? `K ${k}` : "wide";
-    };
-    for (const key of CONSTANT_KEYS) {
-      try {
-        table[key.id] = label(constantNode(key.id));
-      } catch {
-        table[key.id] = "";
-      }
-    }
-    let xNode = integerNode(2);
-    let yNode = integerNode(3);
-    try {
-      if (model.stack.length >= 2) {
-        xNode = model.stack[model.stack.length - 2]?.node ?? xNode;
-        yNode = model.stack[model.stack.length - 1]?.node ?? yNode;
-      } else if (model.stack.length === 1) {
-        xNode = model.stack[0]?.node ?? xNode;
-        yNode = readScalar(yText);
+    let xNode: Node;
+    let yNode: Node;
+    if (secondNode && topNode) {
+      xNode = secondNode;
+      yNode = topNode;
+    } else if (topNode) {
+      const parsedY = readScalarMemo(previewYText);
+      if (parsedY) {
+        xNode = topNode;
+        yNode = parsedY;
       } else {
-        xNode = readScalar(xText);
-        yNode = readScalar(yText);
+        xNode = getDefaultXNode();
+        yNode = getDefaultYNode();
       }
-    } catch {
-      xNode = integerNode(2);
-      yNode = integerNode(3);
-    }
-    const arg = model.stack[model.stack.length - 1]?.node ?? xNode;
-    for (const key of UNARY_KEYS) {
-      try {
-        table[key.id] = label(applyUnaryNode(key.id, arg));
-      } catch {
-        table[key.id] = "";
-      }
-    }
-    for (const key of BINARY_KEYS) {
-      try {
-        table[key.id] = label(applyBinaryNode(key.id, xNode, yNode));
-      } catch {
-        table[key.id] = "";
+    } else {
+      const parsedX = readScalarMemo(previewXText);
+      const parsedY = parsedX ? readScalarMemo(previewYText) : null;
+      if (parsedX && parsedY) {
+        xNode = parsedX;
+        yNode = parsedY;
+      } else {
+        xNode = getDefaultXNode();
+        yNode = getDefaultYNode();
       }
     }
-    return table;
-  }, [model.stack, xText, yText]);
+    const arg = topNode ?? xNode;
+    return {
+      ...getConstantCosts(),
+      ...getUnaryCosts(arg),
+      ...getBinaryCosts(xNode, yNode),
+    };
+  }, [topNode, secondNode, previewXText, previewYText]);
 
   const { cancel: cancelExact } = useExactScheduler({ modelRef, historyRef, setModel, stack: model.stack });
 
@@ -679,7 +757,7 @@ export function useCalculatorModel() {
         return;
       }
       const notice = loadNotice(parsed);
-      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice);
+      showProgram(isolateCircuit(() => nodeFromRpn(parsed.word.split(""))), parsed.word, false, notice);
     } catch (err) {
       fail(failure(err));
     }
@@ -688,7 +766,7 @@ export function useCalculatorModel() {
   /** Load a word of 1 and E (from the Program ID panel). Replaces the top when it was a loaded program. */
   const loadWord = useCallback((word: string, caption: string, replace: boolean) => {
     try {
-      showProgram(nodeFromRpn(word.split("")), caption, replace);
+      showProgram(isolateCircuit(() => nodeFromRpn(word.split(""))), caption, replace);
     } catch (err) {
       fail(failure(err));
     }
