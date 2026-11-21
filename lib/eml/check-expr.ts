@@ -1,26 +1,23 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Decimal from "decimal.js";
 import { circuitStats, nodeFromRpn, V } from "./node";
+import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
 import { exactClose, exactReport } from "./exact";
 import { applyProgram, SHORT_PROGRAMS } from "./programs";
-import {
-  compilePresses,
-  IMUL_LIMIT,
-  POW_MAX,
-  POW_MIN,
-  PressCompileError,
-  REAL_LIMIT,
-  recipeExtra,
-  UNCERTIFIED_ADD,
-  UNCERTIFIED_SUB,
-} from "./exprSeq";
+import { compilePresses, IMUL_LIMIT, POW_MAX, POW_MIN, PressCompileError, REAL_LIMIT, recipeExtra } from "./exprSeq";
 
 const D = Decimal.clone({ precision: 90 });
 
 /**
  * The expression compiler, checked on the exact engine.
- * A short recipe is used only where this file's grid has seen a certified value.
- * The three additions in UNCERTIFIED_ADD, and sub(−4, −4), print an unverified 0
- * from the short word, so the compiler emits the library's certified 0 instead.
+ * A short add or sub is used for a nonzero integer pair in the checked box.
+ * Any add or sub whose value is exactly 0 is the certified 7-press 0 word.
+ * The short spelling of those zeros is not certified for every way of writing
+ * the operands, so the tests below keep a few short spellings and show they
+ * are unverified, then require the compiler's word to be the certified 0.
  */
 export function runExprChecks(): number {
   let failed = 0;
@@ -99,14 +96,26 @@ export function runExprChecks(): number {
   expect("2^(3-1)", "4", "0", "pow:short", 81);
   expect("-(1+2)", "-3", "0", "minus:short", 51);
 
-  const uncertifiedAdd = (a: number, b: number) => UNCERTIFIED_ADD.some(([x, y]) => x === a && y === b);
-  const uncertifiedSub = (a: number, b: number) => UNCERTIFIED_SUB.some(([x, y]) => x === a && y === b);
+  const zeroWord = SHORT_PROGRAMS["0"] ?? "";
+  const certifiedZero = (source: string, via: "add:zero" | "sub:zero") => {
+    expect(source, "0", "0", via, 7, false);
+    let seq;
+    try {
+      seq = compilePresses(source);
+    } catch (err) {
+      fail(`${source} zero recompile ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    if (seq.word !== zeroWord || seq.via[seq.via.length - 1] !== via) {
+      fail(`${source} is not the certified 0 word (${seq.via.join(",")})`);
+    }
+  };
 
   for (let a = -REAL_LIMIT; a <= REAL_LIMIT; a += 1) {
     for (let b = -REAL_LIMIT; b <= REAL_LIMIT; b += 1) {
-      if (uncertifiedAdd(a, b)) expect(`(${a})+(${b})`, "0", "0", "add:fallback", 7, false);
+      if (a + b === 0) certifiedZero(`(${a})+(${b})`, "add:zero");
       else expect(`(${a})+(${b})`, hi(a + b), "0", "add:short", null, false);
-      if (uncertifiedSub(a, b)) expect(`(${a})-(${b})`, "0", "0", "sub:fallback", 7, false);
+      if (a - b === 0) certifiedZero(`(${a})-(${b})`, "sub:zero");
       else expect(`(${a})-(${b})`, hi(a - b), "0", "sub:short", null, false);
       expect(`(${a})*(${b})`, hi(a * b), "0", "mul:short", null, false);
       if (b !== 0) expect(`(${a})/(${b})`, hi(new D(a).div(b)), "0", "div:short", null, false);
@@ -161,11 +170,16 @@ export function runExprChecks(): number {
     fail("short sub of the −4 word should print an unverified 0");
   }
   const guarded = compilePresses("(-4)-(-4)");
-  if (guarded.via.includes("sub:short") || !guarded.via.includes("sub:fallback")) {
+  if (guarded.word !== zeroWord || guarded.via[guarded.via.length - 1] !== "sub:zero") {
     fail(`(−4)−(−4) stayed on the short word: ${guarded.via.join(",")}`);
   }
 
-  for (const [a, b] of UNCERTIFIED_ADD) {
+  const shortAddPairs: Array<[number, number]> = [
+    [6, -6],
+    [8, -8],
+    [-8, 8],
+  ];
+  for (const [a, b] of shortAddPairs) {
     const left = compilePresses(String(a)).word;
     const right = compilePresses(String(b)).word;
     let word = "";
@@ -177,8 +191,8 @@ export function runExprChecks(): number {
     const compiled = compilePresses(`(${a})+(${b})`);
     const compiledReport = exactReport(compiled.node, {}, { maxNodes: 200_000 });
     if (
-      compiled.via.includes("add:short") ||
-      !compiled.via.includes("add:fallback") ||
+      compiled.word !== zeroWord ||
+      compiled.via[compiled.via.length - 1] !== "add:zero" ||
       compiled.presses !== 7 ||
       compiled.presses !== compiled.word.length ||
       compiledReport.unverified === true ||
@@ -199,15 +213,63 @@ export function runExprChecks(): number {
       }
     }
   };
+  certifiedZero("(2^3−1)+(0−7)", "add:zero");
+  certifiedZero("(2^3-1)+(0-7)", "add:zero");
+  certifiedZero("(−4*1)−(−4)", "sub:zero");
+  certifiedZero("(-4*1)-(-4)", "sub:zero");
+  certifiedZero("(6)+(-6)", "add:zero");
+  certifiedZero("(9)+(-9)", "add:zero");
+  certifiedZero("((1)/(2))+(((-1))/(2))", "add:zero");
+  certifiedZero("(4*i)-(4*i)", "sub:zero");
+  certifiedZero("(5-4*i)-(5-4*i)", "sub:zero");
+  for (let a = -REAL_LIMIT; a <= REAL_LIMIT; a += 1) {
+    for (let b = -REAL_LIMIT; b <= REAL_LIMIT; b += 1) {
+      certifiedZero(`((${a})+(${b}))-((${a})+(${b}))`, "sub:zero");
+      certifiedZero(`((${a})*(${b}))-((${a})*(${b}))`, "sub:zero");
+      certifiedZero(`((${a})+(${b}))+((${-a})+(${-b}))`, "add:zero");
+    }
+  }
+
   rejects("sin(1)", "not supported");
+  rejects("sin(1)+(0)", "not supported");
+  rejects("(sin(1))-(sin(1))", "not supported");
   rejects("", "enter an expression");
   rejects("1/0", "division by zero");
+  rejects("(1/0)-(1/0)", "division by zero");
   rejects("0^0", "indeterminate");
+  rejects("0^0-0", "indeterminate");
   rejects("0^-1", "negative power");
   rejects("1.5", "decimal");
   rejects("9+1", "outside the verified domain");
+  rejects("(9+1)-(9+1)", "outside the verified domain");
+  rejects("(1/2)+(-(1/2))", "outside the verified domain");
   rejects("2^(1/2)", "integer exponent");
+
+  if (EXACT_MAX_NODES !== 80_000 || EXACT_TOO_LARGE !== "This circuit is too large to evaluate.") {
+    fail(`worker budget ${EXACT_MAX_NODES} ${EXACT_TOO_LARGE}`);
+  }
+  const compilerSource = readFileSync(new URL("./exprSeq.ts", import.meta.url), "utf8");
+  if (!compilerSource.includes("EXACT_MAX_NODES") || !compilerSource.includes("EXACT_TOO_LARGE") || /100_?000/.test(compilerSource)) {
+    fail("the compiler cap is not the worker budget");
+  }
+  runWorkerPathChecks(fail);
 
   console.log(failed === 0 ? `expr presses ${counts.filter((_, index) => index < 17).join(" ")}` : `expr failed ${failed}`);
   return failed;
+}
+
+/** A real Worker thread loading exact.worker.ts, compared at 100 digits. */
+function runWorkerPathChecks(fail: (message: string) => void): void {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.resolve(here, "../..");
+  const tsx = path.join(root, "node_modules/tsx/dist/cli.mjs");
+  const script = path.join(root, "scripts/expr-worker-check.ts");
+  const child = spawnSync(process.execPath, [tsx, script], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  if (child.status === 0) return;
+  const text = `${child.stdout ?? ""}\n${child.stderr ?? ""}`.trim().slice(0, 800);
+  fail(`worker path ${text || (child.error ? String(child.error) : child.status)}`);
 }

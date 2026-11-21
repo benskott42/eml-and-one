@@ -53,7 +53,7 @@ type Live = {
   undo: () => void;
   clearAll: () => void;
   showProgram: (node: Node, caption: string, replace: boolean, notice?: string | null) => void;
-  compilePressSource: (source: string) => number | null;
+  compilePressSource: (source: string) => void;
   stepLoaded: (delta: 1 | -1) => void;
 };
 
@@ -75,6 +75,8 @@ export function useCalculatorModel() {
   const queueRef = useRef<Array<() => void>>([]);
   const jobRef = useRef(0);
   const twoButtonsRef = useRef(false);
+  const pressGen = useRef(0);
+  const [pressCount, setPressCount] = useState<number | "pending" | null>(null);
   const live = useRef<Live>({
     pushNode: () => {},
     pushOne: () => {},
@@ -89,7 +91,7 @@ export function useCalculatorModel() {
     undo: () => {},
     clearAll: () => {},
     showProgram: () => {},
-    compilePressSource: () => null,
+    compilePressSource: () => {},
     stepLoaded: () => {},
   });
   useEffect(() => {
@@ -644,18 +646,28 @@ export function useCalculatorModel() {
     })();
   }, []);
 
-  const compilePressSource = useCallback((source: string): number | null => {
+  const clearPressCount = useCallback(() => {
+    pressGen.current += 1;
+    setPressCount(null);
+  }, []);
+
+  const compilePressSource = useCallback((source: string): void => {
+    const gen = pressGen.current;
     if (recomputeRef.current) {
-      queueRef.current.push(() => live.current.compilePressSource(source));
-      return null;
+      setPressCount("pending");
+      queueRef.current.push(() => {
+        if (pressGen.current !== gen) return;
+        live.current.compilePressSource(source);
+      });
+      return;
     }
     try {
       const seq = compilePresses(source);
       showProgram(seq.node, source.trim(), false, null);
-      return seq.presses;
+      if (pressGen.current === gen) setPressCount(seq.presses);
     } catch (err) {
       fail(failure(err));
-      return null;
+      if (pressGen.current === gen) setPressCount(null);
     }
   }, [fail, showProgram]);
 
@@ -784,6 +796,8 @@ export function useCalculatorModel() {
     clearAll,
     loadProgramText,
     compilePressSource,
+    clearPressCount,
+    pressCount,
     stepLoaded,
   };
 }

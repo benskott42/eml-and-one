@@ -1,7 +1,8 @@
 import { countWord, countWordLength } from "./countWord";
-import { tagReal, tagValue } from "./lowering";
+import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
+import { tagValue } from "./lowering";
 import { tAdd, tNeg, tSub } from "./library";
-import { circuitStats, nodeFromRpn, rpnTokens, type Node } from "./node";
+import { circuitStats, EmlLimitError, nodeFromRpn, rpnTokens, type Node } from "./node";
 import { SHORT_PROGRAMS } from "./programs";
 import rows from "./integer-table.json";
 
@@ -23,18 +24,21 @@ import rows from "./integer-table.json";
  * pow +23).
  *
  * - add, 19 keys, extra 17. Both operands integers from −REAL_LIMIT to
- *   REAL_LIMIT. Checked on the words this compiler emits: every pair matches
- *   and is certified, except add(6, −6), add(8, −8), and add(−8, 8). Those
- *   three print 0 from the short word and the exact engine marks them
- *   unverified. tAdd of the same words does too. Subtracting the library
- *   negation cancels the integer ranges to the certified 0 word (7 presses),
- *   and that is what the compiler emits. Wrong once Im(x + y) leaves (−π, π]:
- *   add(5, 4i) wraps to 5 − (2π − 4)i.
- * - sub, 11 keys, extra 9. Both operands integers in that same range.
- *   sub(−4, −4) prints 0 and is not certified; the library builder emits the
- *   certified 0 word (7 presses), and that is what the compiler emits. Every
- *   other integer pair in the range is certified. Wrong once Im(y) leaves
- *   [−π, π]: sub(5, 4i) is 5 + (2π − 4)i, not 5 − 4i.
+ *   REAL_LIMIT, and the sum is not 0. Every such pair was checked on the
+ *   words this compiler emits: the value matches and the engine certifies it.
+ *   A sum of exactly 0 is not that word. A printed 0 is not certified for
+ *   every spelling, on the short word or on tAdd (add(6, −6), add(8, −8),
+ *   add(−8, 8), and composed spellings such as (2^3−1)+(0−7)). After both
+ *   operands have compiled, any add whose rational value is 0 is the
+ *   certified 0 word (7 presses). An operand that itself cannot be compiled
+ *   still errors, because that check happens before the 0 word replaces the
+ *   operands. Wrong once Im(x + y) leaves (−π, π]: add(5, 4i) wraps to
+ *   5 − (2π − 4)i.
+ * - sub, 11 keys, extra 9. Both operands integers in that same range, and
+ *   the difference is not 0. Every such pair is certified on the short word.
+ *   A difference of exactly 0 is the certified 0 word, for the same reason
+ *   (sub(−4, −4) and (−4*1)−(−4) are unverified on the short spelling).
+ *   Wrong once Im(y) leaves [−π, π]: sub(5, 4i) is 5 + (2π − 4)i, not 5 − 4i.
  * - mul, 17 keys, extra 15. Both operands integers in that range. Also an
  *   integer from −IMUL_LIMIT to IMUL_LIMIT times k·i for an integer k in that
  *   same range, either order, including 4·i and −4·i.
@@ -68,21 +72,6 @@ export const IMUL_LIMIT = 6;
 export const POW_MIN = -3;
 export const POW_MAX = 6;
 export const LITERAL_LIMIT = 60;
-const SPELL_LIMIT = 100_000;
-
-/**
- * Short add prints 0 here and exactReport sets unverified. tAdd of the same
- * words does too. The compiler subtracts the library negation, which cancels
- * to the certified 0 word.
- */
-export const UNCERTIFIED_ADD: readonly (readonly [number, number])[] = [
-  [6, -6],
-  [8, -8],
-  [-8, 8],
-];
-
-/** Short sub prints 0 here and is not certified. The compiler uses the library's certified 0. */
-export const UNCERTIFIED_SUB: readonly (readonly [number, number])[] = [[-4, -4]];
 
 export class PressCompileError extends Error {
   constructor(message: string) {
@@ -276,8 +265,8 @@ function integerWord(n: number): { word: string; how: string } {
 
 function spell(node: Node, value: G, via: string[]): Built {
   const length = circuitStats(node).rpnLength;
-  if (length > BigInt(SPELL_LIMIT)) {
-    throw new PressCompileError(`The general construction is longer than ${SPELL_LIMIT} presses.`);
+  if (length > BigInt(EXACT_MAX_NODES)) {
+    throw new EmlLimitError(EXACT_TOO_LARGE);
   }
   const tokens = rpnTokens(node, Number(length));
   if (!tokens || tokens.some((token) => token !== "1" && token !== "E")) {
@@ -312,13 +301,12 @@ function pointOf(g: G): { re: number; im: number } | null {
 }
 
 /**
- * The short add of these integers is an unverified 0. Negating the right
- * operand with the library and subtracting cancels the two integer ranges
- * to the certified 0 word, the same fold domainSub uses for n − n.
+ * The 7-press 0 word. Used for every add or sub whose rational value is 0,
+ * after the operands have compiled. The short spelling of a printed 0 is not
+ * certified for every way of writing those operands.
  */
-function certifiedAddZero(left: Built, right: Built, value: G): Built {
-  const node = tSub(tagReal(left.node, left.value.re.n), tNeg(tagReal(right.node, right.value.re.n)));
-  return spell(node, value, [...left.via, ...right.via, "add:fallback"]);
+function certifiedZero(parts: Built[], id: "add" | "sub"): Built {
+  return fromWord(recipe("0"), realG(0), [...parts.flatMap((part) => part.via), `${id}:zero`]);
 }
 
 function fallbackLinear(op: "add" | "sub" | "minus", parts: Built[], value: G): Built {
@@ -394,18 +382,7 @@ function lower(ast: Ast): Built {
   if (ast.op === "/" && isZeroG(right.value)) throw new PressCompileError("Division by zero has no press sequence.");
   const value = ast.op === "+" ? gAdd(left.value, right.value) : ast.op === "-" ? gSub(left.value, right.value) : ast.op === "*" ? gMul(left.value, right.value) : gDiv(left.value, right.value);
   const id = ast.op === "+" ? "add" : ast.op === "-" ? "sub" : ast.op === "*" ? "mul" : "div";
-  const uncertifiedAdd =
-    id === "add" &&
-    realInBox(left.value) &&
-    realInBox(right.value) &&
-    UNCERTIFIED_ADD.some(([a, b]) => left.value.re.n === a && right.value.re.n === b);
-  if (uncertifiedAdd) return certifiedAddZero(left, right, value);
-  const uncertifiedSub =
-    id === "sub" &&
-    realInBox(left.value) &&
-    realInBox(right.value) &&
-    UNCERTIFIED_SUB.some(([a, b]) => left.value.re.n === a && right.value.re.n === b);
-  if (uncertifiedSub) return fallbackLinear("sub", [left, right], value);
+  if ((id === "add" || id === "sub") && isZeroG(value)) return certifiedZero([left, right], id);
   const inDomain = id === "mul" ? mulInDomain(left.value, right.value) : realInBox(left.value) && realInBox(right.value);
   if (inDomain) return shortCall(id, { x: left.word, y: right.word }, value, [...left.via, ...right.via, `${id}:short`]);
   if ((id === "add" || id === "sub") && stripPair(left.value, right.value)) return fallbackLinear(id, [left, right], value);
@@ -447,6 +424,10 @@ function normalize(source: string): string {
   return source.replaceAll("−", "-").replaceAll("×", "*").replaceAll("÷", "/");
 }
 
+// TODO(debt): this is a second parser, and the Fr/G fraction arithmetic above
+// is a second rational engine, beside compileExpression in parse.ts (the fold
+// at parse.ts:389). They stay split so a press sequence does not go through
+// the scientific compiler. Fold them when the two grammars can share one AST.
 function parse(source: string): Ast {
   const s = source;
   let i = 0;
