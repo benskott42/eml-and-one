@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1 — 2026-11-21
+
+Exact-mode fixes. A result is either right or says it could not verify; none of these is certified wrong any more.
+
+- A tiny angle is no longer snapped to the axis: exp(6.103515625×10^(−120) i) keeps its imaginary part.
+- A repeat evaluation matches the first one: the pure cache keeps each subtree's cancellation, smallest value, and series-shortcut notes, and the large-argument, pole, and precision notes come back on a cache hit. EML_NOCACHE is read on every evaluation.
+- The worker path carries the asinh and addition precision notes.
+- A tiny real part beside an imaginary one, such as ((1+10^(−130))−1)+i/2, is kept.
+- Refused rather than certified (exact mode says it could not verify; float keeps its own value): sin, cos, or tan of an angle past 10^15 anywhere below the root, such as −cos(10^119) or cos(10^119)+1; a part cancelled to 0 beside a nonzero part after a value too small for the precision, such as ((1+10^(−500))−1)+i/2; a finite result far below an overflowed operand, such as (exp(800)+1)−exp(800), and exp(800)·0; sinh(z)−z, artanh(z)−z, and arcsin(z)−z where the small-argument shortcut drops the cubic; tanh of a real past 100, which rounds to ±1.
+- A repeat of sin(10^22), tan(10^22), cos(10^7), or cos(2^60) keeps "argument too large to reduce".
+- A circuit that shares a subtree at every level no longer copies its cancellation records once per path.
+- exact-zero residues, tiny sums lifted to full size, and an infinity whose finite partner a gate drops are no longer certified.
+
 ## 1.0.0 — 2026-11-15
 
 First version of EML and One, a two-button calculator.
