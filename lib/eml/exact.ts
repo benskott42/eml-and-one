@@ -370,7 +370,9 @@ function liftedGap(x: Z, y: Z, out: Z): number {
     const scale = D.max(a[part].abs(), b[part].abs());
     const diff = out[part];
     if (!scale.isFinite() || scale.isZero() || !diff.isFinite() || diff.isZero()) continue;
-    gap = Math.max(gap, scale.e - diff.abs().e);
+    // The words also carry terms near 1 (exp y ≈ 1 in the sub word, e in the add word), so
+    // terms below 1 still leave noise near 10^(−precision): count from 1 at least.
+    gap = Math.max(gap, Math.max(scale.e, 0) - diff.abs().e);
   }
   return gap;
 }
