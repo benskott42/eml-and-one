@@ -16,6 +16,7 @@ import {
   unaryNode,
 } from "@/lib/eml/library";
 import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
+import { compilePresses } from "@/lib/eml/exprSeq";
 import { compileExpression } from "@/lib/eml/parse";
 import { parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 import {
@@ -52,6 +53,7 @@ type Live = {
   undo: () => void;
   clearAll: () => void;
   showProgram: (node: Node, caption: string, replace: boolean, notice?: string | null) => void;
+  compilePressSource: (source: string) => number | null;
   stepLoaded: (delta: 1 | -1) => void;
 };
 
@@ -87,6 +89,7 @@ export function useCalculatorModel() {
     undo: () => {},
     clearAll: () => {},
     showProgram: () => {},
+    compilePressSource: () => null,
     stepLoaded: () => {},
   });
   useEffect(() => {
@@ -641,6 +644,21 @@ export function useCalculatorModel() {
     })();
   }, []);
 
+  const compilePressSource = useCallback((source: string): number | null => {
+    if (recomputeRef.current) {
+      queueRef.current.push(() => live.current.compilePressSource(source));
+      return null;
+    }
+    try {
+      const seq = compilePresses(source);
+      showProgram(seq.node, source.trim(), false, null);
+      return seq.presses;
+    } catch (err) {
+      fail(failure(err));
+      return null;
+    }
+  }, [fail, showProgram]);
+
   const loadProgramText = useCallback((source: string) => {
     try {
       const parsed = parseProgramInput(source);
@@ -701,6 +719,7 @@ export function useCalculatorModel() {
       undo,
       clearAll,
       showProgram,
+      compilePressSource,
       stepLoaded,
     };
   });
@@ -764,6 +783,7 @@ export function useCalculatorModel() {
     undo,
     clearAll,
     loadProgramText,
+    compilePressSource,
     stepLoaded,
   };
 }

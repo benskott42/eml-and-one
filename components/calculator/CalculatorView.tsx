@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -27,8 +28,10 @@ export function CalculatorView(props: CalculatorModel) {
     model, xText, setXText, yText, setYText, expr, setExpr, programField, setProgramField,
     mode, twoButtons, heldShortcut, setHeldShortcut, costs, expansions, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
-    compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded,
+    compute, swap, drop, undo, clearAll, loadProgramText, compilePressSource, stepLoaded,
   } = props;
+  const [pressText, setPressText] = useState("3+4");
+  const [pressCount, setPressCount] = useState<number | null>(null);
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "0";
@@ -227,6 +230,31 @@ export function CalculatorView(props: CalculatorModel) {
               </button>
             ))}
           </div>
+
+          <form
+            className="ti-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setPressCount(compilePressSource(pressText));
+            }}
+          >
+            <label className="ti-label">
+              Two-key presses, from an expression
+              <input
+                id="press-expr"
+                value={pressText}
+                onChange={(event) => setPressText(event.target.value)}
+                placeholder="3+4, 2*5, 2^3-1"
+                className="ti-field"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </label>
+            <button type="submit" className="ti-text-btn ti-text-btn-strong">
+              Compile
+            </button>
+            {pressCount !== null ? <p className="ti-caption">{pressCount} presses</p> : null}
+          </form>
 
           <form
             className="ti-form"
