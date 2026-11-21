@@ -181,8 +181,20 @@ export function getAllCorpus(): string[] {
     ...infinityPowers,
     ...poleCases,
     ...precisionCases,
+    ...wireBugCases,
   ];
 }
+
+/**
+ * Wire-mode test cases: bugs that only manifest through packCircuit→unpackCircuit→evaluate
+ * These must be evaluated in a fresh process over the packed wire to reproduce.
+ * Note: ((1+10^(-136))-1)+i*3/2 is already covered by cancellation cases
+ */
+export const wireBugCases = [
+  // Severity-1 bug: tiny real part ~1e-130 dropped over wire (owned by bigfixer)
+  "((1+10^(-130))-1)+i/2",
+  "((1+10^(-130))-1)+i*(1+10^(-130))/2",
+];
 
 /**
  * Heavy corpus (slow cases, not run in CI by default)

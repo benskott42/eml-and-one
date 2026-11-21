@@ -19,13 +19,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { getAllCorpus, heavyCorpus } from "./corpus";
 import { compileExpression } from "../parse";
-import { exactReport, formatExact, exactToFloat, exactClose } from "../exact";
+import { exactReport, formatExact, exactToFloat } from "../exact";
 import { evaluateReport } from "../node";
 import { packCircuit, unpackCircuit } from "../wire";
 import { seriesShortcutNote } from "../library";
 import { pressPreviewForNode } from "../presses";
 import { formatC } from "../format";
-import type { Node } from "../node";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const goldenPath = path.join(repoRoot, "lib/eml/golden/golden.txt");
@@ -189,7 +188,11 @@ function formatGoldenEntry(entry: GoldenEntry, knownBugs: Map<string, string>): 
   
   const bugId = knownBugs.get(entry.source);
   if (bugId) {
-    parts.push(`# KNOWN-BUG ${bugId}`);
+    let bugNote = `# KNOWN-BUG ${bugId}`;
+    if (bugId === "wire-real-drop") {
+      bugNote += ": real part ~1e-130 dropped over wire; fix owned by bigfixer";
+    }
+    parts.push(bugNote);
   }
   
   return parts.join(" | ");
@@ -216,6 +219,10 @@ function generateGolden(includeHeavy: boolean): string {
   const knownBugs = new Map<string, string>();
   knownBugs.set("6.103e-120*i+6.103e-120*i", "v1.1-complex-half");
   knownBugs.set("(i*(1+10^(-124))-i)*i+i*10^10/3", "A1-real-drop");
+  // Wire-mode bugs: real part ~1e-130 dropped over wire (owned by bigfixer)
+  knownBugs.set("((1+10^(-130))-1)+i/2", "wire-real-drop");
+  knownBugs.set("((1+10^(-130))-1)+i*(1+10^(-130))/2", "wire-real-drop");
+  knownBugs.set("((1+10^(-136))-1)+i*3/2", "wire-real-drop");
   
   // Evaluate all expressions
   console.log(`Evaluating ${corpus.length} expressions...`);
@@ -225,7 +232,7 @@ function generateGolden(includeHeavy: boolean): string {
     try {
       const entry = evaluateExpression(source, true);
       entries.push(entry);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(`Error evaluating ${source}:`, err);
       entries.push({
         source,
@@ -268,7 +275,7 @@ function checkCacheConsistency(): { ok: boolean; issues: string[] } {
     try {
       const entry = evaluateExpression(source, false);
       coldResults.set(source, entry.exactText);
-    } catch (err) {
+    } catch {
       coldResults.set(source, "ERROR");
     }
   }
@@ -286,7 +293,7 @@ function checkCacheConsistency(): { ok: boolean; issues: string[] } {
             issues.push(issue);
           }
         }
-      } catch (err) {
+      } catch {
         // Skip errors in warm run
       }
     }
@@ -327,7 +334,7 @@ function main() {
   let existingContent: string;
   try {
     existingContent = readFileSync(goldenPath, "utf-8");
-  } catch (err) {
+  } catch {
     console.error(`Could not read ${goldenPath}`);
     console.error("Run with --update to generate the golden output.");
     process.exit(1);
@@ -353,8 +360,6 @@ function main() {
   }
   
   // Show diff
-  const existingLines = existingContent.split("\n");
-  const newLines = newContent.split("\n");
   const existing = parseGoldenFile(existingContent);
   const current = parseGoldenFile(newContent);
   

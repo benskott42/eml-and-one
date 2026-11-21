@@ -77,6 +77,12 @@ Current known bugs:
 
 - **v1.1-complex-half**: `6.103e-120*i+6.103e-120*i` shows half the sum in exact mode (no flag)
 - **A1-real-drop**: `(i*(1+10^(-124))-i)*i+i*10^10/3` drops its real part
+- **wire-real-drop** (severity-1, owned by bigfixer): Three expressions lose their tiny real part (~1e-130) when round-tripped through `packCircuit` → `unpackCircuit`:
+  - `((1+10^(-130))-1)+i/2` → wrongly certified as `0.5i`
+  - `((1+10^(-130))-1)+i*(1+10^(-130))/2` → wrongly certified as `0.5i`
+  - `((1+10^(-136))-1)+i*3/2` → wrongly certified as `1.5i`
+  
+  These expressions produce a tiny real part (the `((1+10^(-k))-1)` term) plus an imaginary part. The real part ~1e-130 or ~1e-136 is correctly computed in direct evaluation, but drops when the circuit is packed, unpacked, and re-evaluated. The harness's round-trip test currently evaluates in the same process; a future wire-mode enhancement will test through a fresh child process to match production conditions.
 
 ## How to add test cases
 
