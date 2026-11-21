@@ -54,6 +54,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
+      - run: npx tsx scripts/count-check.ts
       - run: npm run build
         env:
           PAGES_BASE_PATH: /eml-and-one
@@ -534,6 +535,9 @@ jobs:
           }
           process.exit(failures.length ? 1 : 0);
           END
+      - name: Count page
+        timeout-minutes: 30
+        run: npm run count:e2e
       - name: Upload the tested site
         if: inputs.upload-site
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

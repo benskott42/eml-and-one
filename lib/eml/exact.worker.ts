@@ -39,6 +39,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
       touchedLn0: report.touchedLn0,
       underflowedExact: exactUnderflowsFloat(report.value),
       unverified: report.unverified === true,
+      cutHits: report.cutHits,
       // v1.1: sticky "not certified" (absorbed term). Old main threads ignore the field.
       notCertified: report.notCertified ?? null,
       // v1.1 (E3): a 0 reached through a recorded cancellation.

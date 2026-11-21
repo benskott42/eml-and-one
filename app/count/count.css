@@ -1,0 +1,396 @@
+.count-layout {
+  width: min(1120px, 100%);
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.count-layout .ti-device {
+  width: min(100%, 440px);
+}
+
+.count-n {
+  margin-top: 12px;
+}
+
+.count-n-label {
+  display: block;
+  margin: 0 2px 6px;
+  color: #f3f0e8;
+  font-size: 0.9rem;
+}
+
+.count-controls button:disabled {
+  opacity: 0.45;
+}
+
+.count-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.count-controls input[type="text"] {
+  width: 84px;
+  height: 46px;
+  text-align: center;
+  font-size: 1.3rem;
+  border: none;
+  border-radius: 8px;
+  background: #23262b;
+  color: #f3f0e8;
+}
+
+.count-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7e4dc;
+  color: #4a1c12;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.count-slider {
+  width: 100%;
+  margin-top: 10px;
+  accent-color: #f4e7a1;
+}
+
+.count-opt,
+.count-conv,
+.count-foot {
+  margin: 10px 2px 0;
+  color: #d5dde4;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.count-rail {
+  width: min(100%, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.count-panel {
+  background: #262a30;
+  border: 1px solid #3c424b;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.count-panel h2 {
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #aeb5be;
+  font-weight: 700;
+}
+
+.count-pill {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+  padding: 2px 8px;
+  border-radius: 9px;
+  border: 1px solid #8d949e;
+  color: #f3f0e8;
+  font-size: 0.78rem;
+}
+
+.count-pill.proven {
+  background: #2c5b39;
+  border-color: #2c5b39;
+}
+
+.count-pill.known {
+  background: #6b4a14;
+  border-color: #6b4a14;
+}
+
+.count-x {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.85em;
+}
+
+.count-pill.upper {
+  background: #30353c;
+}
+
+.count-cutline,
+.count-src,
+.count-note {
+  margin: 6px 0 0;
+  color: #d5dde4;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.ti-lcd .count-note,
+.ti-lcd .count-note a,
+.ti-lcd a {
+  color: var(--lcd-ink);
+}
+
+.ti-lcd a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.count-foot a {
+  color: #f7f4ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.count-panel .ti-press,
+.count-panel .ti-press-meta {
+  color: #d5dde4;
+}
+
+.count-panel .ti-lcd-btn {
+  color: #f7f4ee;
+  border-color: #f7f4ee;
+}
+
+.count-seg {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 0;
+  border-bottom: 1px solid #353a42;
+  font-size: 0.82rem;
+}
+
+.count-chips,
+.count-flat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.count-flat {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.count-chips b,
+.count-flat b {
+  font-family: ui-monospace, "Courier New", monospace;
+  font-weight: 400;
+  min-width: 15px;
+  text-align: center;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: #3a4048;
+  color: #ddd;
+}
+
+.count-chips b.is-e,
+.count-flat b.is-e {
+  background: #21508f;
+}
+
+.count-flat .cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.count-flat small {
+  font-size: 8px;
+  color: #8d949e;
+  height: 9px;
+}
+
+.count-flat u {
+  display: block;
+  width: 16px;
+  height: 4px;
+  margin-top: 1px;
+  text-decoration: none;
+}
+
+.count-flat u.g { background: #6d7580; }
+.count-flat u.b1 { background: #e7c76a; }
+.count-flat u.b2 { background: #7fb3e6; }
+
+.count-copy {
+  margin-top: 8px;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 0.72rem;
+  background: #1c1f24;
+  border-radius: 6px;
+  padding: 6px 8px;
+  word-break: break-all;
+  max-height: 90px;
+  overflow: auto;
+  color: #d6dbe1;
+}
+
+.count-chip {
+  display: inline-block;
+  margin: 6px 6px 0 0;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+  border: 1.5px solid #1a2214;
+}
+
+.count-chip.ok {
+  background: #1a2214;
+  color: #d8e6b8;
+}
+
+.count-chip.no {
+  border-color: #6b1d10;
+  color: #6b1d10;
+  background: #e7d3c4;
+}
+
+.count-pending {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.count-badge {
+  display: inline-flex;
+  border: 1.5px solid #1a2214;
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.72rem;
+}
+
+.count-badge span {
+  padding: 2px 6px;
+}
+
+.count-badge span + span {
+  border-left: 1.5px solid #1a2214;
+}
+
+.count-badge .lit {
+  background: #1a2214;
+  color: #d8e6b8;
+}
+
+.count-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.count-doc {
+  width: min(720px, 100%);
+  color: #f3f0e8;
+  line-height: 1.5;
+}
+
+.count-doc-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0 0 1.25rem;
+}
+
+.count-doc ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.count-doc li {
+  margin: 0.2rem 0;
+}
+
+.count-doc sub,
+.count-doc sup {
+  line-height: 0;
+}
+
+.count-doc h1,
+.count-doc h2 {
+  line-height: 1.25;
+}
+
+.count-doc code {
+  font-family: ui-monospace, "Courier New", monospace;
+}
+
+.count-layout :is(a, button, input):focus-visible,
+.count-doc a:focus-visible {
+  outline: 3px solid #f4e7a1;
+  outline-offset: 3px;
+}
+
+.ti-lcd :is(a, button):focus-visible {
+  outline-color: #1a2214;
+}
+
+@media (max-width: 720px), (max-height: 500px) {
+  .count-seg {
+    grid-template-columns: 1fr auto;
+  }
+
+  .count-layout .ti-device {
+    min-height: 0;
+    border-radius: 0;
+  }
+
+  .count-layout :is(a, button, input),
+  .count-doc a,
+  .ti-home {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .count-layout a,
+  .count-doc a,
+  .ti-home {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .count-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .count-opt input[type="checkbox"] {
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    flex: none;
+  }
+
+  .count-slider {
+    height: 44px;
+  }
+
+  .count-panel .ti-lcd-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+}

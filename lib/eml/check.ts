@@ -79,6 +79,7 @@ import { agreementNote, compileExpression, referenceExpression, referenceLostTer
 import { packCircuit, readWireNum, unpackCircuit, wireNum, type WireNum } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
+import { PROVEN_MINIMAL } from "./statusLabels";
 
 let failed = 0;
 /**
@@ -3218,12 +3219,16 @@ if (inShard("core")) {
   const neg17 = byKey.get("−1@17");
   const two = byKey.get("2@19");
   if (
-    zero?.label !== "proven minimal" ||
+    zero?.label !== PROVEN_MINIMAL ||
     !zero.note.includes("K ≤ 5") ||
-    neg15?.label !== "proven minimal (uses ln 0)" ||
-    neg17?.label !== "proven minimal without ln 0" ||
-    two?.label !== "proven minimal" ||
-    !two.note.includes("2056")
+    !zero.note.includes("with or without ln 0") ||
+    neg15?.label !== `${PROVEN_MINIMAL} (uses ln 0)` ||
+    !neg15.note.includes("K ≤ 13") ||
+    neg17?.label !== `${PROVEN_MINIMAL} without ln 0` ||
+    !neg17.note.includes("the only shorter −1 is the K 15 word, and that word uses ln 0") ||
+    two?.label !== PROVEN_MINIMAL ||
+    !two.note.includes("2056") ||
+    !two.note.includes("does not use ln 0")
   ) {
     failed += 1;
     console.log("FAIL minimality labels", zero, neg15, neg17, two);

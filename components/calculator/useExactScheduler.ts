@@ -19,6 +19,7 @@ export type WorkerMessage = {
   touchedLn0?: boolean;
   underflowedExact?: boolean;
   unverified?: boolean;
+  cutHits?: number;
   notCertified?: unknown;
   cancelledZero?: boolean;
   message?: string;
@@ -35,6 +36,7 @@ type ExactPayload =
       touchedLn0: boolean;
       underflowedExact?: boolean;
       unverified?: boolean;
+      cutHits?: number;
       /** v1.1 (E3) */
       notCertified?: boolean;
       cancelledZero?: boolean;
@@ -112,7 +114,7 @@ export function useExactScheduler(input: {
         return;
       }
       if (payload.unverified) {
-        publishWatch(job.watch, { ...current, pendingExact: false, text: exactShownText(true, payload.text), value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify" });
+        publishWatch(job.watch, { ...current, pendingExact: false, text: exactShownText(true, payload.text), value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify", cutHits: payload.cutHits });
         return;
       }
       if (!current.pendingExact) return;
@@ -124,6 +126,8 @@ export function useExactScheduler(input: {
         text: payload.text,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
+        cutHits: payload.cutHits,
+        underflowedExact: payload.underflowedExact === true,
         cancelledZero: payload.cancelledZero === true,
         notCertified: payload.notCertified === true,
         notice: fillNotice({ notCertified: payload.notCertified === true }) ?? current.notice,
@@ -176,6 +180,7 @@ export function useExactScheduler(input: {
           touchedLn0: report.touchedLn0,
           underflowedExact: exactUnderflowsFloat(report.value),
           unverified: report.unverified === true,
+          cutHits: report.cutHits,
           notCertified: report.notCertified !== undefined,
           cancelledZero: report.cancelledZero === true,
         });
@@ -209,6 +214,7 @@ export function useExactScheduler(input: {
         touchedLn0: data.touchedLn0 === true,
         underflowedExact: data.underflowedExact === true,
         unverified: data.unverified === true,
+        cutHits: data.cutHits,
         notCertified: data.notCertified !== undefined && data.notCertified !== null,
         cancelledZero: data.cancelledZero === true,
       });
