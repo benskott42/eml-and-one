@@ -335,8 +335,32 @@ function balanced(op: "+" | "*", nodes: Node[]): Node {
   return op === "+" ? tAdd(left, right) : tMul(left, right);
 }
 
+/** True when a sum contains the negation of another sum or difference. Iterative: a sum of many terms is a deep spine. */
+function holdsNegatedGroup(root: Ast): boolean {
+  const stack: Ast[] = [root];
+  const seen = new Set<Ast>();
+  while (stack.length) {
+    const ast = stack.pop();
+    if (!ast || seen.has(ast)) continue;
+    seen.add(ast);
+    if (ast.k === "pre" && ast.name === "neg") {
+      if (ast.arg.k === "+" || (ast.arg.k === "bin" && ast.arg.name === "-")) return true;
+      continue;
+    }
+    if (ast.k === "+") for (const child of ast.args) stack.push(child);
+  }
+  return false;
+}
+
 function foldAst(ast: Ast): Node {
   if (ast.k === "n") return ast.node;
+  // Flattening would split (a+b)+(-(a+b)) into a, b, and -(a+b), so the identical nodes never meet.
+  if (ast.k === "+" && holdsNegatedGroup(ast)) {
+    const parts = ast.args.map(foldAst);
+    const first = parts[0];
+    if (!first) throw new EmlError("The expression ended early.");
+    return parts.slice(1).reduce((sum, part) => tAdd(sum, part), first);
+  }
   if (ast.k === "+" || ast.k === "*") {
     const flat: Ast[] = [];
     const pending: Ast[] = [ast];
