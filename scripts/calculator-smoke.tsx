@@ -712,21 +712,21 @@ async function main() {
   await perfClick("Clear");
   await perfClick("hardware");
   const perfFields = [...perfView.document.querySelectorAll("input.ti-field")] as HTMLInputElement[];
-  const xField = perfFields[0];
-  const yField = perfFields[1];
+  const perfXField = perfFields[0];
+  const perfYField = perfFields[1];
   const perfExpr = perfView.document.getElementById("expr") as HTMLInputElement;
-  await perfSetInput(xField, "0.5");
-  await perfSetInput(yField, "2");
+  await perfSetInput(perfXField, "0.5");
+  await perfSetInput(perfYField, "2");
 
   // Snapshot 1: empty stack
   checkCostsSnapshot("empty");
 
   // Empty-stack isolate flush count: warm "2", then 10 x keystrokes across cached scalars give 0 (<= 1/keystroke).
-  await perfSetInput(xField, "2");
-  await perfSetInput(xField, "0.5");
+  await perfSetInput(perfXField, "2");
+  await perfSetInput(perfXField, "0.5");
   const emptyBefore = isolateFlushes;
   for (let i = 0; i < 10; i += 1) {
-    await perfSetInput(xField, i % 2 === 0 ? "2" : "0.5");
+    await perfSetInput(perfXField, i % 2 === 0 ? "2" : "0.5");
   }
   const emptyCachedFlushes = isolateFlushes - emptyBefore;
   if (emptyCachedFlushes > 10) {
@@ -736,13 +736,13 @@ async function main() {
 
   // Empty-stack unseen scalar still preserves per-preview isolation (1 scalar + 17 unary + 8 binary = 26, no const/default/y flushes).
   const unseenBefore = isolateFlushes;
-  await perfSetInput(xField, "0.75");
+  await perfSetInput(perfXField, "0.75");
   const unseenFlushes = isolateFlushes - unseenBefore;
   if (unseenFlushes !== 26) {
     console.error("empty-stack unseen x preview expected 26 isolated flushes, got", unseenFlushes);
     failed = true;
   }
-  await perfSetInput(xField, "0.5");
+  await perfSetInput(perfXField, "0.5");
 
   // Snapshot 2: pi stack
   await perfClick("π");
@@ -757,14 +757,14 @@ async function main() {
   // 1-item stack isolate flush count: 10 distinct x keystrokes must trigger 0 flushes.
   const oneItemBefore = isolateFlushes;
   for (let i = 0; i < 10; i += 1) {
-    await perfSetInput(xField, `0.${60 + i}`);
+    await perfSetInput(perfXField, `0.${60 + i}`);
   }
   const oneItemFlushes = isolateFlushes - oneItemBefore;
   if (oneItemFlushes !== 0) {
     console.error("1-item stack x keystrokes triggered isolate flushes", oneItemFlushes);
     failed = true;
   }
-  await perfSetInput(xField, "0.5");
+  await perfSetInput(perfXField, "0.5");
 
   // Snapshot 4: two items with exp^3 top
   await perfSetInput(perfExpr, "exp(exp(exp(sin(0.25))))");
@@ -774,7 +774,7 @@ async function main() {
   // 2-item stack isolate flush count: 10 distinct x keystrokes must trigger 0 flushes.
   const twoItemBefore = isolateFlushes;
   for (let i = 0; i < 10; i += 1) {
-    await perfSetInput(xField, `0.${50 + i}`);
+    await perfSetInput(perfXField, `0.${50 + i}`);
   }
   const twoItemFlushes = isolateFlushes - twoItemBefore;
   if (twoItemFlushes !== 0) {
