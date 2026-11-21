@@ -950,6 +950,8 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
     const node = buildSub(a, b, kFrom);
     return rememberSub(huge ? node : attachInt(node, diff), a, b);
   }
+  const proved = tinyRationalNode(a, b, "sub");
+  if (proved) return proved;
   return rememberSub(buildSub(a, b, kFrom), a, b);
 }
 
@@ -1086,6 +1088,142 @@ export function isWideTiny(node: Node): boolean {
   return wides.has(node);
 }
 
+/**
+ * A real below the normal float range, known exactly as an integer ratio.
+ * Decimal literals start there, and multiply, divide, and negate carry it.
+ * The EML circuit only approximates a value this small. Its residue is not
+ * a proof, so a sum or difference that is not this ratio is not certified.
+ */
+const MAX_RATIO_DIGITS = 8192;
+const ZERO = BigInt(0);
+const ONE_BI = BigInt(1);
+const TEN_BI = BigInt(10);
+const NORMAL_SHIFT = BigInt(1022);
+export type ExactRatio = { n: bigint; d: bigint };
+const exactRatios = new WeakMap<Node, ExactRatio>();
+
+function digitsOf(n: bigint): number {
+  if (n === ZERO) return 1;
+  const body = n < ZERO ? -n : n;
+  return body.toString().length;
+}
+
+function gcdBig(a: bigint, b: bigint): bigint {
+  let x = a < ZERO ? -a : a;
+  let y = b < ZERO ? -b : b;
+  while (y !== ZERO) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  return x;
+}
+
+function reduceRatio(n: bigint, d: bigint): ExactRatio | null {
+  if (d === ZERO) return null;
+  if (n === ZERO) return { n: ZERO, d: ONE_BI };
+  if (d < ZERO) {
+    n = -n;
+    d = -d;
+  }
+  const g = gcdBig(n, d);
+  n /= g;
+  d /= g;
+  if (digitsOf(n) > MAX_RATIO_DIGITS || digitsOf(d) > MAX_RATIO_DIGITS) return null;
+  return { n, d };
+}
+
+/** |n/d| < 2^(−1022), so float64 cannot hold it as a normal number. */
+function belowNormal(n: bigint, d: bigint): boolean {
+  if (n === ZERO || d === ZERO) return false;
+  const absN = n < ZERO ? -n : n;
+  const absD = d < ZERO ? -d : d;
+  return (absN << NORMAL_SHIFT) < absD;
+}
+
+function ratioDecade(n: bigint, d: bigint): number {
+  const absN = n < ZERO ? -n : n;
+  const absD = d < ZERO ? -d : d;
+  const len = absN.toString().length - absD.toString().length;
+  const below = len >= 0 ? absN < absD * TEN_BI ** BigInt(len) : absN * TEN_BI ** BigInt(-len) < absD;
+  return below ? len - 1 : len;
+}
+
+function wideFromRatio(n: bigint, d: bigint): Wide | null {
+  if (n === ZERO || d === ZERO) return null;
+  const decade = ratioDecade(n, d);
+  const neg = (n < ZERO) !== (d < ZERO);
+  const absN = n < ZERO ? -n : n;
+  const absD = d < ZERO ? -d : d;
+  const pow10 = (k: number) => TEN_BI ** BigInt(k);
+  const scaled = decade >= 0 ? (absN * pow10(15)) / (absD * pow10(decade)) : (absN * pow10(15 - decade)) / absD;
+  let m = Number(scaled) / 1e15;
+  if (!Number.isFinite(m) || m === 0) return null;
+  if (neg) m = -m;
+  return normWide(m, decade);
+}
+
+/** Store n/d when it sits below the normal float range, and keep the wide tag in step with it. */
+export function noteExactRatio(node: Node, n: bigint, d: bigint): Node {
+  const reduced = reduceRatio(n, d);
+  if (!reduced || reduced.n === ZERO || !belowNormal(reduced.n, reduced.d)) return node;
+  exactRatios.set(node, reduced);
+  const wide = wideFromRatio(reduced.n, reduced.d);
+  if (wide) noteWide(node, wide);
+  return node;
+}
+
+export function exactRatioOf(node: Node): ExactRatio | null {
+  return exactRatios.get(node) ?? null;
+}
+
+/** The stored ratio, or an integer node written as n/1. */
+export function realRatioOf(node: Node): ExactRatio | null {
+  const hit = exactRatios.get(node);
+  if (hit) return hit;
+  const big = rangeOf(node).int;
+  if (big === undefined) return null;
+  return { n: big, d: ONE_BI };
+}
+
+/** Attach n/d when a product or quotient of exact reals falls below the normal float range. */
+export function attachTinyProduct(node: Node, a: Node, b: Node, op: "mul" | "div"): Node {
+  const left = realRatioOf(a);
+  const right = realRatioOf(b);
+  if (!left || !right || (op === "div" && right.n === ZERO)) return node;
+  const n = op === "mul" ? left.n * right.n : left.n * right.d;
+  const d = op === "mul" ? left.d * right.d : left.d * right.n;
+  return noteExactRatio(node, n, d);
+}
+
+/** Set while a proved tiny sum is being given its circuit, so that build does not re-enter. */
+let inTinyRational = false;
+
+/**
+ * Exact sum or difference of two reals below the normal float range.
+ * Equal ratios subtract to 0 and add to twice the value. A pair this small with no exact ratio is not certified:
+ * the lifted circuit's residue is rounding, not a value.
+ */
+function tinyRationalNode(a: Node, b: Node, op: "add" | "sub"): Node | null {
+  if (inTinyRational) return null;
+  const left = realRatioOf(a);
+  const right = realRatioOf(b);
+  if (!left || !right || !belowNormal(left.n, left.d) || !belowNormal(right.n, right.d)) return null;
+  // Equal ratios cancel under subtraction only. Their sum is twice the value.
+  if (op === "sub" && left.n * right.d === right.n * left.d) return zeroNode();
+  const n = op === "add" ? left.n * right.d + right.n * left.d : left.n * right.d - right.n * left.d;
+  const reduced = reduceRatio(n, left.d * right.d);
+  if (!reduced) return unverifiedResult();
+  if (reduced.n === ZERO) return zeroNode();
+  inTinyRational = true;
+  try {
+    const node = op === "sub" ? buildSub(a, b) : buildSub(a, domainNeg(b));
+    return noteExactRatio(node, reduced.n, reduced.d);
+  } finally {
+    inTinyRational = false;
+  }
+}
+
 /** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
 export function markTwoScaled(node: Node): Node {
   twoScaled.add(node);
@@ -1203,6 +1341,8 @@ function domainAddBuild(a: Node, b: Node): Node {
   if (cancelled) return cancelled;
   const carried = overflowIntSum(a, b);
   if (carried) return carried;
+  const proved = tinyRationalNode(a, b, "add");
+  if (proved) return proved;
   // Adding a non-integer to an integer past the float range must stay +∞.
   // Building the sum rotates through ln 0 and comes out negative.
   // A finite non-integer beside an integer past the float range is not dropped.
@@ -1260,8 +1400,15 @@ export function domainNeg(b: Node): Node {
 
 function domainNegBuild(b: Node): Node {
   const wb = wides.get(b);
-  if (wb) return noteWide(rawMul(oneNeg(), b), { m: -wb.m, e: wb.e });
-  if (rangeOf(b).int === BigInt(0)) return negativeZero();
+  const ratio = exactRatioOf(b);
+  if (wb) {
+    const node = noteWide(rawMul(oneNeg(), b), { m: -wb.m, e: wb.e });
+    if (ratio) noteExactRatio(node, -ratio.n, ratio.d);
+    return node;
+  }
+  if (ratio) return noteExactRatio(rawMul(oneNeg(), b), -ratio.n, ratio.d);
+  const n = rangeOf(b).int;
+  if (n === BigInt(0)) return negativeZero();
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();

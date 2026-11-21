@@ -2,7 +2,7 @@
 
 import { EXACT_MAX_NODES } from "./exactBudget";
 import { exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "./exact";
-import { unpackCircuit, type Wire } from "./wire";
+import { unpackCircuit, WIRE_VERSION, type Wire } from "./wire";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -50,7 +50,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
       notCertified: report.notCertified ?? null,
       // v1.1 (E3): a 0 reached through a recorded cancellation.
       cancelledZero: report.cancelledZero === true,
-      wire: 2,
+      wire: WIRE_VERSION,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Exact evaluation failed.";

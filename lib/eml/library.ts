@@ -11,9 +11,11 @@ import {
   domainSub,
   endInteger,
   decadeOf,
+  attachTinyProduct,
   isWideTiny,
   MIN_NORMAL,
   normWide,
+  noteExactRatio,
   noteWide,
   wideOf,
   integerQuotient,
@@ -634,10 +636,11 @@ function tMulBuild(a: Node, b: Node): Node {
   const underflows = !!ka && !!kb && ka.im === 0 && kb.im === 0 && ka.re !== 0 && kb.re !== 0 && Math.abs(ka.re * kb.re) < MIN_NORMAL;
   const wa = isWideTiny(a) || isWideTiny(b) || underflows ? wideOf(a) : null;
   const wb = wa ? wideOf(b) : null;
-  if (wa && wb) return noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e));
+  if (wa && wb) return attachTinyProduct(noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e)), a, b, "mul");
   if (exactZero(a) && negativeFactor(b) && !isWideTiny(a)) return negativeZero();
   if (exactZero(b) && negativeFactor(a) && !isWideTiny(b)) return negativeZero();
-  return tagPi(rawMul(a, b), piMul(a, b));
+  const product = tagPi(rawMul(a, b), piMul(a, b));
+  return attachTinyProduct(product, a, b, "mul");
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -675,7 +678,7 @@ function tDivBuild(a: Node, b: Node): Node {
   if (isWideTiny(a) || isWideTiny(b)) {
     const wa = wideOf(a);
     const wb = wideOf(b);
-    if (wa && wb) return noteWide(rawDiv(a, b), normWide(wa.m / wb.m, wa.e - wb.e));
+    if (wa && wb) return attachTinyProduct(noteWide(rawDiv(a, b), normWide(wa.m / wb.m, wa.e - wb.e)), a, b, "div");
   }
   // v1.1: an integer ratio at or below 10^(−20) (1/10^130) gets its exact decade and sign,
   // so arctan, tanh, tan, sin and arcsin of it take the odd series, as 10^(−130) does.
@@ -683,9 +686,11 @@ function tDivBuild(a: Node, b: Node): Node {
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined && ia !== BigInt(0) && ib !== BigInt(0)) {
     const decade = intRatioDecade(ia, ib);
-    if (decade <= SERIES_WIDE) return noteTinyReal(tagPi(rawDiv(a, b), piDiv(a, b)), decade, (ia < BigInt(0)) !== (ib < BigInt(0)));
+    if (decade <= SERIES_WIDE) {
+      return attachTinyProduct(noteTinyReal(tagPi(rawDiv(a, b), piDiv(a, b)), decade, (ia < BigInt(0)) !== (ib < BigInt(0))), a, b, "div");
+    }
   }
-  return tagPi(rawDiv(a, b), piDiv(a, b));
+  return attachTinyProduct(tagPi(rawDiv(a, b), piDiv(a, b)), a, b, "div");
 }
 
 /** floor(log10 |a/b|) for nonzero integers, exactly. */
@@ -726,6 +731,14 @@ function tPowBuild(a: Node, b: Node): Node {
       const L = vb.re * Math.log10(va.re);
       const e = exact10 ? vb.re : Math.floor(L);
       noteWide(node, normWide(exact10 ? 1 : 10 ** (L - e), e));
+      // An integer power proved by the bigint range, not by a float that rounded to an integer.
+      // 10^(−400) is 1/10^400, not the float 0.
+      if (ia !== undefined && ib !== undefined && ia > BigInt(0) && ib < BigInt(0)) {
+        const exp = -ib;
+        const expN = Number(exp);
+        const est = expN * ia.toString().length;
+        if (expN <= 100_000 && est <= 8192) noteExactRatio(node, BigInt(1), ia ** exp);
+      }
     }
   }
   return node;

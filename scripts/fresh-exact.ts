@@ -20,9 +20,10 @@ const out = jobs.map((job) => {
   const started = performance.now();
   const node = unpackCircuit(job.tokens, job.root);
   const report = exactReport(node, {}, { maxNodes: 400_000 });
-  const row: { source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number } = {
+  const row: { source: string; text: string; re: string; unverified: boolean; singular: string | null; close?: boolean; ms: number } = {
     source: job.source,
     text: formatExact(report.value),
+    re: report.value.re.toString(),
     unverified: report.unverified === true,
     singular: report.singular,
     ms: Math.round(performance.now() - started),

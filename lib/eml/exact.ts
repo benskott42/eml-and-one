@@ -16,7 +16,7 @@ import {
   provenInteger,
 } from "./node";
 import { EXACT_TOO_LARGE } from "./exactBudget";
-import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
+import { decadeOf, exactRatioOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 import { floatShowsComponent } from "./format";
 
@@ -266,8 +266,16 @@ let tiniestIm = 0;
  * exactEml call (decimal exponent). Rounding there leaves absolute noise near
  * 10^(size − precision). A gate that does not cancel keeps its relative
  * accuracy, so its size is not counted.
+ * A 10^k lift is left out of this only after the cancelled terms reach 1.
+ * A shorter lift, an operand below about 10^(−307), stays in: that
+ * cancellation is the result's rounding, not an artifact of scaling.
  */
 let emlWork = Number.NEGATIVE_INFINITY;
+
+/** True when a lift's cancelled terms are still below 1, so the cancellation counts. */
+function shortLift(scale: number): boolean {
+  return Number.isFinite(scale) && scale < 0;
+}
 let emlWorkRe = Number.NEGATIVE_INFINITY;
 let emlWorkIm = Number.NEGATIVE_INFINITY;
 /**
@@ -400,7 +408,7 @@ export type ExactReport = {
   singular: string | null;
   touchedLn0: boolean;
   unverified?: boolean;
-  /** Largest cancelling term size outside the 2^k lift gates (decimal exponent). */
+  /** Largest cancelling term size (decimal exponent). A lift is omitted only after it reaches 1. */
   workExp?: number;
   /** Per-component cancellation size. A part with no finite work was not a residue. */
   workRe?: number;
@@ -561,7 +569,7 @@ function present(report: ExactReport, cutFloor?: number): ExactReport {
  * The part under the circuit's own rounding noise, beside a part above it.
  * The noise follows the size the circuit cancelled at, not a fixed 10^(−112):
  * arcsin(10^(−18) i) cancels terms near 1 and leaves about 10^(−120) beside
- * 10^(−18) i. The 2^k lift gates are not counted.
+ * 10^(−18) i. A 2^k lift that reached 1 is not counted. A shorter lift is.
  */
 function dustPart(report: ExactReport): "re" | "im" | null {
   const { value: v, workExp } = report;
@@ -618,7 +626,10 @@ function certifyZero(report: ExactReport): ExactReport {
   return { ...present(report), unverified: true };
 }
 
-/** A component this far below the terms that cancelled is not yet a result. */
+/**
+ * A component this far below the terms that cancelled is not yet a result.
+ * `work` is the cancelled terms' decade, including a lift that never reached 1.
+ */
 function residueFloor(work: number, digits: number): Decimal {
   return new D(10).pow(work - (digits - 12));
 }
@@ -627,6 +638,7 @@ function residueFloor(work: number, digits: number): Decimal {
  * Parts that are small beside the terms that cancelled, exact zeros included.
  * A true zero beside an ordinary value, such as the imaginary part of sin(1),
  * is not on this list: its sibling is not small next to those terms.
+ * A short lift's decade is real work, so a residue under it is not certified.
  */
 function residueParts(report: ExactReport): Array<"re" | "im"> {
   if (vanished(report.value) || report.unverified) return [];
@@ -666,6 +678,15 @@ function settleResidue(
   budget: EvalBudget,
 ): ExactReport {
   let current = report;
+  // Largest magnitude this settlement has seen. A later reading that falls
+  // far below it, and is still under the cancellation floor, is rounding.
+  let anchorRe = Number.NEGATIVE_INFINITY;
+  let anchorIm = Number.NEGATIVE_INFINITY;
+  const noteAnchor = (v: Z) => {
+    if (v.re.isFinite() && !v.re.isZero()) anchorRe = Math.max(anchorRe, v.re.e);
+    if (v.im.isFinite() && !v.im.isZero()) anchorIm = Math.max(anchorIm, v.im.e);
+  };
+  noteAnchor(report.value);
   for (let hop = 0; hop < 8; hop += 1) {
     const which = residueParts(current);
     if (which.length === 0) return current;
@@ -689,8 +710,26 @@ function settleResidue(
     } finally {
       prof("settleResidue atPrecision", ts);
     }
+    noteAnchor(again.value);
     const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
-    if (!changed) return current;
+    if (!changed) {
+      const still = residueParts(again);
+      // A real difference stays within a couple of hundred decades of the
+      // magnitude already seen. Rounding left when a lift never reaches 1
+      // does not: the two readings agree hundreds of decades lower.
+      const collapsed = (name: "re" | "im", anchor: number) => {
+        const part = again.value[name];
+        return still.includes(name) && part.isFinite() && !part.isZero() && part.e < anchor - 200;
+      };
+      const live = (["re", "im"] as const).filter((name) => {
+        const part = again.value[name];
+        return part.isFinite() && !part.isZero();
+      });
+      if (live.length > 0 && live.every((name) => collapsed(name, name === "re" ? anchorRe : anchorIm))) {
+        return certifyZero(again);
+      }
+      return current;
+    }
     current = again;
   }
   return residueParts(current).length === 0 ? current : certifyZero(current);
@@ -889,7 +928,10 @@ function exactReportCore(
           if (vanished(again.value)) return certifyZero(again);
         } else if (lossGap > digits - 16) return certifyZero(again);
       }
-      return confirmDust(present(trustDigits(again)), root, env, budget);
+      // A nonzero that shows up under the cancelled terms is still rounding.
+      // Settle it, instead of certifying the first magnitude the retry produced.
+      const revealed = residueParts(again).length > 0 ? settleResidue(again, root, env, budget) : again;
+      return confirmDust(present(trustDigits(revealed)), root, env, budget);
       } finally {
         prof(cause, te);
       }
@@ -986,6 +1028,17 @@ function exactReportOnce(
         logged.set(n, false);
         continue;
       }
+    }
+    // A ratio below the normal float range is the value. The circuit only approximates it,
+    // and that residue must not be reported as an exact result.
+    const ratio = n.type !== "input" ? exactRatioOf(n) : null;
+    if (ratio) {
+      const value = z(new D(ratio.n.toString()).div(ratio.d.toString()), 0);
+      memo.set(n, value);
+      noteSeen(value);
+      why.set(n, null);
+      logged.set(n, false);
+      continue;
     }
 
     // v1.1: an odd series node is its polynomial in x. Evaluate x, then the polynomial,
@@ -1120,9 +1173,10 @@ function exactReportOnce(
     const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (loggedCut ? 1 : 0);
     cuts.set(n, cutHits);
     const shell = inScaledShell(n);
-    const own: Work = shell
-      ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
-      : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
+    const liftCounts = !shell || shortLift(emlWork);
+    const own: Work = liftCounts
+      ? { all: emlWork, re: emlWorkRe, im: emlWorkIm }
+      : { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY };
     // Sticky: an absorbed term anywhere below stays with every ancestor, shells included.
     own.ab = emlAbsorbGap;
     own.abE = emlAbsorbExp;
