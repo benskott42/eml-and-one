@@ -1,10 +1,12 @@
 /**
- * Rigorous complex disks for sound float mode.
+ * Complex disk bounds for sound float mode.
  *
  * The formulas are mathbot's derivation, copied in docs/interval-bounds.md.
- * A disk D(c, r) claims the true value lies within distance r of the float
- * midpoint c. Radii are rounded up. An inconclusive disk never certifies
- * that two values are distinct; the search sends that pair to the exact engine.
+ * A certified disk claims the true value lies within distance r of the float
+ * midpoint c. Radii are rounded up. That claim is for normal components.
+ * A subnormal component, or a subnormal hypot, is inconclusive: Math.hypot's
+ * relative error is not bounded by ε there. An inconclusive disk never
+ * certifies that two values are distinct; the search sends that pair to exact.
  *
  * There is no provable-realness flag on the exact side, so the optional fast
  * path for a negative real (bounds §5) is not implemented. Log of a disk that
@@ -107,9 +109,18 @@ export function roundRadius(r: number): number {
   return r * (1 + 8 * U) + RAD_FLOOR;
 }
 
-/** NaN, infinity, a component above 2^60, or a radius wider than 2^−10·max(1, |c|). */
+/** Smallest positive normal double, 2^−1022. */
+const MIN_NORMAL = 2 ** -1022;
+
+/** Nonzero and below 2^−1022. hypot's relative error is not bounded by ε here. */
+function subnormalMagnitude(n: number): boolean {
+  return n !== 0 && Number.isFinite(n) && Math.abs(n) < MIN_NORMAL;
+}
+
+/** NaN, infinity, a subnormal component, a component above 2^60, or a radius wider than 2^−10·max(1, |c|). */
 export function diskInconclusive(re: number, im: number, r: number): boolean {
   if (!Number.isFinite(re) || !Number.isFinite(im) || !Number.isFinite(r)) return true;
+  if (subnormalMagnitude(re) || subnormalMagnitude(im)) return true;
   if (Math.abs(re) > COMP_CAP || Math.abs(im) > COMP_CAP) return true;
   const limit = REL_CAP * Math.max(1, Math.hypot(re, im));
   return !(r <= limit);
@@ -159,6 +170,9 @@ export function logDisk(z: Disk): Disk {
   const r = z.r;
   if (!(r >= 0) || diskInconclusive(x, y, r)) return bad(x, y);
   const rho = Math.hypot(x, y);
+  // Equal components near 2^−1046 make hypot's relative error about 0.29.
+  // A flushed 0 from a nonzero input is the same failure.
+  if (!Number.isFinite(rho) || subnormalMagnitude(rho) || (rho === 0 && (x !== 0 || y !== 0))) return bad(x, y);
   const dist = x < 0 ? Math.abs(y) : rho;
   if (!(dist * (1 - 4 * EPS) > r)) return bad(x, y);
   const rhoDown = rho * (1 - 2 * EPS);

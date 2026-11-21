@@ -12,7 +12,8 @@ import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, e
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
 import { acceptsConstantProgram, acceptsConstantValue, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
-import { DiskGrid, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
+import { DiskGrid, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
+import { SoundDedup } from "./sound";
 import {
   applyBinaryNode,
   applyUnaryNode,
@@ -848,9 +849,33 @@ if (inShard("core")) {
   const overY = expDisk(pointDisk(0, 2 ** 20));
   const overX = expDisk(pointDisk(700));
   const underX = expDisk(pointDisk(-700));
-  if (axis.ok || overY.ok || overX.ok || underX.ok) {
+  const deep = { re: Number.MIN_VALUE, im: Number.MIN_VALUE, r: 0, ok: true as const };
+  const edge = { re: 2 ** -1046, im: 2 ** -1046, r: 0, ok: true as const };
+  const deepLog = logDisk(deep);
+  const edgeLog = logDisk(edge);
+  const subPoint = pointDisk(Number.MIN_VALUE, 1);
+  if (
+    axis.ok ||
+    overY.ok ||
+    overX.ok ||
+    underX.ok ||
+    deepLog.ok ||
+    edgeLog.ok ||
+    subPoint.ok ||
+    !diskInconclusive(Number.MIN_VALUE, Number.MIN_VALUE, 0) ||
+    !diskInconclusive(2 ** -1046, 2 ** -1046, 0)
+  ) {
     failed += 1;
-    console.log("FAIL interval guard", axis.ok, overY.ok, overX.ok, underX.ok);
+    console.log(
+      "FAIL interval guard",
+      axis.ok,
+      overY.ok,
+      overX.ok,
+      underX.ok,
+      deepLog.ok,
+      edgeLog.ok,
+      subPoint.ok,
+    );
   }
   const wide = pointDisk(1, 0, 1);
   if (wide.ok) {
@@ -1068,6 +1093,27 @@ if (inShard("core")) {
   if (!rpns.has(keptA) || !rpns.has(keptB)) {
     failed += 1;
     console.log("FAIL sound dropped a distinct shared-key pair", rpns.has(keptA), rpns.has(keptB));
+  }
+  const badDisk = { re: Number.NaN, im: Number.NaN, r: Number.POSITIVE_INFINITY, ok: false as const };
+  const specials = new SoundDedup("1:0:0:0");
+  const firstSpecial = specials.consider(badDisk, badDisk, 3, "ln0", () => false);
+  specials.remember(1, "ln0", firstSpecial.disk);
+  const keptSpecial = specials.consider(badDisk, badDisk, 5, "ln0", () => false);
+  const provedSpecial = specials.consider(badDisk, badDisk, 7, "ln0", () => true);
+  if (firstSpecial.merged || firstSpecial.disk.ok || keptSpecial.merged || keptSpecial.disk.ok || !provedSpecial.merged) {
+    failed += 1;
+    console.log("FAIL ln0 inconclusive path", firstSpecial.merged, keptSpecial.merged, provedSpecial.merged);
+  }
+  let ln0Seen = 0;
+  let ln0Certified = 0;
+  for (const item of soundSmall.classes ?? []) {
+    if (!evaluateReport(nodeFromRpn(item.rpn.split(""))).touchedLn0) continue;
+    ln0Seen += 1;
+    if (item.diskOk) ln0Certified += 1;
+  }
+  if (ln0Seen === 0 || ln0Certified !== 0) {
+    failed += 1;
+    console.log("FAIL sound certified an ln0 class", ln0Seen, ln0Certified);
   }
 }
 const fingerA = functionFingerprint(tAdd(X, Y), (point) => ({ x: point, y: { re: 0.3, im: -0.2 } }));

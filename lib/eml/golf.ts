@@ -25,7 +25,11 @@ import { SoundDedup, type SoundReport } from "./sound";
  * signed int32s, so they always admit. Clean dedup is effectively off, and the
  * pool is not a set of 10-digit value classes.
  * Sound mode is off unless `sound: true`. The default path is the key table
- * above and does not call SoundDedup.
+ * above and does not call SoundDedup. Sound mode admits through
+ * SoundDedup.consider, including ln 0 specials, which stay inconclusive.
+ * A class is dropped only when exact proves equality, so a sound-mode count
+ * is an upper bound. Disks are the bounds in docs/interval-bounds.md for
+ * normal components; a subnormal component or a subnormal hypot is inconclusive.
  */
 
 export type GolfHit = {
@@ -401,10 +405,15 @@ export function searchConstants(
       seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0);
       return;
     }
-    // Sole sound-mode hook. KeySet is not consulted. This is the call to move into PoolAdmit.commit.
-    if (soundDedup && !fromLn) {
+    // Sole sound-mode hook. KeySet is not consulted.
+    // ln 0 specials pass inconclusive parents, so consider takes the branch
+    // that keeps every float-key nomination unless exact proves equality.
+    if (soundDedup) {
       let incoming: ExactReport | null | undefined;
-      const decision = soundDedup.consider(soundDedup.diskAt(a), soundDedup.diskAt(b), gates * 2 + 1, keyString(valueRe, valueIm), (id) => {
+      const inconclusive = { re: Number.NaN, im: Number.NaN, r: Number.POSITIVE_INFINITY, ok: false as const };
+      const leftDisk = fromLn ? inconclusive : soundDedup.diskAt(a);
+      const rightDisk = fromLn ? inconclusive : soundDedup.diskAt(b);
+      const decision = soundDedup.consider(leftDisk, rightDisk, gates * 2 + 1, keyString(valueRe, valueIm), (id) => {
         if (incoming === undefined) {
           try {
             incoming = exactReport(E(buildNode(left, right, a, nodeMemo), buildNode(left, right, b, nodeMemo)));
@@ -422,7 +431,7 @@ export function searchConstants(
       }
       if (count >= cap) grow();
       const id = count;
-      logged[id] = 0;
+      logged[id] = fromLn ? 1 : 0;
       markFlow(id, a, b, valueRe, valueIm);
       left[id] = a;
       right[id] = b;
@@ -466,7 +475,6 @@ export function searchConstants(
       re[count] = value.re;
       im[count] = value.im;
       count += 1;
-      if (soundDedup && fromLn) soundDedup.stampInconclusive(count - 1, keyString(value.re, value.im), value.re, value.im);
       return;
     }
     if (count >= cap) grow();
@@ -505,7 +513,6 @@ export function searchConstants(
         rejected += 1;
       }
     }
-    if (soundDedup && fromLn && id < count) soundDedup.stampInconclusive(id, keyString(value.re, value.im), value.re, value.im);
   };
 
   const traced = (): TracedClass[] => {

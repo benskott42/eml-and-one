@@ -1,7 +1,7 @@
 /**
  * Full containment sample from docs/interval-bounds.md §6.
  * 10^5 random disks, plus 10^5 pairs drawn from a K=15 sound pool.
- * CI runs a smaller sample inside lib/eml/check.ts.
+ * CI runs this script. lib/eml/check.ts also runs a smaller sample.
  *
  *   npx tsx scripts/interval-containment.ts
  */
@@ -50,6 +50,29 @@ function span(lo: number, hi: number): number {
 let checked = 0;
 let missed = 0;
 let inconclusive = 0;
+
+const subnormalSamples: [number, number][] = [
+  [Number.MIN_VALUE, Number.MIN_VALUE],
+  [2 ** -1046, 2 ** -1046],
+  [Number.MIN_VALUE, 0],
+];
+for (const [x, y] of subnormalSamples) {
+  const hypot = Math.hypot(x, y);
+  const subnormal = (n: number) => n !== 0 && Number.isFinite(n) && Math.abs(n) < 2 ** -1022;
+  if (!subnormal(x) && !subnormal(y) && !subnormal(hypot)) {
+    console.error("subnormal sample was normal", x, y, hypot);
+    process.exit(1);
+  }
+  const disk = logDisk({ re: x, im: y, r: 0, ok: true });
+  const point = pointDisk(x, y);
+  if (disk.ok || point.ok) {
+    const truth = decOf(x).pow(2).add(decOf(y).pow(2)).sqrt().ln();
+    const holds = disk.ok && contains(disk, truth, new D(Math.atan2(y, x)));
+    console.error("subnormal disk was certified", x, y, disk, holds);
+    process.exit(1);
+  }
+}
+
 for (let n = 0; n < SAMPLES; n += 1) {
   const band = n % 4;
   let x = 0;

@@ -1,4 +1,4 @@
-# Rigorous disk bounds for the sound float mode (mathbot, 2026-11-20 ~11:30 PM ET)
+# Disk bounds for the sound float mode (mathbot, 2026-11-20 ~11:30 PM ET)
 
 These bounds are for item 3 (sound float mode). A float-key hit only nominates a merge, and exact arithmetic confirms it. A value counts as distinct only when its disk is certified disjoint from every existing class's disk.
 
@@ -8,7 +8,7 @@ These bounds are for item 3 (sound float mode). A float-key hit only nominates a
 - *ε* = the per-call error budget for `Math.exp`, `Math.log`, `Math.log1p`, `Math.expm1`, `Math.cos`, `Math.sin`, `Math.atan2` and `Math.hypot`. JS does not specify accuracy; ECMA-262 calls these "implementation-approximated", so *no ulp figure is guaranteed*. V8 and SpiderMonkey use fdlibm-derived code, which is under 1 ulp in practice, but that is an observation, not a guarantee.
   - **Recommendation: set ε = 2⁻⁴⁰ (relative), about 4096 ulp, not 4 ulp.** It costs essentially nothing, because distinct values that aren't near-collisions are separated by far more than 10⁻¹². It also survives a bad libm. Add a startup self-test against ~200 correctly rounded reference values (from mpmath) that asserts every error is ≤ 2⁻⁴⁸. If the test fails, disable certification, so every candidate goes to exact. Soundness then rests on a measured margin of 256×, not on the spec.
 - **Rounding the radius up:** after each radius formula, set *r* ← fl(*r*)·(1 + 8*u*) + 2⁻¹⁰²⁰. The tiny absolute term covers underflow in the radius arithmetic itself.
-- **Inconclusive:** any NaN or ±∞ in *c* or *r*, any |*c*| component > 2⁶⁰, or *r* > 2⁻¹⁰·max(1, |*c*|). An inconclusive value is never certified distinct and goes to exact.
+- **Inconclusive:** any NaN or ±∞ in *c* or *r*, any subnormal component, any |*c*| component > 2⁶⁰, or *r* > 2⁻¹⁰·max(1, |*c*|). An inconclusive value is never certified distinct and goes to exact. A subnormal component is inconclusive because `Math.hypot`'s relative error is not bounded by *ε* below 2⁻¹⁰²². Equal components stay too narrow down to 2⁻¹⁰⁴⁶: `hypot` of the smallest positive double with itself has relative error about 0.29, so a log radius near 10⁻⁹ does not cover the true error ln √2.
 
 ## 1. exp
 For input *D(c, r)* with *c* = *x* + *iy*:
@@ -32,6 +32,7 @@ For input *D(c, r)*, ρ = |*c*|:
   This holds because the disk avoids the cut, so Log(*c*+δ) = Log *c* + log(1+*w*) with the principal log1p, and there is no 2π*i* jump.
   - Your split is valid but looser: *r*/(ρ−*r*) = *t*/(1−*t*) ≥ −log(1−*t*) on the modulus part, plus asin(*t*) on the argument part, combined. The single disk bound replaces both.
   - Use *t* = *r*/ρ rounded up, with ρ rounded down: ρ↓ = `hypot(x,y)`·(1 − 2ε).
+  - A subnormal hypot, or a hypot that flushes a nonzero input to 0, is inconclusive. The *ε* model does not apply there.
 - **Midpoint:** *L* = (`log(hypot(x, y))`, `atan2(y, x)`).
   - Error on Re: ≤ ε (from the hypot relative error, since |ln(1+ε)| ≤ ε·(1+ε)) + ε·|ln ρ| + *u*·|*L*_re|.
   - Error on Im: ≤ ε·π + *u*·π.

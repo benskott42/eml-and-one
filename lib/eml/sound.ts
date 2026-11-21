@@ -8,7 +8,10 @@
  */
 import { DiskGrid, certificationEnabled, disksDisjoint, emlDisk, type Disk } from "./interval";
 
-/** Counts from sound mode. `upperBound` means a class was dropped only when exact proved equality. */
+/**
+ * Counts from sound mode. `upperBound` is true because a class is dropped only
+ * when exact proves equality, including ln 0 specials.
+ */
 export type SoundReport = {
   /** Float-key hits. Each nominates a merge and does not drop the new class by itself. */
   nominations: number;
@@ -116,16 +119,6 @@ export class SoundDedup {
     this.diskOk[id] = disk.ok ? 1 : 0;
     this.noteKey(id, key);
     if (disk.ok) this.grid.add(id, disk);
-  }
-
-  /** ln 0 and other specials stay on the float-key path and carry no disk. */
-  stampInconclusive(id: number, key: string, re: number, im: number): void {
-    this.ensure(id);
-    this.diskRe[id] = re;
-    this.diskIm[id] = im;
-    this.diskR[id] = Number.POSITIVE_INFINITY;
-    this.diskOk[id] = 0;
-    this.noteKey(id, key);
   }
 
   report(): SoundReport {
