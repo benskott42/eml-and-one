@@ -31,31 +31,24 @@ function clamp(n: number): number {
 }
 
 const hashListeners = new Set<() => void>();
-let routeState: unknown = null;
 
 function notifyHash(): void {
   for (const onStoreChange of hashListeners) onStoreChange();
 }
 
-function hasRouteState(state: unknown): boolean {
-  return Boolean(state && typeof state === "object" && "__NA" in state && (state as { __NA?: unknown }).__NA);
-}
-
-function rememberRouteState(): void {
-  if (hasRouteState(window.history.state)) routeState = window.history.state;
-}
-
-/** Replace the current entry. Pushing a hash makes Back show the wrong page. */
-function replaceUrl(hash: string): void {
-  rememberRouteState();
-  const state = hasRouteState(window.history.state) ? window.history.state : routeState;
-  if (!state) return;
+function urlFor(hash: string): string {
   const params = new URLSearchParams(window.location.search);
   params.delete("back");
   const search = params.toString();
-  const suffix = `${search ? `?${search}` : ""}${hash}`;
-  if (`${window.location.search}${window.location.hash}` === suffix && hasRouteState(window.history.state)) return;
-  History.prototype.replaceState.call(window.history, state, "", `${window.location.pathname}${suffix}`);
+  return `${window.location.pathname}${search ? `?${search}` : ""}${hash}`;
+}
+
+/** Replace the current entry. Pushing each n would make Back take an extra step. */
+function replaceUrl(hash: string): void {
+  const next = urlFor(hash);
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (current === next) return;
+  window.history.replaceState(window.history.state, "", next);
 }
 
 type Parsed = { n: number | null; mode: Mode; error: string | null; raw: string | null };
@@ -84,13 +77,7 @@ function parseHash(hash: string): Parsed {
 function useLocationHash(): string | null {
   const [hash, setHash] = useState<string | null>(() => (typeof window === "undefined" ? null : window.location.hash));
   useLayoutEffect(() => {
-    const read = () => {
-      rememberRouteState();
-      if (!hasRouteState(window.history.state) && routeState) {
-        History.prototype.replaceState.call(window.history, routeState, "", window.location.hash);
-      }
-      setHash(window.location.hash);
-    };
+    const read = () => setHash(window.location.hash);
     hashListeners.add(read);
     read();
     window.addEventListener("hashchange", read);
@@ -107,13 +94,6 @@ function useLocationHash(): string | null {
 function writeHash(n: number, mode: Mode): void {
   const hash = `#n=${n}${mode === "strict" ? "&noln0" : ""}`;
   replaceUrl(hash);
-  if (window.location.hash !== hash) {
-    window.setTimeout(() => {
-      rememberRouteState();
-      replaceUrl(hash);
-      notifyHash();
-    }, 0);
-  }
   rememberCountHash(hash);
   notifyHash();
 }

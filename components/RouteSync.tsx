@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 function browserAppPath(): string {
@@ -25,22 +25,28 @@ function focusHeading(): boolean {
   return true;
 }
 
-/** Keep the rendered page on the URL after Back, and move focus to the new page's heading. */
+/** Move focus to the new page's heading, and follow Back when the URL and the page disagree. */
 export function RouteSync() {
   const pathname = usePathname();
+  const router = useRouter();
   const pathnameRef = useRef(pathname);
+  const routerRef = useRef(router);
   const first = useRef(true);
 
   useEffect(() => {
     pathnameRef.current = pathname;
-  }, [pathname]);
+    routerRef.current = router;
+  }, [pathname, router]);
 
   useEffect(() => {
-    const onPop = (event: PopStateEvent) => {
-      const state = event.state as { __NA?: unknown } | null;
-      if (state?.__NA) return;
-      if (norm(browserAppPath()) === norm(pathnameRef.current)) return;
-      window.location.reload();
+    const onPop = () => {
+      // An address-bar hash edit is not a router entry, so Back can leave the
+      // previous page on screen. Ask the public router to show that URL.
+      if (window.history.state != null) return;
+      const path = browserAppPath();
+      if (norm(path) === norm(pathnameRef.current)) return;
+      const hash = window.location.hash;
+      routerRef.current.replace(`${path}${window.location.search}${hash}`, { scroll: false });
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
