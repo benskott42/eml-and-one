@@ -3307,16 +3307,23 @@ failed += runPropertyChecks();
 }
 
 {
-  // Identities that are exactly 0 below the float range. The circuit's residue
-  // sits hundreds of decades under the operands, so the screen must say 0 or
-  // that it could not verify. A nearby difference, and a sum that does not
-  // cancel, stays a certified value. Both the packed worker and a fresh process.
+  // Identities that are exactly 0. A rounding residue, including one that
+  // holds still while the precision climbs, must come out 0 or unverified.
+  // A nearby difference, and a sum that does not cancel, stays a certified
+  // value. Both the packed worker and a fresh process.
   const cancelRows = [
     "exp(ln(1e-400))-1e-400",
     "1e-400*1.5/1.5-1e-400",
     "(1e-400)/2*2-(1e-400)",
     "1e-400/0.5/2-1e-400",
     "1e-400*(2^0.5)^2-2e-400",
+    "1e-450*e/e-1e-450",
+    "1e-500*e/e-1e-500",
+    "1e-600*e/e-1e-600",
+    "1e-200*(2^0.5)^2-2*1e-200",
+    "1e-100*1.5/1.5-1e-100",
+    "1e-50*1.5/1.5-1e-50",
+    "1e-150*1.5/1.5-1e-150",
   ];
   const keptRows: Array<[string, string]> = [
     ["1e-400-1e-400*(1+1e-50)", "−1×10^−450"],

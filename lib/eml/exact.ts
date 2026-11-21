@@ -208,6 +208,8 @@ function noteSeen(v: Z): void {
  * exactEml call (decimal exponent). Rounding there leaves absolute noise near
  * 10^(size − precision). A gate that does not cancel keeps its relative
  * accuracy, so its size is not counted.
+ * A 10^k lift is left out of this only after the cancelled terms reach 1.
+ * A shorter lift stays in: that cancellation is the result's rounding.
  */
 let emlWork = Number.NEGATIVE_INFINITY;
 let emlWorkRe = Number.NEGATIVE_INFINITY;
@@ -215,10 +217,34 @@ let emlWorkIm = Number.NEGATIVE_INFINITY;
 /** Working precision is never raised past this. A value that still needs more is not certified. */
 const PRECISION_CAP = 480;
 
+/** One subtraction's cancelled terms and the residual they left. */
+type CancelHit = { part: "re" | "im"; scale: number; diff: number };
+/** Hits recorded while the gate under evaluation runs. */
+let gateHits: CancelHit[] = [];
+
+/** True when a lift's cancelled terms are still below 1, so the cancellation counts. */
+function shortLift(scale: number): boolean {
+  return Number.isFinite(scale) && scale < 0;
+}
+
+/**
+ * A lift that reached 1 can still be the result. e/e cancels up there and
+ * leaves a residual far below those terms. An ordinary sum does not.
+ */
+function liftedResidue(scale: number, hits: CancelHit[], value: Z): boolean {
+  if (!Number.isFinite(scale) || scale < 0) return false;
+  const produced = (part: "re" | "im", out: Decimal) =>
+    out.isFinite() &&
+    !out.isZero() &&
+    hits.some((h) => h.part === part && Math.abs(h.diff - out.e) <= 4 && h.scale - out.e >= 8);
+  return produced("re", value.re) || produced("im", value.im);
+}
+
 function noteWork(left: Decimal, right: Decimal, diff: Decimal, part: "re" | "im"): void {
   const scale = D.max(left.abs(), right.abs());
   if (!scale.isFinite() || scale.isZero()) return;
   if (!(diff.isZero() || scale.e - diff.abs().e >= 2)) return;
+  if (!diff.isZero()) gateHits.push({ part, scale: scale.e, diff: diff.abs().e });
   emlWork = Math.max(emlWork, scale.e);
   if (part === "re") emlWorkRe = Math.max(emlWorkRe, scale.e);
   else emlWorkIm = Math.max(emlWorkIm, scale.e);
@@ -292,18 +318,49 @@ export type ExactReport = {
   singular: string | null;
   touchedLn0: boolean;
   unverified?: boolean;
-  /** Largest cancelling term size outside the 2^k lift gates (decimal exponent). */
+  /** Largest cancelling term size. A full-size lift is left out; a short lift is not. */
   workExp?: number;
   /** Per-component cancellation size. A part with no finite work was not a residue. */
   workRe?: number;
   workIm?: number;
+  /**
+   * Decade of the terms whose cancellation produced this component.
+   * Set only when that residual is the component itself.
+   */
+  prodRe?: number;
+  prodIm?: number;
   /** Precision the value was computed at. */
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
 };
 
-type Work = { all: number; re: number; im: number };
+type Work = { all: number; re: number; im: number; hits: CancelHit[] };
+
+function mergeHits(left: CancelHit[] | undefined, right: CancelHit[] | undefined, own: CancelHit[]): CancelHit[] {
+  const a = left ?? [];
+  const b = right ?? [];
+  if (a.length === 0 && b.length === 0) return own;
+  if (b.length === 0 && own.length === 0) return a;
+  if (a.length === 0 && own.length === 0) return b;
+  return [...a, ...b, ...own];
+}
+
+/** Scale of the cancellation whose residual is this component, when one is that close. */
+function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): number | undefined {
+  if (!value.isFinite() || value.isZero()) return undefined;
+  let best: number | undefined;
+  let dist = 5;
+  for (const hit of hits) {
+    if (hit.part !== part) continue;
+    const gap = Math.abs(hit.diff - value.e);
+    if (gap < dist) {
+      dist = gap;
+      best = hit.scale;
+    }
+  }
+  return best;
+}
 type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
@@ -510,11 +567,11 @@ function residueMoved(before: Decimal, after: Decimal): boolean {
  * Re-evaluate a residue with more digits. A part that stays put is real, the
  * same way dust is kept. A part that moves is not certified at this precision:
  * raise it, up to 480 digits, or leave the result unverified.
- * Two readings that agree only after dropping hundreds of decades below every
- * magnitude already seen are rounding left by a cancellation the working
- * precision cannot finish. exp(ln(10^(−400))) − 10^(−400) is one. A real
- * difference, such as 10^(−400)·(1 + 10^(−100)) − 10^(−400), stays close to
- * that magnitude and is kept.
+ * The floor is the cancelled operands' decade on the first pass (digits − 12).
+ * A residue that sits below that floor is rounding, including one that holds
+ * still across a short step and then keeps falling. A real difference that
+ * settles above the floor is kept. exp(ln(10^(−400))) − 10^(−400) falls
+ * through the floor. 10^(−400)·(1 + 10^(−100)) − 10^(−400) stops above it.
  */
 function settleResidue(
   report: ExactReport,
@@ -523,57 +580,73 @@ function settleResidue(
   budget: EvalBudget,
 ): ExactReport {
   let current = report;
-  // Largest magnitude this settlement has seen. A later reading that falls
-  // far below it, and is still under the cancellation floor, is rounding.
-  let anchorRe = Number.NEGATIVE_INFINITY;
-  let anchorIm = Number.NEGATIVE_INFINITY;
-  const noteAnchor = (v: Z) => {
-    if (v.re.isFinite() && !v.re.isZero()) anchorRe = Math.max(anchorRe, v.re.e);
-    if (v.im.isFinite() && !v.im.isZero()) anchorIm = Math.max(anchorIm, v.im.e);
+  const threshold = (report.digits ?? D.precision) - 12;
+  const prodGap = (r: ExactReport, name: "re" | "im"): number | undefined => {
+    const part = r.value[name];
+    const scale = name === "re" ? r.prodRe : r.prodIm;
+    if (!part.isFinite() || part.isZero() || scale === undefined || !Number.isFinite(scale)) return undefined;
+    return scale - part.e;
   };
-  noteAnchor(report.value);
+  // A stuck rounding plateau holds until precision passes the residual's
+  // exponent by the first-pass margin. A real difference is still there then.
+  const confirmAt = (r: ExactReport): number => {
+    let past = 0;
+    for (const name of ["re", "im"] as const) {
+      const part = r.value[name];
+      if (prodGap(r, name) === undefined) continue;
+      past = Math.max(past, -part.e + threshold);
+    }
+    return past;
+  };
+  // Below the floor, and this reading is not yet past the residual's exponent.
+  const unproven = (earlier: ExactReport, later: ExactReport): boolean => {
+    const digits = later.digits ?? D.precision;
+    return (["re", "im"] as const).some((name) => {
+      const part = later.value[name];
+      if (!part.isFinite() || part.isZero()) return false;
+      const gap = prodGap(later, name) ?? prodGap(earlier, name);
+      if (gap === undefined || gap <= threshold) return false;
+      return digits < -part.e + threshold;
+    });
+  };
+
   for (let hop = 0; hop < 8; hop += 1) {
     const which = residueParts(current);
     if (which.length === 0) return current;
     const digits = current.digits ?? D.precision;
     const hinted = demandedTinyDigits(root, env);
-    if (digits >= PRECISION_CAP) return certifyZero(current);
+    if (digits >= PRECISION_CAP) return unproven(current, current) ? certifyZero(current) : current;
     // A known magnitude past the cap cannot come back. That only withholds a
     // zero component. A nonzero value that does not move on the next check stays.
     if (hinted > PRECISION_CAP && which.some((name) => current.value[name].isZero())) return certifyZero(current);
     const step = hop === 0 ? 24 : 96;
     const raised = hinted > digits && hinted <= PRECISION_CAP ? hinted : 0;
-    const next = Math.min(PRECISION_CAP, Math.max(digits + step, raised));
-    if (next <= digits) return certifyZero(current);
+    let next = Math.min(PRECISION_CAP, Math.max(digits + step, raised));
+    const past = confirmAt(current);
+    if (past > next) next = Math.min(PRECISION_CAP, past);
+    if (next <= digits) return unproven(current, current) ? certifyZero(current) : current;
     let again: ExactReport;
     try {
       again = atPrecision(next, root, env, budget);
     } catch {
       return certifyZero(current);
     }
-    noteAnchor(again.value);
     const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
     if (!changed) {
-      const still = residueParts(again);
-      // A real difference stays within a couple of hundred decades of the
-      // magnitude already seen. A full cancellation does not: the two readings
-      // agree hundreds of decades lower, and that agreement is rounding.
-      const collapsed = (name: "re" | "im", anchor: number) => {
-        const part = again.value[name];
-        return still.includes(name) && part.isFinite() && !part.isZero() && part.e < anchor - 200;
-      };
-      const live = (["re", "im"] as const).filter((name) => {
-        const part = again.value[name];
-        return part.isFinite() && !part.isZero();
-      });
-      if (live.length > 0 && live.every((name) => collapsed(name, name === "re" ? anchorRe : anchorIm))) {
-        return certifyZero(again);
+      if (unproven(current, again)) {
+        if (next >= PRECISION_CAP) return certifyZero(again);
+        current = again;
+        continue;
+      }
+      if (confirmAt(again) > (again.digits ?? next) && (again.digits ?? next) < PRECISION_CAP) {
+        current = again;
+        continue;
       }
       return current;
     }
     current = again;
   }
-  return residueParts(current).length === 0 ? current : certifyZero(current);
+  return unproven(current, current) || residueParts(current).length > 0 ? certifyZero(current) : current;
 }
 
 /**
@@ -808,6 +881,7 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
+    gateHits = [];
     // sin, cos, and tan of ±∞ are undefined. The note travels with the packed circuit.
     // The exp formula otherwise returns an infinity.
     // The argument may sit under a cached intermediate, so this walk never
@@ -815,16 +889,21 @@ function exactReportOnce(
     const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
     const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
     const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
+    const ownHits = gateHits;
     const shell = inScaledShell(n);
-    const own: Work = shell
-      ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
-      : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
+    // A short lift never reaches 1, so its cancellation is the result's rounding.
+    // e/e does reach 1 and still leaves that residual; an ordinary sum does not.
+    const liftCounts = !shell || shortLift(emlWork) || liftedResidue(emlWork, ownHits, value);
+    const own: Work = liftCounts
+      ? { all: emlWork, re: emlWorkRe, im: emlWorkIm, hits: ownHits }
+      : { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY, hits: ownHits };
     const left = work.get(n.a);
     const right = work.get(n.b);
     const nodeWork: Work = {
       all: Math.max(own.all, left?.all ?? Number.NEGATIVE_INFINITY, right?.all ?? Number.NEGATIVE_INFINITY),
       re: Math.max(own.re, left?.re ?? Number.NEGATIVE_INFINITY, right?.re ?? Number.NEGATIVE_INFINITY),
       im: Math.max(own.im, left?.im ?? Number.NEGATIVE_INFINITY, right?.im ?? Number.NEGATIVE_INFINITY),
+      hits: mergeHits(left?.hits, right?.hits, own.hits),
     };
     work.set(n, nodeWork);
     const nan = value.re.isNaN() || value.im.isNaN();
@@ -852,6 +931,7 @@ function exactReportOnce(
   if (flag === SINGULAR_POLE) singular = flag;
   else if (!singular && flag) singular = flag;
   const rootWork = work.get(root);
+  const hits = rootWork?.hits ?? [];
   return {
     value: out,
     singular,
@@ -859,12 +939,13 @@ function exactReportOnce(
     workExp: rootWork?.all,
     workRe: rootWork?.re,
     workIm: rootWork?.im,
+    prodRe: componentProd("re", out.re, hits),
+    prodIm: componentProd("im", out.im, hits),
     digits: D.precision,
     sawLead,
   };
 }
 
-/** Re-evaluate at `digits` of precision, then restore the usual working precision. */
 export function exactValueAt(root: Node, digits: number, env: Record<string, C | Z> = {}): Z {
   const saved = D.precision;
   D.set({ precision: digits });
