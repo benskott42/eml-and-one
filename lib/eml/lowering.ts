@@ -1,4 +1,4 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { noteBuilder } from "./provenance";
 import { applyProgram, programNode } from "./programs";
 
@@ -396,13 +396,55 @@ function rawAdd(a: Node, b: Node): Node {
 export function rawMul(a: Node, b: Node): Node {
   const range = combine(rangeOf(a), rangeOf(b), "mul");
   const node = setRange(applyProgram("mul", { x: a, y: b }), range);
-  return range.int !== undefined ? attachInt(node, range.int) : node;
+  const tagged = range.int !== undefined ? attachInt(node, range.int) : node;
+  const out = markMaybeInfinite(tagged, a, b);
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) unresolvedHuge.add(out);
+  return out;
 }
 
 function poleSignOf(node: Node): -1 | 1 | null {
   const typed = realInfinitySign(node);
   if (typed !== null) return typed;
   return poleSign.get(node) ?? null;
+}
+
+/**
+ * Nodes that may be infinite or indeterminate.
+ * The mark is written when the node is built. A fold never inspects values or ranges.
+ * a − a and a + (−a) fold to 0 only for a node that is not in this set.
+ */
+const maybeInfinite = new WeakSet<Node>();
+
+/** Mark `out` when any of `from` may be infinite. Returns `out`. */
+export function markMaybeInfinite(out: Node, ...from: Node[]): Node {
+  if (from.some((node) => mayBeInfinite(node))) maybeInfinite.add(out);
+  return out;
+}
+
+/** Mark a node that is itself an infinite or indeterminate source. */
+export function markInfiniteSource(node: Node): Node {
+  maybeInfinite.add(node);
+  return node;
+}
+
+export function mayBeInfinite(node: Node): boolean {
+  return maybeInfinite.has(node);
+}
+
+/**
+ * v1.1 (reviewbot #11 review C): the sign of a marked node's infinity when it can only be a
+ * REAL infinity of that sign (ln 0 = −∞, −ln 0 = +∞). Unset means unknown (complex, NaN, or
+ * either sign). exp uses it: exp(−∞) = 0 is finite, so exp of a −∞-only node is not marked.
+ */
+const infiniteSign = new WeakMap<Node, -1 | 1>();
+
+export function markInfiniteSign(node: Node, sign: -1 | 1 | null | undefined): Node {
+  if (sign && mayBeInfinite(node)) infiniteSign.set(node, sign);
+  return node;
+}
+
+export function infiniteSignOf(node: Node): -1 | 1 | undefined {
+  return mayBeInfinite(node) ? infiniteSign.get(node) : undefined;
 }
 
 function realZeroValue(v: { re: number; im: number } | null): boolean {
@@ -416,6 +458,7 @@ export function rawDiv(a: Node, b: Node): Node {
   if (
     num &&
     den &&
+    !wides.has(a) &&
     realZeroValue(num) &&
     (den.im === 0 || Object.is(den.im, -0)) &&
     den.re !== 0 &&
@@ -430,7 +473,7 @@ export function rawDiv(a: Node, b: Node): Node {
   if (rangeOf(b).int === BigInt(0) && rangeOf(a).int !== BigInt(0)) {
     const numerator = rangeOf(a).int;
     const neg = numerator !== undefined && numerator < BigInt(0);
-    return noteNonfinite(node, neg ? -1 : 1);
+    return markQuotient(noteNonfinite(node, neg ? -1 : 1), a, b);
   }
   if (b.type === "input" && Object.is(b.value.re, -0) && (b.value.im === 0 || Object.is(b.value.im, -0))) {
     // The div program logs +0, so the gates of 1/(−0) come out +∞.
@@ -441,9 +484,23 @@ export function rawDiv(a: Node, b: Node): Node {
     const negative = num !== null && num.re < 0 && (num.im === 0 || Object.is(num.im, -0));
     if (positive) return noteNonfinite(input({ re: -Infinity, im: 0 }, "−∞"), -1);
     if (negative) return noteNonfinite(input({ re: Infinity, im: 0 }, "∞"), 1);
-    return noteNonfinite(node, -1);
+    return markQuotient(noteNonfinite(node, -1), a, b);
   }
-  return node;
+  return markQuotient(node, a, b);
+}
+
+/** 0/0 and any quotient whose denominator is zero. The numerator's mark propagates either way. */
+function markQuotient(node: Node, numerator: Node, denominator: Node): Node {
+  if (denominatorMayBeZero(denominator)) markInfiniteSource(node);
+  // v1.1 (#11 review C): 1/(0/0) is NaN. Over a real-signed infinity (1/ln 0 = 0) it stays finite.
+  if (mayBeInfinite(denominator) && infiniteSignOf(denominator) === undefined) markInfiniteSource(node);
+  return markMaybeInfinite(node, numerator);
+}
+
+function denominatorMayBeZero(den: Node): boolean {
+  if (rangeOf(den).int === BigInt(0)) return true;
+  const v = knownValue(den);
+  return v !== null && realZeroValue(v);
 }
 
 /** A typed infinity. 0 · ∞ is indeterminate even when the infinity was not a division. */
@@ -578,12 +635,44 @@ function axisAligned(a: Node, b: Node): boolean {
   return (pureReal(a) && pureImag(b)) || (pureImag(a) && pureReal(b));
 }
 
+/**
+ * A non-integer kept beside an integer past 2^1024, or a later use of that node.
+ * Cancelling the recorded huge integer is exact. Any other meeting is not a value.
+ */
+const unresolvedHuge = new WeakSet<Node>();
+
+function noteUnresolvedHuge(node: Node, a: Node, b: Node): void {
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) {
+    unresolvedHuge.add(node);
+    return;
+  }
+  const leftHuge = floatOverflowInt(a) !== null;
+  const rightHuge = floatOverflowInt(b) !== null;
+  if (leftHuge === rightHuge) return;
+  const other = leftHuge ? b : a;
+  if (rangeOf(other).int === undefined) unresolvedHuge.add(node);
+}
+
 function noteRealSum(node: Node, left: Node, right: Node): void {
-  if (node !== left && node !== right) realSum.set(node, { left, right });
+  if (node === left || node === right) return;
+  realSum.set(node, { left, right });
+  noteUnresolvedHuge(node, left, right);
 }
 
 function rememberSub(node: Node, left: Node, right: Node): Node {
-  if (node !== left && node !== right) realSub.set(node, { left, right });
+  if (node === left || node === right) return node;
+  realSub.set(node, { left, right });
+  noteUnresolvedHuge(node, left, right);
+  return node;
+}
+
+let unverifiedCount = 0;
+
+/** The existing uncertified result: no number, in either mode. */
+function unverifiedResult(): Node {
+  unverifiedCount += 1;
+  const node = markUnverified(input({ re: 0, im: 0 }, `unverified:${unverifiedCount}`));
+  unresolvedHuge.add(node);
   return node;
 }
 
@@ -596,14 +685,16 @@ function sumComplement(subtrahend: Node, minuend: Node): Node | null {
   return null;
 }
 
-/** a − (a − c) = c, (a − c) − a = −c, and (a − c) − c = a. */
+/**
+ * a − (a − c) = c and (a − c) − a = −c, when both parts are finite.
+ * (a − c) − c is a − 2c. Folding that arm back to a cancels one subtraction.
+ */
 function subComplement(minuend: Node, subtrahend: Node): Node | null {
   const inner = realSub.get(subtrahend);
   if (inner && provenFinite(inner.left) && provenFinite(inner.right) && inner.left === minuend) return inner.right;
   const outer = realSub.get(minuend);
   if (!outer || !provenFinite(outer.left) || !provenFinite(outer.right)) return null;
   if (outer.left === subtrahend) return domainNeg(outer.right);
-  if (outer.right === subtrahend) return outer.left;
   return null;
 }
 
@@ -621,7 +712,13 @@ function finiteBeside(node: Node): boolean {
   if (floatOverflowInt(node)) return false;
   if (rangeOf(node).int !== undefined) return true;
   const v = knownValue(node);
-  return v !== null && Number.isFinite(v.re) && Number.isFinite(v.im);
+  if (v !== null && Number.isFinite(v.re) && Number.isFinite(v.im)) return true;
+  // 0.5 is a narrow interval, not a point. Dust such as 10^(−15) stays on the ordinary circuit.
+  if (!provenFinite(node)) return false;
+  const range = rangeOf(node);
+  const re = range.re ? Math.max(Math.abs(range.re.lo), Math.abs(range.re.hi)) : 0;
+  const im = range.im ? Math.max(Math.abs(range.im.lo), Math.abs(range.im.hi)) : 0;
+  return Math.max(re, im) >= 1e-6;
 }
 
 /** An unknown range is not a proof, and a typed infinity is not finite. */
@@ -729,25 +826,120 @@ function buildSub(a: Node, b: Node, kFrom: Node = b): Node {
   return finish(scaledRot(a, b, kFrom), range);
 }
 
+const markedExactInt = new WeakSet<Node>();
+
+/** Exact evaluation reads this integer. The float value stays the rounded one. */
+export function isMarkedExactInt(node: Node): boolean {
+  return markedExactInt.has(node);
+}
+
+export function markExactInt(node: Node, value: bigint): Node {
+  markedExactInt.add(node);
+  return attachInt(node, value);
+}
+
+/**
+ * One node per integer. Two sums that share a float, such as 10^400+1 and 10^400+3,
+ * must not be the same node: the second write would replace the first integer.
+ * A finite float is an input leaf labelled with the full decimal.
+ * An overflow stays a multiple of its source, so dividing it does not become ln 0.
+ * The factor is a fresh 1 keyed by the decimal, so those multiples do not merge.
+ */
+function carryHugeInt(value: bigint, a: Node, b: Node): Node {
+  const approx = Number(value);
+  if (Number.isFinite(approx)) return markExactInt(input({ re: approx, im: 0 }, `int:${value.toString()}`), value);
+  const signA = floatOverflowInt(a);
+  const source = signA ? a : b;
+  const sourceSign = signA ?? floatOverflowInt(b) ?? 1;
+  const want = value > BigInt(0) ? 1 : -1;
+  const one = input({ re: 1, im: 0 }, `int:${value.toString()}`);
+  const scaled = rawMul(source, one);
+  const node = want === sourceSign ? scaled : rawMul(oneNeg(), scaled);
+  return markExactInt(node, value);
+}
+
+/**
+ * A distinct copy of `huge`. The real sum rotates through ln 0 and comes out negative,
+ * so the node only remembers the two operands. A later cancellation returns the small one.
+ * The factor is a fresh 1, so two different small parts of the same huge integer stay different nodes.
+ */
+function rememberHugeReal(huge: Node, other: Node, op: "add" | "sub"): Node {
+  const one = input({ re: 1, im: 0 }, `beside:${other.id}:${op}`);
+  const node = rawMul(huge, one);
+  if (op === "add") noteRealSum(node, huge, other);
+  else rememberSub(node, huge, other);
+  // The factor's label is how exact mode sees that this mul is not the sum.
+  // Evaluating the mul would certify the bare integer and drop the small term.
+  return node;
+}
+
+function overflowIntDiff(a: Node, b: Node): Node | null {
+  if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
+  const ia = rangeOf(a).int;
+  const ib = rangeOf(b).int;
+  if (ia === undefined || ib === undefined) return null;
+  const diff = ia - ib;
+  if (diff === BigInt(0)) return zeroNode();
+  if (diff <= SAFE && diff >= -SAFE) return smallInt(Number(diff));
+  return rememberSub(carryHugeInt(diff, a, b), a, b);
+}
+
+function overflowIntSum(a: Node, b: Node): Node | null {
+  if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
+  const ia = rangeOf(a).int;
+  const ib = rangeOf(b).int;
+  if (ia === undefined || ib === undefined) return null;
+  const sum = ia + ib;
+  if (sum === BigInt(0)) return zeroNode();
+  if (sum <= SAFE && sum >= -SAFE) return smallInt(Number(sum));
+  const node = carryHugeInt(sum, a, b);
+  noteRealSum(node, a, b);
+  return node;
+}
+
+/** Exact quotient of an integer past the float range, when the quotient itself still fits in a float. */
+export function integerQuotient(a: Node, b: Node): Node | null {
+  if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
+  const ia = provenInteger(a) ?? rangeOf(a).int;
+  const ib = provenInteger(b) ?? rangeOf(b).int;
+  if (ia === undefined || ib === undefined || ib === BigInt(0)) return null;
+  if (ia % ib !== BigInt(0)) return null;
+  const q = ia / ib;
+  if (!Number.isFinite(Number(q))) return null;
+  if (q <= SAFE && q >= -SAFE) return smallInt(Number(q));
+  return markExactInt(input({ re: Number(q), im: 0 }, `int:${q.toString()}`), q);
+}
+
 export function domainSub(a: Node, b: Node, kFrom: Node = b): Node {
+  return markMaybeInfinite(domainSubBuild(a, b, kFrom), a, b);
+}
+
+function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   const folded = cancelledSummand(a, b);
   if (folded) return folded;
   const complement = sumComplement(b, a);
   if (complement) return domainNeg(complement);
   const rest = subComplement(a, b);
   if (rest) return rest;
-  // 10^400 − 1 is still +∞ in float. The exact gates already lose the 1.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
+  // Same-sign infinities are indeterminate. That check stays ahead of the identical-node fold.
   const pa = poleSignOf(a);
   const pb = poleSignOf(b);
   if (pa !== null && pb !== null && pa === pb) return rememberSub(naiveSub(a, b), a, b);
-  if (a === b && (pa !== null || isNonfiniteNode(a))) return rememberSub(naiveSub(a, b), a, b);
-  if (a === b) {
+  // Identical nodes cancel before a huge term is rewritten. A marked node stays on the ordinary circuit.
+  if (a === b && !mayBeInfinite(a)) {
     // The shared zero leaf must stay unmarked. A series shortcut that returned
     // its argument makes f(x) − x the same node twice; that zero is not certified.
     if (isSeriesShortcut(a)) return markSeriesShortcut(naiveSub(ONE, ONE));
     return zeroNode();
   }
+  const carried = overflowIntDiff(a, b);
+  if (carried) return carried;
+  // A finite non-integer beside an integer past the float range is not dropped.
+  // The real difference rotates through ln 0 and comes out negative, so the node only remembers both operands.
+  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "sub");
+  // Two huge-carried terms whose small parts are not both exact integers.
+  // The real circuit drops one of them and would certify the rest.
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined) {
@@ -844,6 +1036,56 @@ export function decadeOf(node: Node): number | undefined {
   return decades.get(node);
 }
 
+/**
+ * v1.1 prototype (compscibot): a real known as m·10^e with 1 ≤ |m| < 10, kept
+ * when float64 cannot hold it as a normal number (|x| < 2^(−1022)). The float
+ * range of such a node may say 0; this tag says it is not.
+ */
+export type Wide = { m: number; e: number };
+const wides = new WeakMap<Node, Wide>();
+export const MIN_NORMAL = 2.2250738585072014e-308;
+
+export function normWide(m: number, e: number): Wide | null {
+  if (!Number.isFinite(m) || m === 0 || !Number.isFinite(e)) return null;
+  let mm = m;
+  let ee = Math.trunc(e);
+  const shift = Math.floor(Math.log10(Math.abs(mm)));
+  mm /= 10 ** shift;
+  ee += shift;
+  if (Math.abs(mm) >= 10) { mm /= 10; ee += 1; }
+  if (Math.abs(mm) < 1) { mm *= 10; ee -= 1; }
+  return { m: mm, e: ee };
+}
+
+export function noteWide(node: Node, w: Wide | null): Node {
+  if (!w) return node;
+  wides.set(node, w);
+  // The decade is the exponent of the leading digit, and it is exact here.
+  decades.set(node, w.e);
+  // A real, signed, sub-normal interval: never a point, so never "the integer 0".
+  if (w.e < -307) {
+    const range = w.m > 0 ? { re: { lo: 0, hi: MIN_NORMAL }, im: { lo: 0, hi: 0 } } : { re: { lo: -MIN_NORMAL, hi: 0 }, im: { lo: 0, hi: 0 } };
+    ranges.set(node, range);
+  }
+  return node;
+}
+
+/** The wide tag, or a normal nonzero known real written the same way. */
+export function wideOf(node: Node): Wide | null {
+  const hit = wides.get(node);
+  if (hit) return hit;
+  const v = knownValue(node);
+  if (v && (v.im === 0 || Object.is(v.im, -0)) && Number.isFinite(v.re) && Math.abs(v.re) >= MIN_NORMAL) {
+    const e = Math.floor(Math.log10(Math.abs(v.re)));
+    return normWide(v.re / 10 ** e, e);
+  }
+  return null;
+}
+
+export function isWideTiny(node: Node): boolean {
+  return wides.has(node);
+}
+
 /** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
 export function markTwoScaled(node: Node): Node {
   twoScaled.add(node);
@@ -871,6 +1113,24 @@ export function noteScaledShell(node: Node): void {
 }
 
 /** Hide a lift's internal cancellation so it is not mistaken for the value's work. */
+/**
+ * v1.1: an odd power series x + c₁x³ + c₂x⁵ + … built by library.ts oddSeries. Its circuit is
+ * that polynomial, so exact mode evaluates the polynomial from x directly instead of the lifted
+ * circuit (same value; the truncation is already past the 480-digit cap). Coefficients are
+ * [numerator, denominator, sign].
+ */
+export type SeriesCoeff = [string, string, -1 | 1];
+const oddSeriesPolys = new WeakMap<Node, { arg: Node; coeffs: SeriesCoeff[] }>();
+
+export function noteOddSeries(node: Node, arg: Node, coeffs: SeriesCoeff[]): Node {
+  oddSeriesPolys.set(node, { arg, coeffs });
+  return node;
+}
+
+export function oddSeriesOf(node: Node): { arg: Node; coeffs: SeriesCoeff[] } | undefined {
+  return oddSeriesPolys.get(node);
+}
+
 export function shieldLift(root: Node, operands: Node[]): Node {
   return markShell(root, operands);
 }
@@ -935,10 +1195,21 @@ function scaledTinySub(a: Node, b: Node): Node | null {
 }
 
 export function domainAdd(a: Node, b: Node): Node {
-  // Adding a finite number to an integer past the float range must stay +∞.
+  return markMaybeInfinite(domainAddBuild(a, b), a, b);
+}
+
+function domainAddBuild(a: Node, b: Node): Node {
+  const cancelled = sumOfNegation(a, b);
+  if (cancelled) return cancelled;
+  const carried = overflowIntSum(a, b);
+  if (carried) return carried;
+  // Adding a non-integer to an integer past the float range must stay +∞.
   // Building the sum rotates through ln 0 and comes out negative.
-  if (floatOverflowInt(a) && finiteBeside(b)) return a;
-  if (floatOverflowInt(b) && finiteBeside(a)) return b;
+  // A finite non-integer beside an integer past the float range is not dropped.
+  // Building the sum rotates through ln 0 and comes out negative, so the node only remembers both operands.
+  if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "add");
+  if (floatOverflowInt(b) && finiteBeside(a)) return rememberHugeReal(b, a, "add");
+  if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
   const range = combine(rangeOf(a), rangeOf(b), "add");
   const mag = maxMag(a, b);
   let node: Node;
@@ -964,7 +1235,32 @@ export function domainAdd(a: Node, b: Node): Node {
   return tagged;
 }
 
+const negOf = new WeakMap<Node, Node>();
+
+/** a + (−a) is 0 when a is unmarked. A marked a falls through to the ordinary sum. */
+/** v1.1: b was built as −a (or a as −b). Read only; no fold. */
+export function isNegationPair(a: Node, b: Node): boolean {
+  return negOf.get(b) === a || negOf.get(a) === b;
+}
+
+export function sumOfNegation(a: Node, b: Node): Node | null {
+  const base = negOf.get(b) === a ? a : negOf.get(a) === b ? b : null;
+  if (base === null) return null;
+  if (isSeriesShortcut(a) || isSeriesShortcut(b)) return null;
+  if (mayBeInfinite(base)) return null;
+  return zeroNode();
+}
+
 export function domainNeg(b: Node): Node {
+  const out = markMaybeInfinite(domainNegBuild(b), b);
+  if (out !== b && !negOf.has(out)) negOf.set(out, b);
+  if (unresolvedHuge.has(b)) unresolvedHuge.add(out);
+  return out;
+}
+
+function domainNegBuild(b: Node): Node {
+  const wb = wides.get(b);
+  if (wb) return noteWide(rawMul(oneNeg(), b), { m: -wb.m, e: wb.e });
   if (rangeOf(b).int === BigInt(0)) return negativeZero();
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();

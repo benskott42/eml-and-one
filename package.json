@@ -8,6 +8,9 @@
     "build": "next build",
     "lint": "eslint --max-warnings=0",
     "eml:check": "tsx lib/eml/check.ts && tsx scripts/count-check.ts",
+    "eml:check:core": "tsx lib/eml/check.ts --shard=core",
+    "eml:check:isolate": "tsx lib/eml/check.ts --shard=isolate",
+    "eml:check:props": "tsx lib/eml/check.ts --shard=props",
     "count:e2e": "node scripts/count-e2e.mjs",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
     "eml:golf": "tsx scripts/eml-golf-slow.ts"

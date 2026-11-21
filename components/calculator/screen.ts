@@ -1,9 +1,9 @@
 import { type C } from "@/lib/eml/complex";
 import { exactScreen, finiteLossMessage, underflowDisclosure, FLOAT_DIFFERS } from "@/lib/eml/history";
-import { scalarNode, seriesShortcutNote } from "@/lib/eml/library";
+import { floatText, scalarNode, seriesShortcutNote } from "@/lib/eml/library";
 import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describe, evaluateReport, isPure, rpnTokens } from "@/lib/eml/node";
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
-import { formatC, isUsable } from "@/lib/eml/format";
+import { isUsable } from "@/lib/eml/format";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { programNumberText } from "@/lib/eml/programIndex";
 
@@ -29,6 +29,12 @@ export type Entry = {
   watch?: number;
   cutHits?: number;
   underflowedExact?: boolean;
+  /** v1.1 (E3): exact reached 0 through a recorded cancellation. */
+  cancelledZero?: boolean;
+  /** v1.1 (E3): the engine's sticky absorbed-term flag. */
+  notCertified?: boolean;
+  /** v1.1 (E6): the exact worker's last progress line while the fill is pending. */
+  progress?: string;
 };
 
 export type Model = {
@@ -90,9 +96,24 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
   }
   try {
     const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    // #11 b1d54b9: a circuit that dropped a term is not a float result either.
+    if (report.unverified) {
+      return {
+        value: { re: Number.NaN, im: Number.NaN },
+        text: "—",
+        singular: null,
+        mode,
+        touchedLn0: false,
+        overflowed: false,
+        underflowed: false,
+        nearCut: false,
+        pendingExact: false,
+        notice: "couldn't verify",
+      };
+    }
     return {
       value: report.value,
-      text: formatC(report.value),
+      text: floatText(node, report.value),
       singular: report.singular,
       mode,
       touchedLn0: report.touchedLn0,
@@ -146,7 +167,7 @@ export function noteFor(item: Entry): string | null {
     programText(item.node),
     number,
     number ? programFlags(item) : null,
-    item.pendingExact ? exactScreen("computing").note : null,
+    item.pendingExact ? item.progress ?? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
     item.floatDiffers && item.exactBeside ? `${FLOAT_DIFFERS} · ${item.exactBeside}` : null,
     item.notice,
@@ -156,7 +177,7 @@ export function noteFor(item: Entry): string | null {
     seriesShortcutNote(item.node),
     isPure(item.node) ? "pure" : null,
     shownSingular(item),
-    agreementNote(item.caption, item.value, item.bound ?? {}, item.text),
+    agreementNote(item.caption, item.value, item.bound ?? {}, item.text, { cancelledZero: item.cancelledZero, notCertified: item.notCertified }),
   ].filter(Boolean);
   return bits.length ? bits.join(" · ") : null;
 }

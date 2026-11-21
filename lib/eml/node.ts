@@ -116,12 +116,16 @@ export function isolateCircuit<T>(build: () => T): T {
   }
 }
 
+/** v1.1: set by the first unverified mark; until then E() skips carrying marks. */
+let anyUnverifiedMark = false;
+
 /** Hash-consed eml. The same children always return the same node inside one expression. */
 export function E(a: Node, b: Node): Node {
   const key = `${a.id},${b.id}`;
   const hit = cons.get(key)?.deref();
   if (hit) return hit;
   const node: Node = Object.freeze({ type: "eml", id: nextId++, a, b });
+  if (anyUnverifiedMark) carryUnverified(node, a, b);
   cons.set(key, new WeakRef(node));
   released.register(node, key);
   return node;
@@ -134,7 +138,12 @@ export class EmlLimitError extends EmlError {}
 export type EvalBudget = {
   maxNodes?: number;
   deadline?: number;
+  /** v1.1 (reviewbot E6): called as each exact pass starts, with its working precision. */
+  onProgress?: (progress: { digits: number }) => void;
 };
+
+/** v1.1 (E6): the message of the cooperative deadline's limit error. */
+export const EXACT_TIMED_OUT = "Exact evaluation timed out.";
 
 const DEFAULT_MAX_NODES = 200_000;
 
@@ -172,6 +181,54 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
  * not a certified zero: the dropped term could have been the answer.
  */
 const seriesShortcuts = new WeakSet<Node>();
+const unverifiedNodes = new WeakSet<Node>();
+
+/** A result that dropped a term. The screen says it could not verify, in either mode. */
+export function markUnverified(node: Node): Node {
+  anyUnverifiedMark = true;
+  unverifiedNodes.add(node);
+  return node;
+}
+
+export function isUnverified(node: Node): boolean {
+  return unverifiedNodes.has(node);
+}
+
+/**
+ * v1.1 (reviewbot 03:33 item 6): a sum or difference that touched a possible infinity. The
+ * circuit's number there is not a result ((inf+1)−1 = −∞i), but its NaN is: "undefined" is
+ * no claim, so (ln 0 − ln 0) + 1 stays undefined. Unlike markUnverified, a NaN result keeps.
+ */
+const maybeUnverifiedNodes = new WeakSet<Node>();
+export function markMaybeUnverified(node: Node): Node {
+  anyUnverifiedMark = true;
+  maybeUnverifiedNodes.add(node);
+  return node;
+}
+
+export function isMaybeUnverified(node: Node): boolean {
+  return maybeUnverifiedNodes.has(node);
+}
+
+/**
+ * v1.1: the strongest unverified mark at or below a node: 2 for markUnverified, 1 for
+ * markMaybeUnverified, 0 for none. The marks are only propagated through add, sub, mul and
+ * neg when a node is built, so exp(x), sin(x) or a power of a dropped-term result would
+ * otherwise evaluate the placeholder as a value. E() carries the mark up when a parent is
+ * built (a mark is always set before its parents exist), so this is one lookup, no walk.
+ */
+const markedBelow = new WeakMap<Node, 1 | 2>();
+function ownKind(n: Node): 0 | 1 | 2 {
+  return unverifiedNodes.has(n) ? 2 : maybeUnverifiedNodes.has(n) ? 1 : 0;
+}
+export function unverifiedKind(n: Node): 0 | 1 | 2 {
+  if (!anyUnverifiedMark) return 0;
+  return Math.max(ownKind(n), markedBelow.get(n) ?? 0) as 0 | 1 | 2;
+}
+function carryUnverified(node: Node, a: Node, b: Node): void {
+  const kind = Math.max(unverifiedKind(a), unverifiedKind(b));
+  if (kind > 0) markedBelow.set(node, kind as 1 | 2);
+}
 
 export function markSeriesShortcut(node: Node): Node {
   seriesShortcuts.add(node);
@@ -215,6 +272,8 @@ export type EvalReport = {
   nearCut: boolean;
   /** Logarithms of a negative real, counted at each log call. A shared child adds its stored count once per use. */
   cutHits: number;
+  /** The circuit dropped a term. The number is not a result. */
+  unverified?: boolean;
 };
 
 function zeroC(v: C): boolean {
@@ -246,6 +305,19 @@ export function expUnderflows(input: C): boolean {
 }
 
 export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: EvalBudget = {}): EvalReport {
+  const kind = unverifiedKind(root);
+  if (kind === 2) {
+    return {
+      value: { re: Number.NaN, im: Number.NaN },
+      singular: null,
+      touchedLn0: false,
+      overflowed: false,
+      cutHits: 0,
+      underflowed: false,
+      nearCut: false,
+      unverified: true,
+    };
+  }
   const maxNodes = budget.maxNodes ?? DEFAULT_MAX_NODES;
   const deadline = budget.deadline ?? 0;
   const memo = new Map<Node, C>();
@@ -368,6 +440,10 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
   const flag = precisionMessage(root, (n) => memo.get(n));
   if (flag === SINGULAR_POLE) singular = flag;
   else if (!singular && flag) singular = flag;
+  // v1.1 (item 6): a number from a sum beside a possible infinity is not a result; NaN is.
+  if (kind === 1 && !(Number.isNaN(out.re) && Number.isNaN(out.im))) {
+    return { value: { re: Number.NaN, im: Number.NaN }, singular: null, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, unverified: true, cutHits: 0 };
+  }
   return {
     value: out,
     singular,

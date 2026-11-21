@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { captionName } from "@/lib/eml/format";
-import { FLOAT_DIFFERS } from "@/lib/eml/history";
+import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
 import table from "@/lib/eml/best-known.json";
 import { programIndexDigits } from "@/lib/eml/programIndex";
@@ -32,7 +32,11 @@ export function CalculatorView(props: CalculatorModel) {
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "0";
-  const named = top ? captionName(top.text, top.value, top.caption) : null;
+  // v1.1 (E3): no "· 0" name beside a 0 that came through a cancellation or is not certified.
+  const named =
+    top && !withholdZeroName({ text: top.text, cancelledZero: top.cancelledZero === true, notCertified: top.notCertified === true })
+      ? captionName(top.text, top.value, top.caption)
+      : null;
   const fullDigits = top ? programIndexDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
