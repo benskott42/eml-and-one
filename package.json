@@ -8,6 +8,7 @@
     "build": "next build",
     "lint": "eslint --max-warnings=0",
     "eml:check": "tsx lib/eml/check.ts",
+    "eml:golden": "tsx lib/eml/golden/harness.ts",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
     "eml:golf": "tsx scripts/eml-golf-slow.ts"
   },
