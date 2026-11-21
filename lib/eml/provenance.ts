@@ -275,7 +275,8 @@ const QUALIFIER = "(lower cut, ln 0 = −∞ where used)";
 
 function shortest(label: Label | null): string | null {
   if (!label || label.kind !== "record" || !label.provenMinimal) return null;
-  return `the shortest possible ${QUALIFIER}`;
+  if (label.text !== "0" && label.text !== "-1" && label.text !== "2") return `shortest known ${QUALIFIER}`;
+  return `proven minimal ${QUALIFIER}`;
 }
 
 /**

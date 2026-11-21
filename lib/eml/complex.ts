@@ -25,6 +25,8 @@
  * structural range, not from a second evaluation of the node.
  */
 
+import { onNegativeCutF } from "./cut";
+
 export type C = { re: number; im: number };
 
 export const C1: C = { re: 1, im: 0 };
@@ -39,7 +41,7 @@ function copysign(magnitude: number, sign: number): number {
 }
 
 /** A few ulps of `scale`. Subnormals and non-finites contribute nothing. */
-function unitUlp(scale: number): number {
+export function unitUlp(scale: number): number {
   const ax = Math.abs(scale);
   if (!(ax > 0) || !Number.isFinite(ax)) return 0;
   return 2 ** (Math.floor(Math.log2(ax)) - 52);
@@ -98,16 +100,6 @@ export function cexp(z: C): C {
   return cis(z.im, m);
 }
 
-/**
- * True on the negative-real axis, including −∞.
- * −∞ is a negative real, so the lower bank gives it argument −π.
- * atan2(0, −∞) is +π, which would put the composed ln(−0) on the other bank.
- */
-function onNegativeCut(re: number, im: number): boolean {
-  if (!(re < 0)) return false;
-  return im === 0 || Object.is(im, -0);
-}
-
 /** log|z| without overflowing hypot when both components are huge and finite. */
 function logMagnitude(re: number, im: number): number {
   const ax = Math.abs(re);
@@ -126,7 +118,7 @@ function logArg(z: C, negativeAxis: number): C {
     if (Object.is(z.re, -0)) return { re: -Infinity, im: negativeAxis };
     return { re: -Infinity, im: Object.is(z.im, -0) ? -0 : 0 };
   }
-  const arg = onNegativeCut(z.re, z.im) ? negativeAxis : Math.atan2(z.im, z.re);
+  const arg = onNegativeCutF(z.re, z.im) ? negativeAxis : Math.atan2(z.im, z.re);
   const re = logMagnitude(z.re, z.im);
   if (Number.isNaN(re) || Number.isNaN(arg)) return { re: NaN, im: NaN };
   return { re, im: arg };
