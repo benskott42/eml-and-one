@@ -75,8 +75,10 @@ export class SoundDedup {
     k: number,
     key: string,
     proveEqual: (id: number) => boolean,
+    prepared?: Disk,
   ): { merged: boolean; disk: Disk } {
-    const disk = emlDisk(a, b);
+    // A reused conjugate pair passes the conjugate disk. Specials stay inconclusive.
+    const disk = prepared ?? emlDisk(a, b);
     const row = this.escalation.get(k) ?? { candidates: 0, escalated: 0 };
     row.candidates += 1;
     const nominated = this.keys.get(key) ?? [];

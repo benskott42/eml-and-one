@@ -1,5 +1,6 @@
 import { eml } from "./complex";
 import { ballVerdict, enclose } from "./enclose";
+import { conjugateDisk, type Disk } from "./interval";
 import { type ExactReport, type Z, exactClose, exactReport, exactValueAt, valueMatchesTarget } from "./exact";
 import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows, rpnTokens } from "./node";
 import { SoundDedup, type SoundReport } from "./sound";
@@ -287,6 +288,188 @@ function rpnOf(left: Int32Array, right: Int32Array, id: number): string {
  * the principal target, and the hit it proves is the lower hit of the conjugate
  * target. Real targets are their own conjugates.
  */
+/**
+ * The lower log and the principal log disagree on the negative-real axis,
+ * including −0 and −∞. Off that axis the conjugate of a lower value is the
+ * lower value of the conjugate inputs.
+ */
+function fillInputKey(out: Uint32Array, ar: number, ai: number, br: number, bi: number): void {
+  const words = new Float64Array(out.buffer, out.byteOffset, 4);
+  words[0] = ar;
+  words[1] = ai;
+  words[2] = br;
+  words[3] = bi;
+}
+
+function conjugationSafe(re: number, im: number): boolean {
+  if (!Number.isFinite(re) || !Number.isFinite(im)) return false;
+  if (Object.is(re, -0) && (im === 0 || Object.is(im, -0))) return false;
+  return !(re < 0 && (im === 0 || Object.is(im, -0)));
+}
+
+/** One eml(a, b), keyed by input bits. A conjugate probe flips the two imaginary signs. */
+class PairCache {
+  private cap = 0;
+  private mask = 0;
+  private words = new Uint32Array(0);
+  private re = new Float64Array(0);
+  private im = new Float64Array(0);
+  private diskRe = new Float64Array(0);
+  private diskIm = new Float64Array(0);
+  private diskR = new Float64Array(0);
+  private state = new Uint8Array(0);
+  private size = 0;
+
+  constructor() {
+    this.grow(1024);
+  }
+
+  find(key: Uint32Array): number {
+    let i = this.hash(key) & this.mask;
+    for (;;) {
+      const state = this.state[i];
+      if (state === 0) return -1;
+      const o = i << 3;
+      if (
+        this.words[o] === key[0] &&
+        this.words[o + 1] === key[1] &&
+        this.words[o + 2] === key[2] &&
+        this.words[o + 3] === key[3] &&
+        this.words[o + 4] === key[4] &&
+        this.words[o + 5] === key[5] &&
+        this.words[o + 6] === key[6] &&
+        this.words[o + 7] === key[7]
+      ) {
+        return i;
+      }
+      i = (i + 1) & this.mask;
+    }
+  }
+
+  /** The stored conjugate pair, when that float is bitwise the lower value. */
+  reuse(ar: number, ai: number, br: number, bi: number, own: Uint32Array, conj: Uint32Array): { re: number; im: number; disk?: Disk } | undefined {
+    if (ai === 0 || bi === 0) return undefined;
+    fillInputKey(own, ar, ai, br, bi);
+    if (!conjugationSafe(ar, ai) || !conjugationSafe(br, bi)) return undefined;
+    for (let w = 0; w < 8; w += 1) conj[w] = own[w] ?? 0;
+    // High word of each imaginary component. Flipping it is conjugation.
+    conj[3] = (conj[3] ?? 0) ^ 0x80000000;
+    conj[7] = (conj[7] ?? 0) ^ 0x80000000;
+    const slot = this.find(conj);
+    if (slot < 0) return undefined;
+    const hit = this.read(slot, true);
+    // A zero component is where libm's signed zero breaks the identity.
+    if (hit.re === 0 || hit.im === 0 || !Number.isFinite(hit.re) || !Number.isFinite(hit.im)) return undefined;
+    return hit;
+  }
+
+  read(slot: number, conj: boolean): { re: number; im: number; disk?: Disk } {
+    const re = this.re[slot] ?? 0;
+    const im = this.im[slot] ?? 0;
+    const state = this.state[slot] ?? 0;
+    const value = { re, im: conj ? -im : im };
+    if ((state & 4) === 0) return value;
+    const disk = {
+      re: this.diskRe[slot] ?? Number.NaN,
+      im: this.diskIm[slot] ?? Number.NaN,
+      r: this.diskR[slot] ?? Number.POSITIVE_INFINITY,
+      ok: (state & 2) !== 0,
+    };
+    return { ...value, disk: conj ? conjugateDisk(disk) : disk };
+  }
+
+  store(key: Uint32Array, re: number, im: number, disk?: Disk): void {
+    if (this.size * 10 >= this.cap * 7) this.grow(this.cap << 1);
+    let i = this.hash(key) & this.mask;
+    for (;;) {
+      if (this.state[i] === 0) {
+        const o = i << 3;
+        for (let w = 0; w < 8; w += 1) this.words[o + w] = key[w] ?? 0;
+        this.re[i] = re;
+        this.im[i] = im;
+        let state = 1;
+        if (disk) {
+          this.diskRe[i] = disk.re;
+          this.diskIm[i] = disk.im;
+          this.diskR[i] = disk.r;
+          state |= 4;
+          if (disk.ok) state |= 2;
+        }
+        this.state[i] = state;
+        this.size += 1;
+        return;
+      }
+      i = (i + 1) & this.mask;
+    }
+  }
+
+  private hash(key: Uint32Array): number {
+    let h = (key[0] ?? 0) ^ Math.imul(key[1] ?? 0, 0x9e3779b1);
+    h ^= Math.imul((key[2] ?? 0) ^ Math.imul(key[3] ?? 0, 0x85ebca6b), 0xc2b2ae35);
+    h ^= (key[4] ?? 0) ^ Math.imul(key[5] ?? 0, 0x27d4eb2d);
+    h ^= Math.imul((key[6] ?? 0) ^ (key[7] ?? 0), 0x165667b1);
+    return h;
+  }
+
+  private grow(cap: number) {
+    const prev = {
+      words: this.words,
+      re: this.re,
+      im: this.im,
+      diskRe: this.diskRe,
+      diskIm: this.diskIm,
+      diskR: this.diskR,
+      state: this.state,
+      cap: this.cap,
+    };
+    this.cap = cap;
+    this.mask = cap - 1;
+    this.words = new Uint32Array(cap << 3);
+    this.re = new Float64Array(cap);
+    this.im = new Float64Array(cap);
+    this.diskRe = new Float64Array(cap);
+    this.diskIm = new Float64Array(cap);
+    this.diskR = new Float64Array(cap);
+    this.state = new Uint8Array(cap);
+    this.size = 0;
+    const key = new Uint32Array(8);
+    for (let i = 0; i < prev.cap; i += 1) {
+      const state = prev.state[i];
+      if (!state) continue;
+      const o = i << 3;
+      for (let w = 0; w < 8; w += 1) key[w] = prev.words[o + w] ?? 0;
+      const disk = (state & 4) !== 0
+        ? {
+            re: prev.diskRe[i] ?? Number.NaN,
+            im: prev.diskIm[i] ?? Number.NaN,
+            r: prev.diskR[i] ?? Number.POSITIVE_INFINITY,
+            ok: (state & 2) !== 0,
+          }
+        : undefined;
+      this.store(key, prev.re[i] ?? 0, prev.im[i] ?? 0, disk);
+    }
+  }
+}
+
+/** Store one pair and read the conjugate pair back. Locks the reuse rule. */
+export function probeConjugateReuse(
+  ar: number,
+  ai: number,
+  br: number,
+  bi: number,
+  valueRe: number,
+  valueIm: number,
+  disk?: Disk,
+): { re: number; im: number; disk?: Disk } | undefined {
+  const cache = new PairCache();
+  const stored = new Uint32Array(8);
+  const own = new Uint32Array(8);
+  const conj = new Uint32Array(8);
+  fillInputKey(stored, ar, ai, br, bi);
+  cache.store(stored, valueRe, valueIm, disk);
+  return cache.reuse(ar, -ai, br, -bi, own, conj);
+}
+
 export function lowerHitTarget(target: Target, otherCut: boolean): Target {
   if (!otherCut || target.im === 0 || Object.is(target.im, -0)) return target;
   const id = target.id === "ipi" ? "-ipi" : target.id === "-ipi" ? "ipi" : target.id;
@@ -436,7 +619,7 @@ let digest = 2166136261;
     }
   };
 
-  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number, otherCut: boolean) => {
+  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number, otherCut: boolean, prepared?: Disk): Disk | undefined => {
     const fromLn = touchesLn0(a, b);
     const nonFinite = !Number.isFinite(valueRe) || !Number.isFinite(valueIm);
     const overflow = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn);
@@ -469,11 +652,11 @@ let digest = 2166136261;
         }
         const resident = reportOf(id);
         return incoming !== null && resident !== null && proofsMatch(incoming, resident);
-      });
+      }, fromLn ? undefined : prepared);
       if (decision.merged) {
         rejected += 1;
         maybeRecord(a, b, valueRe, valueIm, gates, null, otherCut);
-        return;
+        return decision.disk;
       }
       if (count >= cap) grow();
       const id = count;
@@ -486,7 +669,7 @@ let digest = 2166136261;
       count += 1;
       soundDedup.remember(id, keyString(valueRe, valueIm), decision.disk);
       maybeRecord(a, b, valueRe, valueIm, gates, id, otherCut);
-      return;
+      return decision.disk;
     }
     const value = { re: valueRe, im: valueIm };
     const imagAbs = Math.abs(value.im);
@@ -594,6 +777,10 @@ let digest = 2166136261;
     ...(trace ? { classes: traced() } : {}),
   });
 
+  const pairs = new PairCache();
+  const ownKey = new Uint32Array(8);
+  const conjKey = new Uint32Array(8);
+
   for (let gates = 1; gates <= maxGates; gates += 1) {
     if (options.shouldStop?.()) break;
     const start = count;
@@ -608,19 +795,42 @@ let digest = 2166136261;
           const index = pair++;
           if ((index & 2047) === 0 && options.shouldStop?.()) {
             level[gates + 1] = count;
-return finish();
+            return finish();
           }
           if (options.allowLn0 === false && touchesLn0(a, b)) continue;
-          const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
-          if (Number.isNaN(value.re) || Number.isNaN(value.im)) {
+          const ar = re[a] ?? 0;
+          const ai = im[a] ?? 0;
+          const br = re[b] ?? 0;
+          const bi = im[b] ?? 0;
+          // Both inputs complex: the conjugate pair is a different call. A real
+          // input is its own conjugate, and that path stays a direct eml.
+          const hit = pairs.reuse(ar, ai, br, bi, ownKey, conjKey);
+          let valueRe = 0;
+          let valueIm = 0;
+          let prepared: Disk | undefined;
+          if (hit) {
+            valueRe = hit.re;
+            valueIm = hit.im;
+            prepared = hit.disk;
+          } else {
+            const value = eml({ re: ar, im: ai }, { re: br, im: bi });
+            valueRe = value.re;
+            valueIm = value.im;
+          }
+          if (Number.isNaN(valueRe) || Number.isNaN(valueIm)) {
             rejected += 1;
             continue;
           }
           if (options.partition) {
-            buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im, otherCut: false });
+            buckets[index % workers]?.push({ pair: index, a, b, re: valueRe, im: valueIm, otherCut: false });
             continue;
           }
-          commit(a, b, value.re, value.im, gates, false);
+          // otherCut stays false. Off the cut the reused float is the lower value,
+          // and that equals the principal value. lowerHitTarget is what reports
+          // a principal hit as the lower hit of the conjugate when the float
+          // really is the other cut.
+          const disk = commit(a, b, valueRe, valueIm, gates, false, prepared);
+          if (!hit && ai !== 0 && bi !== 0) pairs.store(ownKey, valueRe, valueIm, disk);
         }
       }
     }

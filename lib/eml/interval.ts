@@ -130,6 +130,15 @@ function bad(re = Number.NaN, im = Number.NaN): Disk {
   return { re, im, r: Number.POSITIVE_INFINITY, ok: false };
 }
 
+/**
+ * Conjugate of a disk. The radius is unchanged. An inconclusive disk stays
+ * inconclusive, including a ln 0 special: conjugating it does not certify it.
+ */
+export function conjugateDisk(z: Disk): Disk {
+  if (!z.ok) return bad();
+  return { re: z.re, im: -z.im, r: z.r, ok: true };
+}
+
 /** Exact float input. A nonzero radius is rounded up. The leaf 1 uses r = 0. */
 export function pointDisk(re: number, im = 0, r = 0): Disk {
   const radius = r === 0 ? 0 : roundRadius(r);

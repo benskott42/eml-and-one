@@ -11,8 +11,8 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { acceptsConstantProgram, acceptsConstantValue, floatComponentKey, floatDedupKey, functionFingerprint, ln0Dependence, lowerHitTarget, searchConstants, searchConstantsMerged } from "./golf";
-import { DiskGrid, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
+import { acceptsConstantProgram, acceptsConstantValue, floatComponentKey, floatDedupKey, functionFingerprint, ln0Dependence, lowerHitTarget, probeConjugateReuse, searchConstants, searchConstantsMerged } from "./golf";
+import { DiskGrid, conjugateDisk, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
 import { SoundDedup } from "./sound";
 import {
   applyBinaryNode,
@@ -1221,6 +1221,45 @@ if (inShard("core")) {
   if (ln0Seen === 0 || ln0Certified !== 0) {
     failed += 1;
     console.log("FAIL sound certified an ln0 class", ln0Seen, ln0Certified);
+  }
+  const sampleDisk = emlDisk(pointDisk(0.2, 0.3), pointDisk(1.1, -0.4));
+  const sampleConj = conjugateDisk(sampleDisk);
+  const specialConj = conjugateDisk(badDisk);
+  if (!sampleDisk.ok || sampleConj.re !== sampleDisk.re || sampleConj.im !== -sampleDisk.im || sampleConj.r !== sampleDisk.r || !sampleConj.ok || specialConj.ok) {
+    failed += 1;
+    console.log("FAIL conjugate disk", sampleDisk, sampleConj, specialConj.ok);
+  }
+  const reused = new SoundDedup("conj");
+  const reusedDisk = reused.consider(pointDisk(0.2, -0.3), pointDisk(1.1, 0.4), 3, "conj-pair", () => false, sampleConj);
+  const reusedSpecial = reused.consider(badDisk, badDisk, 5, "conj-special", () => false, specialConj);
+  const reusedPair = probeConjugateReuse(0.25, 0.5, 1.2, -0.3, 2, 3, { re: 2, im: 3, r: 0.125, ok: true });
+  const reusedCut = probeConjugateReuse(-2, 0, 1, 0.4, 2, 3, { re: 2, im: 3, r: 0.125, ok: true });
+  const reusedZero = probeConjugateReuse(0.25, 0.5, 1.2, -0.3, 0, 3, { re: 0, im: 3, r: 0.125, ok: true });
+  const reusedSpecialPair = probeConjugateReuse(0.25, 0.5, 1.2, -0.3, 2, 3, badDisk);
+  if (!reusedPair || reusedPair.re !== 2 || reusedPair.im !== -3 || !reusedPair.disk?.ok || reusedPair.disk.im !== -3 || reusedPair.disk.r !== 0.125 || reusedCut || reusedZero || reusedSpecialPair?.disk?.ok !== false) {
+    failed += 1;
+    console.log("FAIL conjugate pair reuse", reusedPair, Boolean(reusedCut), Boolean(reusedZero), reusedSpecialPair?.disk?.ok);
+  }
+  if (reusedDisk.disk.re !== sampleConj.re || reusedDisk.disk.im !== sampleConj.im || reusedDisk.disk.r !== sampleConj.r || !reusedDisk.disk.ok || reusedSpecial.disk.ok || reusedSpecial.merged) {
+    failed += 1;
+    console.log("FAIL reused conjugate disk", reusedDisk.disk, reusedSpecial.disk.ok, reusedSpecial.merged);
+  }
+  let conjPairs = 0;
+  let conjMiss = 0;
+  const tracedRows = traced.classes ?? [];
+  const rowAt = new Map<string, (typeof tracedRows)[number]>();
+  for (const item of tracedRows) rowAt.set(`${item.re}:${item.im}`, item);
+  for (const item of tracedRows) {
+    if (item.im === 0 || Object.is(item.im, -0)) continue;
+    const twin = rowAt.get(`${item.re}:${-item.im}`);
+    if (!twin || twin === item) continue;
+    conjPairs += 1;
+    if (item.diskOk !== twin.diskOk) conjMiss += 1;
+    else if (item.diskOk && (twin.diskRe !== item.diskRe || twin.diskIm !== -item.diskIm || twin.diskR !== item.diskR)) conjMiss += 1;
+  }
+  if (conjMiss !== 0) {
+    failed += 1;
+    console.log("FAIL search conjugate disks", conjPairs, conjMiss);
   }
 }
 const fingerA = functionFingerprint(tAdd(X, Y), (point) => ({ x: point, y: { re: 0.3, im: -0.2 } }));
