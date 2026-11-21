@@ -41,7 +41,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, isMaybeUnverified, isUnverified, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -235,6 +235,143 @@ function productInfiniteSign(a: Node, b: Node): -1 | 1 | undefined {
   if (sa !== undefined && fb !== null) return (sa * fb) as -1 | 1;
   if (sb !== undefined && fa !== null) return (sb * fa) as -1 | 1;
   return undefined;
+}
+
+/** Sign of a known real, or of a real interval that stays off zero. −0 counts as 0. */
+function realDirection(node: Node): -1 | 0 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && !Number.isNaN(v.re)) {
+    if (v.re === 0) return 0;
+    return v.re < 0 ? -1 : 1;
+  }
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return null;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return null;
+  if (range.re.hi < 0) return -1;
+  if (range.re.lo > 0) return 1;
+  if (range.re.lo === 0 && range.re.hi === 0) return 0;
+  return null;
+}
+
+/** A known real ±∞, including a typed infinity and ln(0). */
+function realSignedInfinity(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (!v || !imagZero(v)) return null;
+  if (v.re === Infinity) return 1;
+  if (v.re === -Infinity) return -1;
+  return null;
+}
+
+/** Sign of a known finite pure imaginary, or of an interval that stays on one side of 0. */
+function pureImagDirection(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && (v.re === 0 || Object.is(v.re, -0)) && Number.isFinite(v.im) && v.im !== 0) return v.im < 0 ? -1 : 1;
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.re.lo !== 0 || range.re.hi !== 0) return null;
+  if (!Number.isFinite(range.im.lo) || !Number.isFinite(range.im.hi)) return null;
+  if (range.im.hi < 0) return -1;
+  if (range.im.lo > 0) return 1;
+  return null;
+}
+
+/**
+ * An infinity's angle, in quarter turns. 0 is +∞, 1 is +∞i, 2 is −∞, 3 is −∞i.
+ * The turn is the finite node whose log cancels that angle: exp(+∞ − ln(turn)).
+ * Mul, sqr, neg, and an integer power add to this count. The product and power
+ * words would drop it, and a product of two turns is only approximately on the axis in float.
+ * A sum the screen already refuses (inf+1) is not a direction.
+ */
+const directedInfinity = new WeakMap<Node, { magnitude: Node; quarter: number }>();
+
+function positiveRealInfinity(node: Node): Node {
+  return realSignedInfinity(node) === -1 || infiniteSignOf(node) === -1 ? domainNeg(node) : node;
+}
+
+function axisTurn(quarter: number): Node {
+  const q = ((quarter % 4) + 4) % 4;
+  if (q === 0) return ONE;
+  if (q === 1) return tNeg(tI());
+  if (q === 2) return tMinusOne();
+  return tI();
+}
+
+function rememberDirection(magnitude: Node, quarter: number): Node {
+  const positive = positiveRealInfinity(magnitude);
+  const node = markInfiniteSource(E(E(positive, axisTurn(quarter)), ONE));
+  directedInfinity.set(node, { magnitude: positive, quarter });
+  const q = ((quarter % 4) + 4) % 4;
+  if (q === 0) markInfiniteSign(node, 1);
+  else if (q === 2) markInfiniteSign(node, -1);
+  return node;
+}
+
+function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
+  const hit = directedInfinity.get(node);
+  if (hit) return hit;
+  if (isUnverified(node) || isMaybeUnverified(node)) return null;
+  const sign = realSignedInfinity(node) ?? infiniteSignOf(node) ?? null;
+  if (sign === 1) return { magnitude: node, quarter: 0 };
+  if (sign === -1) return { magnitude: domainNeg(node), quarter: 2 };
+  return null;
+}
+
+/** Quarter turns to add for a finite factor on one axis. */
+function factorQuarter(node: Node): number | null {
+  const real = realDirection(node);
+  if (real === 1) return 0;
+  if (real === -1) return 2;
+  const imag = pureImagDirection(node);
+  if (imag === 1) return 1;
+  if (imag === -1) return 3;
+  return null;
+}
+
+/**
+ * A finite factor whose angle is not a quarter turn. 1+i is one.
+ * An unknown range is not this: the product word still has to run.
+ */
+function offAxis(node: Node): boolean {
+  if (factorQuarter(node) !== null) return false;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im)) return v.re !== 0 && v.im !== 0;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return false;
+  const ends = [range.re.lo, range.re.hi, range.im.lo, range.im.hi];
+  if (!ends.every((end) => Number.isFinite(end))) return false;
+  const reOff = range.re.hi < 0 || range.re.lo > 0;
+  const imOff = range.im.hi < 0 || range.im.lo > 0;
+  return reOff && imOff;
+}
+
+/** A finite numerator over a directed infinity is 0. An unknown range is not finite. */
+function provenFinite(node: Node): boolean {
+  if (mayBeInfinite(node) || isNonfiniteNode(node) || isUnverified(node) || isMaybeUnverified(node)) return false;
+  if (rangeOf(node).int !== undefined) return true;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im)) return true;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return false;
+  return [range.re.lo, range.re.hi, range.im.lo, range.im.hi].every((end) => Number.isFinite(end));
+}
+
+/** Carry the angle. Two infinities add their quarter turns. */
+function directedProduct(a: Node, b: Node): Node | null {
+  const dirA = directionOf(a);
+  const dirB = directionOf(b);
+  if (dirA && dirB) return rememberDirection(dirA.magnitude, dirA.quarter + dirB.quarter);
+  if (dirA && offAxis(b)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  if (dirB && offAxis(a)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  const quarterA = dirA ? null : factorQuarter(a);
+  const quarterB = dirB ? null : factorQuarter(b);
+  if (dirA && quarterB !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterB);
+  if (dirB && quarterA !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterA);
+  return null;
+}
+
+/** A proven integer exponent. 3.0 and 6/2 have no integer tag, so they are not integers here. */
+function integerExponent(node: Node): bigint | null {
+  const tagged = rangeOf(node).int;
+  return tagged === undefined ? null : tagged;
 }
 
 function tExpBuild(t: Node): Node {
@@ -570,6 +707,11 @@ export function tSub(a: Node, b: Node): Node {
 }
 
 export function tNeg(b: Node): Node {
+  // A real ±∞ already flips its sign mark. Only an imaginary infinity needs a new turn,
+  // so −(∞i) is −∞i and −1/(−∞) keeps the quotient's signed zero.
+  const dir = directionOf(b);
+  const turn = dir ? ((dir.quarter % 4) + 4) % 4 : 0;
+  if (dir && turn % 2 === 1) return rememberDirection(dir.magnitude, dir.quarter + 2);
   const s = infiniteSignOf(b);
   return markInfiniteSign(tagPi(domainNeg(b), piNeg(b)), s === undefined ? undefined : (-s as -1 | 1));
 }
@@ -618,6 +760,8 @@ export function tMul(a: Node, b: Node): Node {
   // v1.1 (#11 review C): x · 1 is x for a marked x. The product gates turned ln(0) · 1 into +∞.
   if (mayBeInfinite(a) && isOneNode(b)) return a;
   if (mayBeInfinite(b) && isOneNode(a)) return b;
+  const directed = directedProduct(a, b);
+  if (directed) return directed;
   return markInfiniteSign(tMulBuild(a, b), productInfiniteSign(a, b));
 }
 
@@ -657,6 +801,11 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
+  // A finite numerator over an imaginary infinity is 0. A real infinity keeps
+  // the quotient, so −1/∞ stays the −0 the wire test checks.
+  const den = directionOf(b);
+  const turn = den ? ((den.quarter % 4) + 4) % 4 : 0;
+  if (den && turn % 2 === 1 && !directionOf(a) && provenFinite(a)) return tZero();
   const node = tDivBuild(a, b);
   const sa = infiniteSignOf(a);
   const fb = finiteRealSign(b);
@@ -701,6 +850,17 @@ function intRatioDecade(a: bigint, b: bigint): number {
 export function tPow(a: Node, b: Node): Node {
   // v1.1 (#11 review C): x^1 is x for a marked x (ln(0)^1 was +∞).
   if (mayBeInfinite(a) && isOneNode(b)) return a;
+  // An integer power multiplies the quarter turn. ^2 was the only spelling the
+  // power word got right by accident, so (∞i)^3 stayed a real infinity.
+  // A negative integer power is 0, the same zero as 1 over that infinity.
+  // Any other exponent, including 0, 3.0, and 6/2, is not a quarter turn.
+  const dir = directionOf(a);
+  if (dir) {
+    const exp = integerExponent(b);
+    if (exp !== null && exp > BigInt(0)) return rememberDirection(dir.magnitude, dir.quarter * Number(exp % BigInt(4)));
+    if (exp !== null && exp < BigInt(0)) return tZero();
+    return markUnverified(markInfiniteSource(applyProgram("pow", { x: a, y: b })));
+  }
   const built = tPowBuild(a, b);
   // A marked base or exponent may give ∞ or NaN (ln(0)^2, 2^(0/0)); 0^(negative) is a pole.
   const vb = knownValue(b);
@@ -732,6 +892,8 @@ function tPowBuild(a: Node, b: Node): Node {
 }
 
 export function tSqr(t: Node): Node {
+  const dir = directionOf(t);
+  if (dir) return rememberDirection(dir.magnitude, dir.quarter * 2);
   return markMaybeInfinite(tSqrBuild(t), t);
 }
 
@@ -764,6 +926,7 @@ export function tSqrt(t: Node): Node {
     if (!leaf) {
       leaf = markInfiniteSource(input({ re: 0, im: Infinity }, "∞i"));
       sqrtInfLeaf.set(t, leaf);
+      directedInfinity.set(leaf, { magnitude: positiveRealInfinity(t), quarter: 1 });
     }
     return leaf;
   }

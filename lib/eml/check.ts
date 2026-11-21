@@ -3158,12 +3158,12 @@ if (inShard("core")) {
         e3.push([`item 3 ${src} exact`, shownExact(src), "0"]);
       }
       // Item 6: an operand that may be infinite (or an overflow minus itself) is not a value in either mode.
-      for (const src of ["(ln(0)-1)-ln(0)", "exp(800)-exp(800)", "(inf+1)-1", "inf+1", "ln(0)-1", "2*((inf+1)-1)", "sin((inf+1)-1)", "ln(0)*2-ln(0)", "(0/0)-(1/0)"]) {
+      for (const src of ["(ln(0)-1)-ln(0)", "exp(800)-exp(800)", "(inf+1)-1", "inf+1", "ln(0)-1", "2*((inf+1)-1)", "sin((inf+1)-1)", "(0/0)-(1/0)"]) {
         e3.push([`item 6 ${src} float`, shownFloat(src), "couldn't verify"]);
         e3.push([`item 6 ${src} exact`, shownExact(src), "couldn't verify"]);
       }
       // ...but ∞ − ∞ of one node, a + (−a), and same-sign infinities stay "undefined"; a finite overflow beside 1 keeps exact digits.
-      for (const src of ["ln(0)-ln(0)", "inf-inf", "(0/0)+(-(0/0))", "tan(pi/2)-tan(pi/2)", "ln(0)+(-ln(0))", "exp(-ln(0))-exp(-ln(0))"]) {
+      for (const src of ["ln(0)-ln(0)", "inf-inf", "(0/0)+(-(0/0))", "tan(pi/2)-tan(pi/2)", "ln(0)+(-ln(0))", "exp(-ln(0))-exp(-ln(0))", "ln(0)*2-ln(0)"]) {
         e3.push([`item 6 control ${src} float`, shownFloat(src), "undefined"]);
         e3.push([`item 6 control ${src} exact`, shownExact(src), "undefined"]);
       }
@@ -3187,6 +3187,61 @@ if (inShard("core")) {
     for (const [src, want] of [["ln(0)*1", "−∞"], ["ln(0)^1", "−∞"], ["sqrt(ln(0))", "∞i"], ["1/ln(0)-1/ln(0)", "0"], ["exp(2*ln(0))-exp(2*ln(0))", "0"], ["exp(ln(0)-1)-exp(ln(0)-1)", "0"], ["(10^400+i)-10^400", "i"], ["(10^400+pi)-10^400", "3.14159265359"], ["(10^400+sqrt(2))-10^400", "1.41421356237"], ["(10^400+0.5)-10^400", "0.5"], ["(10^400-i)-10^400", "−i"], ["10^400-(10^400-pi)", "3.14159265359"], ["(10^400+3)-(10^400+1)", "2"], ["((10^400+3)+(10^400+1))-2*10^400", "4"], ["(10^400+1)-(10^400+2)", "−1"], ["(10^401+1)-(10^400+1)", "9×10^400"], ["(10^400+10^300)-(10^400-10^300)", "2×10^300"]] as const) {
       const x = exactReport(compileExpression(src, {}), {}, { maxNodes: 80_000 });
       e3.push([`review ${src}`, x.unverified ? "unverified" : formatExact(x.value).replace(/\u200b/g, ""), want]);
+    }
+    // Directed infinity: the angle is a quarter turn through mul, neg, sqr, and an integer power.
+    const directed: Array<[string, string]> = [
+      ["sqrt(ln(0))", "∞i"],
+      ["ln(0)*i", "−∞i"],
+      ["inf*i", "∞i"],
+      ["i*inf", "∞i"],
+      ["i*ln(0)", "−∞i"],
+      ["sqrt(inf)", "∞"],
+      ["sqrt(ln(0))^2", "−∞"],
+      ["(-inf)*i", "−∞i"],
+      ["i*(-inf)", "−∞i"],
+      ["-(sqrt(ln(0)))", "−∞i"],
+      ["(inf*i)*i", "−∞"],
+      ["ln(0)*i*i", "∞"],
+      ["sqrt(inf)^2", "∞"],
+      ["1/(inf*i)", "0"],
+      ["(inf*i)*(inf*i)", "−∞"],
+      ["inf*(inf*i)", "∞i"],
+      ["(-inf)*(-inf)", "∞"],
+      ["inf*(1+i)", "unverified"],
+      ["(inf*i)^3", "−∞i"],
+      ["(inf*i)^4", "∞"],
+      ["(inf*i)^5", "∞i"],
+      ["(inf*i)^-1", "0"],
+      ["(inf*i)^-2", "0"],
+      ["(-inf)^3", "−∞"],
+      ["(-inf)^2", "∞"],
+      ["(inf*i)^0.5", "unverified"],
+    ];
+    for (const [src, want] of directed) {
+      const node = compileExpression(src, {});
+      const hw = evaluateReport(node, {}, { maxNodes: 200_000 });
+      const ex = exactReport(node, {}, { maxNodes: 80_000 });
+      const floatTextShown = hw.unverified ? "unverified" : formatC(hw.value);
+      const exactText = ex.unverified ? "unverified" : formatExact(ex.value).replace(/\u200b/g, "");
+      e3.push([`directed ${src} float`, floatTextShown, want]);
+      e3.push([`directed ${src} exact`, exactText, want]);
+    }
+    {
+      const jobs = directed.map((row) => {
+        const packed = packCircuit(compileExpression(row[0], {}));
+        return { source: row[0], tokens: packed.tokens, root: packed.root };
+      });
+      const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
+      if (fresh.status !== 0) e3.push(["directed packed", fresh.stderr.slice(0, 200), ""]);
+      else {
+        const rows = JSON.parse(fresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+        rows.forEach((row, i) => {
+          const want = directed[i][1];
+          const text = row.text.replace(/\u200b/g, "");
+          const got = want === "unverified" ? (row.unverified && text !== "∞" ? "unverified" : text) : row.unverified ? "unverified" : text;
+          e3.push([`directed packed ${row.source}`, got, want]);
+        });
+      }
     }
     {
       const big = evaluateReport(compileExpression("10^400-1", {}), {}, { maxNodes: 200_000 });
