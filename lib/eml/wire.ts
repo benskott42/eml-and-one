@@ -2,13 +2,13 @@ import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, 
 
 /** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
 export const WIRE_VERSION = 2;
-import { E, ONE, V, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, exactLiteralOf, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, noteExactLiteral, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; int?: string; unver?: 1; mu?: 1 }
+  | { i: number; k: "in"; re: WireNum; im: WireNum; label: string; int?: string; lit?: 1; unver?: 1; mu?: 1; nfr?: -1 | 1; nfi?: -1 | 1 }
   | {
       i: number;
       k: "E";
@@ -62,8 +62,17 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       else if (frame.n.type === "var") tokens.push({ i, k: "v", n: frame.n.name });
       else if (frame.n.type === "input") {
         const digits = exactIntDigits(frame.n);
-        const tok: Wire = { i, k: "in", re: wireNum(frame.n.value.re), im: wireNum(frame.n.value.im), label: frame.n.label };
+        const re = frame.n.value.re;
+        const im = frame.n.value.im;
+        // wireNum keeps a non-finite part as a string, because JSON turns Infinity into null.
+        // nfr/nfi say the same thing when a reader only has the flags.
+        const tok: Wire = { i, k: "in", re: wireNum(re), im: wireNum(im), label: frame.n.label };
+        if (re === Infinity) tok.nfr = 1;
+        else if (re === -Infinity) tok.nfr = -1;
+        if (im === Infinity) tok.nfi = 1;
+        else if (im === -Infinity) tok.nfi = -1;
         if (digits !== undefined) tok.int = digits;
+        if (exactLiteralOf(frame.n) !== undefined) tok.lit = 1;
         if (isUnverified(frame.n)) tok.unver = 1;
         if (isMaybeUnverified(frame.n)) tok.mu = 1;
         tokens.push(tok);
@@ -131,9 +140,12 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
     if (tok.k === "1") nodes[tok.i] = ONE;
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
     else if (tok.k === "in") {
-      const leaf = input({ re: readWireNum(tok.re), im: readWireNum(tok.im) }, tok.label);
+      const re = tok.nfr === 1 ? Infinity : tok.nfr === -1 ? -Infinity : readWireNum(tok.re);
+      const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : readWireNum(tok.im);
+      const leaf = input({ re, im }, tok.label);
       if (tok.unver) markUnverified(leaf);
       if (tok.mu) markMaybeUnverified(leaf);
+      if (tok.lit) noteExactLiteral(leaf, tok.label);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(leaf, BigInt(tok.int)) : leaf;
     }
     else {

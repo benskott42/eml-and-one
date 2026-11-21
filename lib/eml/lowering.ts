@@ -1,4 +1,5 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import Decimal from "decimal.js";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, exactLiteralOf, input, isSeriesShortcut, markSeriesShortcut, markUnverified, noteExactLiteral, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { noteBuilder } from "./provenance";
 import { applyProgram, programNode } from "./programs";
 
@@ -122,12 +123,29 @@ function setRange(node: Node, range: Range): Node {
   return node;
 }
 
+/** The stored float is the exact literal, not a rounding of a longer decimal. */
+function floatHoldsLiteral(text: string, re: number, im: number): boolean {
+  if (!Number.isFinite(re) || !Number.isFinite(im) || im !== 0) return false;
+  try {
+    return new Decimal(text).eq(re);
+  } catch {
+    return false;
+  }
+}
+
 export function rangeOf(node: Node): Range {
   if (node.type === "one") return { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 }, int: BigInt(1) };
   const hit = ranges.get(node);
   if (hit) return hit;
   if (node.type === "input") {
     const { re, im } = node.value;
+    const text = exactLiteralOf(node);
+    // A pasted decimal longer than the float is not that rounded value. Shortcuts
+    // that read a point would certify sqrt(1.000…1) − 1 as 0.
+    if (text !== undefined && !floatHoldsLiteral(text, re, im)) {
+      setRange(node, UNKNOWN);
+      return UNKNOWN;
+    }
     if (Number.isFinite(re) && Number.isFinite(im)) return point(re, im);
   }
   return UNKNOWN;
@@ -570,6 +588,14 @@ function smallInt(n: number): Node {
   const node = n < 0 ? rawMul(oneNeg(), smallInt(-n)) : n % 2 === 0 ? rawMul(smallInt(n / 2), twoNode()) : rawAdd(smallInt(n - 1), ONE);
   ints.set(n, tagReal(node, n));
   return ints.get(n) ?? node;
+}
+
+/** A new leaf for an integer that does not fit in a float. The text is the value. */
+export function exactIntNode(value: bigint): Node {
+  const text = value.toString();
+  const numeric = Number(text);
+  const re = Number.isFinite(numeric) ? numeric : value < BigInt(0) ? -Number.MAX_VALUE : Number.MAX_VALUE;
+  return markExactInt(noteExactLiteral(input({ re, im: 0 }, text), text), value);
 }
 
 function expInt(n: number): Node {
@@ -1203,8 +1229,6 @@ function domainAddBuild(a: Node, b: Node): Node {
   if (cancelled) return cancelled;
   const carried = overflowIntSum(a, b);
   if (carried) return carried;
-  // Adding a non-integer to an integer past the float range must stay +∞.
-  // Building the sum rotates through ln 0 and comes out negative.
   // A finite non-integer beside an integer past the float range is not dropped.
   // Building the sum rotates through ln 0 and comes out negative, so the node only remembers both operands.
   if (floatOverflowInt(a) && finiteBeside(b)) return rememberHugeReal(a, b, "add");
@@ -1261,7 +1285,9 @@ export function domainNeg(b: Node): Node {
 function domainNegBuild(b: Node): Node {
   const wb = wides.get(b);
   if (wb) return noteWide(rawMul(oneNeg(), b), { m: -wb.m, e: wb.e });
-  if (rangeOf(b).int === BigInt(0)) return negativeZero();
+  const n = rangeOf(b).int;
+  if (n === BigInt(0)) return negativeZero();
+  if (n !== undefined && isMarkedExactInt(b) && (n > SAFE || n < -SAFE)) return exactIntNode(-n);
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();

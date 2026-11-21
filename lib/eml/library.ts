@@ -20,7 +20,10 @@ import {
   noteOddSeries,
   type SeriesCoeff,
   isNonfiniteNode,
+  exactIntNode,
   knownValue,
+  isMarkedExactInt,
+  markExactInt,
   markInfiniteSource,
   markMaybeInfinite,
   noteDecade,
@@ -41,7 +44,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, noteExactLiteral, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -637,7 +640,34 @@ function tMulBuild(a: Node, b: Node): Node {
   if (wa && wb) return noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e));
   if (exactZero(a) && negativeFactor(b) && !isWideTiny(a)) return negativeZero();
   if (exactZero(b) && negativeFactor(a) && !isWideTiny(b)) return negativeZero();
-  return tagPi(rawMul(a, b), piMul(a, b));
+  const product = tagPi(rawMul(a, b), piMul(a, b));
+  // A −∞ on the left keeps only the right-hand sign, so ln(0)*2 is +∞.
+  // Negate that case. The sign is then the product of the two signs.
+  const direction = realDirection(b);
+  if (negativeRealInfinity(a) && direction !== null && direction !== 0) return tNeg(product);
+  return product;
+}
+
+/** Sign of a known real, or of a real interval that stays off zero. −0 counts as 0. */
+function realDirection(node: Node): -1 | 0 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && !Number.isNaN(v.re)) {
+    if (v.re === 0) return 0;
+    return v.re < 0 ? -1 : 1;
+  }
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return null;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return null;
+  if (range.re.hi < 0) return -1;
+  if (range.re.lo > 0) return 1;
+  if (range.re.lo === 0 && range.re.hi === 0) return 0;
+  return null;
+}
+
+/** −∞ on the real axis, including ln(0). A typed +∞ is not this. */
+function negativeRealInfinity(node: Node): boolean {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  return !!v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY;
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -713,7 +743,10 @@ function tPowBuild(a: Node, b: Node): Node {
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
-    return tagInteger(node, ia ** ib);
+    const value = ia ** ib;
+    // A pasted integer's power stays exact. The float power would round it away.
+    if (isMarkedExactInt(a) && value.toString().length <= 16_000) return exactIntNode(value);
+    return tagInteger(node, value);
   }
   const va = knownValue(a);
   const vb = knownValue(b);
@@ -1287,11 +1320,30 @@ installIntegerBuilder(integerNode);
 
 /**
  * A decimal literal. Integers and short decimals become pure EML circuits.
- * Anything too large to build from 1 is an input terminal.
+ * A longer literal is stored as text, up to 4,000 digits, because building
+ * each digit as a multiply does not finish in time to paste.
  */
+const LITERAL_DIGITS = 4_000;
+
+function finiteLiteral(text: string): number {
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return numeric;
+  // Past the float range the magnitude is not an infinity. Infinity would be folded as one.
+  return text.startsWith("-") ? -Number.MAX_VALUE : Number.MAX_VALUE;
+}
+
+function exactRealInput(text: string): Node {
+  // The float is only the hardware stand-in. It is not an exact point when the
+  // text does not equal that float, so a later shortcut must not fold on it.
+  const node = noteExactLiteral(input({ re: finiteLiteral(text), im: 0 }, text), text);
+  if (/^[+-]?\d+$/.test(text)) return markExactInt(node, BigInt(text));
+  return node;
+}
+
 function digitsToInteger(sign: number, digits: string): Node {
   const body = digits.replace(/^0+(?=\d)/, "") || "0";
-  if (body.length > 40) throw new EmlError("That integer is too long to build from 1.");
+  if (body.length > LITERAL_DIGITS) throw new EmlError("That number is longer than 4,000 digits.");
+  if (body.length > 40) return exactRealInput(`${sign < 0 ? "-" : ""}${body}`);
   if (body.length <= 15) {
     const n = Number(body);
     if (Number.isSafeInteger(n)) return integerNode(sign * n);
@@ -1337,7 +1389,7 @@ function literalNodeBuild(text: string): Node {
     const frac = sci[3] ?? "";
     const digits = `${sci[2]}${frac}`.replace(/^0+(?=\d)/, "") || "0";
     const expAdj = exp - frac.length;
-    if (digits.length > 40) throw new EmlError("That integer is too long to build from 1.");
+    if (digits.length > LITERAL_DIGITS) throw new EmlError("That number is longer than 4,000 digits.");
     if (!Number.isInteger(exp) || Math.abs(expAdj) > 1_000_000) {
       throw new EmlError("That exponent is too large to build.");
     }
@@ -1378,6 +1430,11 @@ function literalNodeBuild(text: string): Node {
       }
       return signed;
     }
+    if (digits.length <= LITERAL_DIGITS && frac.length <= LITERAL_DIGITS) {
+      const wholeText = whole || "0";
+      return exactRealInput(`${sign < 0 ? "-" : ""}${wholeText}.${frac}`);
+    }
+    throw new EmlError("That number is longer than 4,000 digits.");
   }
   throw new EmlError(`Cannot read the number ${text}.`);
 }

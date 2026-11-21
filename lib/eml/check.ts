@@ -1,13 +1,15 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import DecimalValue from "decimal.js";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 import { runPropertyChecks } from "./check-properties";
 import { runExprChecks } from "./check-expr";
 import path from "node:path";
+import Decimal from "decimal.js";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, exactShownText, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
-import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
@@ -1952,6 +1954,51 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL exact typed 0*inf", formatExact(typedExact.value), typedExact.singular);
   }
+  const extended = [
+    ["ln(0)*2", "−∞"],
+    ["ln(0)*(-2)", "∞"],
+    ["(-2)*ln(0)", "∞"],
+    ["2*ln(0)", "−∞"],
+    ["ln(0)*0", "undefined"],
+    ["sin(inf)", "undefined"],
+    ["sin(ln(0))", "undefined"],
+    ["cos(inf)", "undefined"],
+    ["cos(ln(0))", "undefined"],
+    ["sin((inf+1)-1)", "undefined"],
+    ["tan(inf)", "undefined"],
+    ["tan(ln(0))", "undefined"],
+  ] as const;
+  for (const [source, want] of extended) {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, { maxNodes: 200_000 });
+    const ex = exactReport(node, {}, { maxNodes: 200_000 });
+    const floatText = formatC(hw.value);
+    const exactText = formatExact(ex.value).replace(/\u200b/g, "");
+    if (floatText !== want || exactText !== want || floatText !== exactText) {
+      failed += 1;
+      console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular);
+    }
+  }
+  // The in-process rows never pack. The screen's exact worker evaluates the packed circuit.
+  const freshAngles = ["sin(inf)", "cos(inf)", "sin(ln(0))", "cos(ln(0))", "tan(inf)", "tan(ln(0))"];
+  const freshJobs = freshAngles.map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const freshAnglesRun = runTsx("scripts/fresh-exact.ts", JSON.stringify(freshJobs));
+  if (freshAnglesRun.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh trig infinity", freshAnglesRun.status, freshAnglesRun.stderr);
+  } else {
+    const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null }>;
+    for (const row of rows) {
+      const text = row.text.replace(/\u200b/g, "");
+      if (text !== "undefined" || row.singular === null) {
+        failed += 1;
+        console.log("FAIL fresh trig infinity", row.source, text, row.singular);
+      }
+    }
+  }
   const gap = compileExpression("inf-inf", {});
   const gapReport = evaluateReport(gap);
   const gapExact = exactReport(gap, {}, { maxNodes: 20_000 });
@@ -3277,6 +3324,11 @@ if (inShard("core")) {
     console.log("FAIL series note on sin(1)");
   }
   const under = agreementNote("ln(1+1e-130)", { re: 1e-130, im: 0 }, {}, "1×10^−130");
+  const roundedAway = agreementNote("(10^40+1)-10^40", { re: 1, im: 0 }, {}, "1");
+  if (roundedAway !== "lost to rounding") {
+    failed += 1;
+    console.log("FAIL lost to rounding note", roundedAway);
+  }
   if (under !== "float underflows") {
     failed += 1;
     console.log("FAIL float underflows note", under);
@@ -3438,9 +3490,11 @@ if (inShard("core")) {
         e3.push([`item 3 ${src} exact`, shownExact(src), "0"]);
       }
       // Item 6: an operand that may be infinite (or an overflow minus itself) is not a value in either mode.
+      // sin of that open value, and (−∞) − (−∞) once ln(0)*2 has its sign, are the decided undefined.
       for (const src of ["(ln(0)-1)-ln(0)", "exp(800)-exp(800)", "(inf+1)-1", "inf+1", "ln(0)-1", "2*((inf+1)-1)", "sin((inf+1)-1)", "ln(0)*2-ln(0)", "(0/0)-(1/0)"]) {
-        e3.push([`item 6 ${src} float`, shownFloat(src), "couldn't verify"]);
-        e3.push([`item 6 ${src} exact`, shownExact(src), "couldn't verify"]);
+        const want = src === "sin((inf+1)-1)" || src === "ln(0)*2-ln(0)" ? "undefined" : "couldn't verify";
+        e3.push([`item 6 ${src} float`, shownFloat(src), want]);
+        e3.push([`item 6 ${src} exact`, shownExact(src), want]);
       }
       // ...but ∞ − ∞ of one node, a + (−a), and same-sign infinities stay "undefined"; a finite overflow beside 1 keeps exact digits.
       for (const src of ["ln(0)-ln(0)", "inf-inf", "(0/0)+(-(0/0))", "tan(pi/2)-tan(pi/2)", "ln(0)+(-ln(0))", "exp(-ln(0))-exp(-ln(0))"]) {
@@ -3548,6 +3602,252 @@ if (inShard("core")) {
         console.log("FAIL fresh ln", row.source, row.unverified ? "unverified" : row.text);
       }
     }
+  }
+}
+
+{
+  // Long literals and non-finite leaves cross a fresh process. JSON and a
+  // structured-clone worker both have to recover the same value.
+  const sevenThree = packCircuit(compileExpression("7-3", {}));
+  if (sevenThree.tokens.length !== 32) {
+    failed += 1;
+    console.log("FAIL 7-3 wire tokens", sevenThree.tokens.length);
+  }
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const tsxCli = createRequire(path.join(repoRoot, "package.json")).resolve("tsx/cli");
+  const wide = Decimal.clone({ precision: 1200, minE: -9e15, maxE: 9e15 });
+  const axis = cexp({ re: 0, im: Math.PI / 2 });
+  if (!Object.is(axis.re, 0) || axis.im !== 1) {
+    failed += 1;
+    console.log("FAIL positive imaginary axis", axis);
+  }
+  type Expect = { re?: string; im?: string; text?: string; unverifiedOk?: boolean; leaf?: { re: string; im: string } };
+  const jobs: { id: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number }[] = [];
+  const expect = new Map<string, Expect>();
+  const packSource = (id: string, source: string) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    jobs.push({ id, tokens: packed.tokens, root: packed.root });
+  };
+  const expSinNode = compileExpression("exp(1/(-0))+sin(1)", {});
+  const expSinRe = exactReport(expSinNode, {}, { maxNodes: 80_000 }).value.re.toFixed();
+  const expPacked = packCircuit(expSinNode);
+  jobs.push({ id: "expSin", tokens: expPacked.tokens, root: expPacked.root });
+  const expLeaf = expPacked.tokens.find((token) => token.k === "in" && token.label === "−∞");
+  if (!expLeaf || expLeaf.k !== "in" || expLeaf.re !== "-Infinity") {
+    failed += 1;
+    console.log("FAIL exp(1/(-0)) leaf", expLeaf);
+  }
+  expect.set("expSin", { re: expSinRe, im: "0", leaf: { re: "-Infinity", im: "0" } });
+  const expShown = formatExact(exactReport(expSinNode, {}, { maxNodes: 80_000 }).value);
+  if (expShown !== "0.841470984808") {
+    failed += 1;
+    console.log("FAIL exp(1/(-0))+sin(1) display", expShown);
+  }
+  const recipShown = formatExact(exactReport(compileExpression("1/(-0)", {}), {}, { maxNodes: 80_000 }).value);
+  if (recipShown !== "−∞") {
+    failed += 1;
+    console.log("FAIL 1/(-0)", recipShown);
+  }
+  for (const n of [41, 309, 600, 4000]) {
+    const digits = "9".repeat(n);
+    packSource(`sub${n}`, `(${digits}+1)-${digits}`);
+    expect.set(`sub${n}`, { re: "1", im: "0" });
+    packSource(`sq${n}`, `(${digits}+1)^2-${digits}^2-2*${digits}`);
+    expect.set(`sq${n}`, { re: "1", im: "0" });
+  }
+  const bare470 = "7".repeat(470);
+  const bare4000 = `4${"0".repeat(3999)}`;
+  const bareText = (source: string) => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    if (report.unverified) {
+      failed += 1;
+      console.log("FAIL bare literal unverified", source.length);
+    }
+    return report.value.re.toFixed();
+  };
+  packSource("bare470", bare470);
+  expect.set("bare470", { re: bareText(bare470), im: "0" });
+  packSource("bare4000", bare4000);
+  expect.set("bare4000", { re: bareText(bare4000), im: "0" });
+  packSource("neg4000", `-${bare4000}`);
+  expect.set("neg4000", { re: bareText(`-${bare4000}`), im: "0" });
+  for (const digits of [50, 300]) {
+    const frac = "1234567891";
+    const whole = "1" + "0".repeat(digits - frac.length - 1);
+    const lit = `${whole}.${frac}`;
+    packSource(`frac${digits}`, `${lit}-${whole}`);
+    expect.set(`frac${digits}`, { re: `0.${frac}`, im: "0" });
+    const tail = `8.${frac}${"0".repeat(digits - frac.length - 1)}`;
+    packSource(`tail${digits}`, `${tail}-8`);
+    expect.set(`tail${digits}`, { re: `0.${frac}`, im: "0" });
+  }
+  const ks = [40, 41, 99, 120, 121, 308, 309, 310, 464, 465, 480, 481, 1000, 3999];
+  for (const k of ks) {
+    const base = `1${"0".repeat(k)}`;
+    const bigger = (BigInt(base) + BigInt(1)).toString();
+    const oracle = new wide(bigger).minus(base).toFixed();
+    packSource(`k${k}`, `${bigger}-${base}`);
+    expect.set(`k${k}`, { re: oracle, im: "0" });
+  }
+  const x400 = "9".repeat(400);
+  packSource("xx", `${x400}-${x400}`);
+  expect.set("xx", { re: "0", im: "0" });
+  packSource("xdiv", `${x400}/${x400}`);
+  expect.set("xdiv", { re: "1", im: "0" });
+  const huge = literalNode(x400);
+  if (huge.type === "input" && !Number.isFinite(huge.value.re)) {
+    failed += 1;
+    console.log("FAIL 400-digit literal stored as infinity", huge.value);
+  }
+  const expHuge = compileExpression(`exp(-${`1${"0".repeat(309)}`})`, {});
+  const expChecked = exactReport(expHuge, {}, { maxNodes: 80_000 });
+  const expFloat = evaluateReport(expHuge, {}, { maxNodes: 80_000 });
+  if (!expChecked.unverified || expFloat.value.re === Infinity || expFloat.value.re === -Infinity) {
+    failed += 1;
+    console.log("FAIL exp of a 310-digit literal", formatExact(expChecked.value), expChecked.unverified, expFloat.value, expFloat.singular);
+  }
+  const pasted = (s: number) => `1.${"0".repeat(s - 2)}1`;
+  const a41 = pasted(41);
+  packSource("sqrt41", `sqrt(${a41})-1`);
+  expect.set("sqrt41", { text: "5×10^−41" });
+  packSource("sin41", `sin(${a41}-1)-(${a41}-1)`);
+  expect.set("sin41", { text: "−1.66666666667×10^−121" });
+  packSource("poly41", `(${a41})^2-2*${a41}+1`);
+  expect.set("poly41", { text: "1×10^−80" });
+  packSource("sqrtPow", "sqrt(1+10^(-40))-1");
+  expect.set("sqrtPow", { text: "5×10^−41" });
+  packSource("sinPow", "sin(10^(-40))-10^(-40)");
+  expect.set("sinPow", { text: "−1.66666666667×10^−121" });
+  const a200 = pasted(200);
+  packSource("poly200", `(${a200})^2-2*${a200}+1`);
+  expect.set("poly200", { text: "1×10^−398" });
+  packSource("polyPow", "(1+10^(-199))^2-2*(1+10^(-199))+1");
+  expect.set("polyPow", { text: "1×10^−398" });
+  packSource("sin200", `sin(${a200}-1)-(${a200}-1)`);
+  expect.set("sin200", { unverifiedOk: true });
+  packSource("sub479", `${pasted(479)}-1`);
+  expect.set("sub479", { unverifiedOk: true });
+  packSource("sub480", `${pasted(480)}-1`);
+  expect.set("sub480", { unverifiedOk: true });
+  packSource("nines479", `0.${"9".repeat(479)}*2-2`);
+  expect.set("nines479", { unverifiedOk: true });
+  const a329 = pasted(329);
+  packSource("poly329", `(${a329})^2-2*${a329}+1`);
+  expect.set("poly329", { unverifiedOk: true });
+  const a299 = pasted(299);
+  packSource("inv299", `1/${a299}-1+(${a299}-1)`);
+  expect.set("inv299", { unverifiedOk: true });
+  for (const n of [100, 200, 464, 470, 1000]) {
+    const text = `0.${"3".repeat(n)}`;
+    const oracle = new wide(text).times(3).minus(1).toFixed();
+    packSource(`threes${n}`, `${text}*3-1`);
+    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n + 120 + 32 > 480 });
+  }
+  const leaf = (id: string, re: number, im: number, label: string, want: { re: string; im: string }) => {
+    const packed = packCircuit(input({ re, im }, label));
+    jobs.push({ id, tokens: packed.tokens, root: packed.root });
+    expect.set(id, { leaf: want });
+  };
+  leaf("negInf", -Infinity, 0, "−∞", { re: "-Infinity", im: "0" });
+  leaf("posInf", Infinity, 0, "∞", { re: "Infinity", im: "0" });
+  leaf("nan", NaN, NaN, "NaN", { re: "NaN", im: "NaN" });
+  leaf("negZero", -0, 0, "-0", { re: "-0", im: "0" });
+  leaf("infI", 0, Infinity, "∞i", { re: "0", im: "Infinity" });
+  packSource("sqrtLn0", "sqrt(ln(0))");
+  expect.set("sqrtLn0", { re: "0", im: "Infinity" });
+  const negInfTok = jobs.find((job) => job.id === "negInf")?.tokens.find((token) => token.k === "in");
+  const zeroTok = jobs.find((job) => job.id === "negZero")?.tokens.find((token) => token.k === "in");
+  const bigTok = packCircuit(huge).tokens.find((token) => token.k === "in");
+  if (!negInfTok || negInfTok.k !== "in" || negInfTok.re !== "-Infinity" || negInfTok.label !== "−∞") {
+    failed += 1;
+    console.log("FAIL −∞ wire", negInfTok);
+  }
+  if (!zeroTok || zeroTok.k !== "in" || zeroTok.re !== "-0") {
+    failed += 1;
+    console.log("FAIL −0 wire", zeroTok);
+  }
+  if (!bigTok || bigTok.k !== "in" || bigTok.lit !== 1 || bigTok.int !== x400 || bigTok.re === "Infinity" || typeof bigTok.re !== "number" || !Number.isFinite(bigTok.re)) {
+    failed += 1;
+    console.log("FAIL 400-digit wire", bigTok && bigTok.k === "in" ? [bigTok.lit, bigTok.int?.length, bigTok.re] : "missing");
+  }
+  type Row = {
+    id: string;
+    text?: string;
+    re?: string;
+    im?: string;
+    unverified?: boolean;
+    leaves?: { re: string; im: string; label: string }[];
+    error?: string;
+  };
+  const checkRows = (label: string, rows: Row[]) => {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const [id, want] of expect) {
+      const row = byId.get(id);
+      if (!row || row.error) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row?.error ?? "missing");
+        continue;
+      }
+      if (want.leaf) {
+        const hit = row.leaves?.some((item) => item.re === want.leaf?.re && item.im === want.leaf?.im);
+        if (!hit) {
+          failed += 1;
+          console.log(`FAIL ${label} ${id} leaf`, row.leaves);
+        }
+        if (want.re === undefined) continue;
+      }
+      if (row.unverified) {
+        if (!want.unverifiedOk) {
+          failed += 1;
+          console.log(`FAIL ${label} ${id} unverified`, row.text);
+        }
+        continue;
+      }
+      if (want.text !== undefined && row.text !== want.text) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row.text, "want", want.text);
+      }
+      if (want.re !== undefined && (row.re !== want.re || (want.im !== undefined && row.im !== want.im))) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row.text, row.re, "want", want.re);
+      }
+    }
+  };
+  const child = spawnSync(process.execPath, [tsxCli, path.join(repoRoot, "scripts/fresh-literal.ts")], {
+    cwd: repoRoot,
+    input: JSON.stringify(jobs),
+    encoding: "utf8",
+    timeout: 180_000,
+    maxBuffer: 64 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (child.status !== 0 || !child.stdout) {
+    failed += 1;
+    console.log("FAIL fresh literal JSON", child.status, child.stderr?.slice(0, 800));
+  } else {
+    checkRows("json", JSON.parse(child.stdout) as Row[]);
+  }
+  const sab = new SharedArrayBuffer(4);
+  const flag = new Int32Array(sab);
+  const channel = new MessageChannel();
+  const worker = new Worker(path.join(repoRoot, "scripts/fresh-literal.ts"), {
+    execArgv: ["--import", "tsx"],
+  });
+  let cloneError = "";
+  worker.once("error", (error) => {
+    cloneError = error instanceof Error ? error.message : String(error);
+    Atomics.store(flag, 0, 2);
+    Atomics.notify(flag, 0);
+  });
+  worker.postMessage({ jobs, port: channel.port2, sab }, [channel.port2]);
+  Atomics.wait(flag, 0, 0, 180_000);
+  const delivered = receiveMessageOnPort(channel.port1);
+  void worker.terminate();
+  if (!delivered || cloneError) {
+    failed += 1;
+    console.log("FAIL fresh literal clone", cloneError || "no message");
+  } else {
+    checkRows("clone", delivered.message as Row[]);
   }
 }
 

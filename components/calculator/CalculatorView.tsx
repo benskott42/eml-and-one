@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -33,6 +33,14 @@ export function CalculatorView(props: CalculatorModel) {
     pressCount, stepLoaded, loadWord,
   } = props;
   const [pressText, setPressText] = useState("3+4");
+  useEffect(() => {
+    const screen = document.querySelector("[aria-label='Calculator screen']");
+    if (!(screen instanceof HTMLElement)) return;
+    screen.dataset.ready = "1";
+    return () => {
+      delete screen.dataset.ready;
+    };
+  }, []);
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "0";

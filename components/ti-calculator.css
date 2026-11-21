@@ -186,6 +186,16 @@ html.ti-two-buttons .ti-btn-eml {
   overflow-wrap: anywhere;
 }
 
+/* A pasted 4,000-digit number is the caption. Two lines keep the keys on a phone. */
+.ti-lcd-caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-height: 2.7rem;
+  overflow: hidden;
+}
+
 .ti-lcd-note {
   display: flex;
   flex-wrap: wrap;

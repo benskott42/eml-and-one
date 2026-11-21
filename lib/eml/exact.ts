@@ -11,9 +11,11 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  exactLiteralOf,
   unverifiedKind,
   precisionMessage,
   provenInteger,
+  trigArg,
 } from "./node";
 import { EXACT_TOO_LARGE } from "./exactBudget";
 import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
@@ -41,9 +43,9 @@ import { floatShowsComponent } from "./format";
  */
 
 const PRECISION = 120;
-/** v1.1: significant digits on screen, the same as float mode's toPrecision(12). */
+/** Significant digits on screen, the same as float mode's toPrecision(12). */
 const SHOWN_DIGITS = 12;
-/** v1.1: below this, scientific notation, as float mode does below 10^(−6). (Was 10^(−9).) */
+/** Below this, scientific notation, as float mode does below 10^(−6). */
 const FIXED_FLOOR = "1e-6";
 
 const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
@@ -120,7 +122,11 @@ function expZ(v: Z): Z {
     if (w > emlWorkRe) emlWorkRe = w;
     if (w > emlWorkIm) emlWorkIm = w;
   }
-  if (mag.isZero()) return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  if (mag.isZero()) {
+    // A finite argument whose exponential left the exponent range is not the mathematical 0.
+    if (v.re.isFinite()) expCollapsed = true;
+    return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  }
   if (!mag.isFinite()) return { re: signedInf(trig.c), im: signedInf(trig.s) };
   return { re: mag.mul(trig.c), im: mag.mul(trig.s) };
 }
@@ -224,6 +230,8 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 
 /** Decades cancelled inside one subtraction. A later pass may raise precision. */
 let lossGap = 0;
+/** exp of a finite value fell off the exponent range and came back as 0. That 0 is not a result. */
+let expCollapsed = false;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
 /**
@@ -696,6 +704,25 @@ function settleResidue(
   return residueParts(current).length === 0 ? current : certifyZero(current);
 }
 
+/** Significant digits of any pasted literal in this circuit. */
+function literalSpan(root: Node): number {
+  let span = 0;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (n.type === "input") {
+      const text = exactLiteralOf(n);
+      if (text) span = Math.max(span, text.replace(/[^0-9]/g, "").replace(/^0+/, "").length);
+    } else if (n.type === "eml" && n.a && n.b) {
+      stack.push(n.a, n.b);
+    }
+  }
+  return span;
+}
+
 /**
  * A huge integer kept beside a non-integer is a mul by a leaf labelled `beside:`.
  * That mul is not the sum: exact evaluation would certify the bare integer.
@@ -842,6 +869,55 @@ function exactReportCore(
     }
   }
   lossGap = 0;
+  // Every pasted literal is evaluated where its digits fit. Past the 480-digit
+  // cap the screen says it could not verify, rather than certifying a rounding.
+  if (pass === 0) {
+    const span = literalSpan(root);
+    // A pasted number is shown from its own digits. The cap is for a cancellation
+    // that would need more than 480 digits, not for printing the number.
+    const plain = root.type === "input" && exactLiteralOf(root) !== undefined;
+    if (span > 0 && !plain) {
+      // The extra 120 digits are the cancellation guard. Without them the dust
+      // rule certifies a zero the cap cannot see, so the screen says it could
+      // not verify instead of printing that zero.
+      const need = span + PRECISION + 32;
+      if (need > PRECISION_CAP) return certifyZero(exactReportOnce(root, env, budget));
+      if (need > D.precision) {
+        let lifted = atPrecision(need, root, env, budget);
+        lifted = settleResidue(lifted, root, env, budget);
+        if (lifted.unverified) return lifted;
+        if (expCollapsed && vanished(lifted.value)) return certifyZero(lifted);
+        // The span guard sees the pasted digits, not the square of a cancellation.
+        // (1 + 10^-(s-1))^2 − 2(1 + 10^-(s-1)) + 1 is about 10^-2(s-1). A zero
+        // at the span guard is that lost square when 2s does not fit, and a
+        // recomputed value when it does.
+        if (vanished(lifted.value)) {
+          const squared = span * 2 + 32;
+          if (squared > need) {
+            if (squared > PRECISION_CAP) return certifyZero(lifted);
+            lifted = atPrecision(squared, root, env, budget);
+            lifted = settleResidue(lifted, root, env, budget);
+            if (lifted.unverified) return lifted;
+          }
+        }
+        // A pasted decimal the float cannot hold is checked at a second
+        // precision. Rounding that moves, such as sin of that decimal minus
+        // the decimal, is not certified. A magnitude past the cap is not
+        // either: two precisions can share the same noise.
+        if (span > 40 && !vanished(lifted.value)) {
+          const digits = lifted.digits ?? need;
+          const againDigits = Math.min(PRECISION_CAP, digits + 96);
+          if (againDigits > digits) {
+            const again = atPrecision(againDigits, root, env, budget);
+            if (again.unverified || formatExact(again.value) !== formatExact(lifted.value)) return certifyZero(lifted);
+          }
+          const depth = (part: Decimal) => (part.isFinite() && !part.isZero() ? -part.e : 0);
+          if (Math.max(depth(lifted.value.re), depth(lifted.value.im)) > PRECISION_CAP) return certifyZero(lifted);
+        }
+        return confirmDust(present(lifted), root, env, budget);
+      }
+    }
+  }
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
   firstPassGap = Math.max(lossGap, report.absorbedGap ?? 0);
@@ -889,6 +965,7 @@ function exactReportCore(
           if (vanished(again.value)) return certifyZero(again);
         } else if (lossGap > digits - 16) return certifyZero(again);
       }
+      if (expCollapsed && vanished(again.value)) return certifyZero(again);
       return confirmDust(present(trustDigits(again)), root, env, budget);
       } finally {
         prof(cause, te);
@@ -934,6 +1011,7 @@ function exactReportCore(
       if (settled.unverified) return settled;
     }
   }
+  if (expCollapsed && vanished(settled.value)) return certifyZero(settled);
   return confirmDust(present(settled, cutFloor), root, env, budget);
 }
 
@@ -953,6 +1031,7 @@ function exactReportOnce(
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  expCollapsed = false;
   tiniestIm = 0;
   cutSeen = false;
   let steps = 0;
@@ -1052,7 +1131,8 @@ function exactReportOnce(
           continue;
         }
       }
-      const leaf = z(n.value.re, n.value.im);
+      const literal = exactLiteralOf(n);
+      const leaf = literal !== undefined ? z(literal) : z(n.value.re, n.value.im);
       memo.set(n, leaf);
       noteSeen(leaf);
       why.set(n, null);
@@ -1075,7 +1155,10 @@ function exactReportOnce(
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
-    const hit = NOCACHE || cutTraceActive() ? undefined : cache.get(n);
+    // A sin, cos, or tan node can already be cached as the exp formula.
+    // Recompute so an infinite argument stays undefined instead of that infinity.
+    const angle = trigArg(n);
+    const hit = NOCACHE || angle || cutTraceActive() ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -1109,14 +1192,20 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
+    const collapsedBefore = expCollapsed;
     loggedCut = false;
     exactTraceNode = n;
     emlAbsorbGap = Number.NEGATIVE_INFINITY;
     emlAbsorbExp = Number.POSITIVE_INFINITY;
     nodeLoss = 0;
     nodeCut = false;
-    const value = exactEml(a, b);
+    // sin, cos, and tan of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    // The argument may sit under a cached intermediate, so this walk never visits it.
+    const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
+    const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
+    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
     exactTraceNode = null;
+    const collapsedHere = expCollapsed && !collapsedBefore;
     const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (loggedCut ? 1 : 0);
     cuts.set(n, cutHits);
     const shell = inScaledShell(n);
@@ -1158,7 +1247,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, cutHits });
+    if (!varA && !varB && !collapsedHere) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, cutHits });
   }
 
   const out = memo.get(root);
@@ -1284,7 +1373,7 @@ function formatDec(d: Decimal): string {
   const abs = d.abs();
   if (abs.lt("1e16") && exactInteger(abs)) return sign + abs.toFixed(0);
   if (abs.lt("1e16") && abs.gte(FIXED_FLOOR)) {
-    // v1.1: twelve significant digits, as float mode prints, not twelve decimal places.
+    // Twelve significant digits, as float mode prints, not twelve decimal places.
     // 0.0000499999999792 kept 8 digits as 0.00005; 1e-8/7 kept 4.
     const sig = Math.max(0, SHOWN_DIGITS - 1 - abs.e);
     const shown = new D(abs.toFixed(sig));

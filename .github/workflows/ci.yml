@@ -356,17 +356,31 @@ jobs:
               const observer = new MutationObserver(() => { generation += 1; count(); });
               observer.observe(result, { subtree: true, characterData: true, childList: true });
               const started = generation;
-              document.querySelector(".ti-btn-one").click();
-              document.querySelector(".ti-btn-one").click();
-              document.querySelector(".ti-btn-eml").click();
               const deadline = Date.now() + 20000;
               let text = "";
+              let pressed = false;
+              let waits = 0;
               while (Date.now() < deadline) {
                 count();
                 text = result?.textContent?.trim() ?? "";
                 if (generation > started && text !== "computing" && text === "2.71828182846") {
                   observer.disconnect();
                   return text;
+                }
+                // The keys are in the first HTML. Click only after hydration marks the
+                // screen, and only once, so a press that does not land is a failure.
+                const screen = document.querySelector("[aria-label='Calculator screen']");
+                if (!pressed) {
+                  if (screen?.dataset.ready !== "1") {
+                    waits += 1;
+                    if (waits > 40) break;
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                    continue;
+                  }
+                  document.querySelector(".ti-btn-one").click();
+                  document.querySelector(".ti-btn-one").click();
+                  document.querySelector(".ti-btn-eml").click();
+                  pressed = true;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 40));
               }

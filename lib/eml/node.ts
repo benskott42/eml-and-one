@@ -89,6 +89,18 @@ export function provenInteger(node: Node): bigint | undefined {
   return provenBig.get(node);
 }
 
+const exactLiterals = new WeakMap<Node, string>();
+
+/** The decimal text a long literal was parsed from. The float value drops digits past 2^53. */
+export function noteExactLiteral(node: Node, text: string): Node {
+  exactLiterals.set(node, text);
+  return node;
+}
+
+export function exactLiteralOf(node: Node): string | undefined {
+  return exactLiterals.get(node);
+}
+
 /**
  * Float64 rotSub leaves the exact strip outside (−71π, 71π).
  * The top end underflows: [71π, 73π) is barely subnormal and [73π, 75π)
@@ -174,6 +186,13 @@ export function notePrecision(node: Node, note: PrecisionNote): void {
 
 export function precisionNoteOf(node: Node): PrecisionNote | undefined {
   return precisionNotes.get(node);
+}
+
+/** Argument of sin, cos, or tan. tan is stored as a pole note. */
+export function trigArg(node: Node): Node | null {
+  const note = precisionNotes.get(node);
+  if (!note || (note.kind !== "trig" && note.kind !== "pole")) return null;
+  return note.arg;
 }
 
 /**
@@ -401,8 +420,11 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     const childLog = logged.get(n.a) === true || logged.get(n.b) === true || zeroC(b);
     const childOverflow = overflowed.get(n.a) === true || overflowed.get(n.b) === true;
     const childUnder = underflowed.get(n.a) === true || underflowed.get(n.b) === true;
-    // The value is this gate. Nothing here is replaced from a side table.
-    const value = eml(a, b);
+    // sin, cos, and tan of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    const angle = trigArg(n);
+    const angleValue = angle ? memo.get(angle) : undefined;
+    const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));
+    const value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
     const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (onNegativeCutF(b.re, b.im) ? 1 : 0);
     cuts.set(n, cutHits);
     noteFloatGate(n, b);
@@ -421,7 +443,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       // argument. Real ∞ − ∞ of two poles stays indeterminate.
       const messy = (value: C) => !finiteC(value) && Number.isFinite(value.im) && value.im !== 0 && !Object.is(value.im, -0);
       const childRange = why.get(n.a) === SINGULAR_RANGE || why.get(n.b) === SINGULAR_RANGE;
-      singular = rangeHere || childRange || messy(a) || messy(b) ? SINGULAR_RANGE : SINGULAR_INDET;
+      singular = angleInfinite || !(rangeHere || childRange || messy(a) || messy(b)) ? SINGULAR_INDET : SINGULAR_RANGE;
     }
     // An infinity born from finite inputs is overflow, even if another gate logged 0.
     // ln 0 itself is the label only when this infinity was not that overflow.
