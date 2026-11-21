@@ -1167,7 +1167,10 @@ function exactReportOnce(
   // Finding 5: a cached subtree is not in memo, so look there too, or a repeat compute loses
   // "near a pole" / "argument too large to reduce".
   const flag = precisionMessage(root, (n) => {
-    const v = memo.get(n) ?? cache?.get(n)?.value ?? (n.type === "input" ? z(n.value.re, n.value.im) : n.type === "one" ? Z1 : undefined);
+    // A marked integer (tPow, review R4) is read without caching it, so a cached parent
+    // skips it. Its integer is its value.
+    const big = isMarkedExactInt(n) ? provenInteger(n) : undefined;
+    const v = memo.get(n) ?? cache?.get(n)?.value ?? (big !== undefined ? z(big.toString(), 0) : n.type === "input" ? z(n.value.re, n.value.im) : n.type === "one" ? Z1 : undefined);
     return v ? exactToFloat(v) : undefined;
   });
   // A pole is a pole in both engines, including when the gates produced NaN.
