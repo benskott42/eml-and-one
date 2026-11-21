@@ -48,17 +48,32 @@ export function unitUlp(scale: number): number {
 }
 
 /**
+ * Round ties away from zero. Math.round ties toward +∞, so an exact half is
+ * not conjugation-symmetric: Math.round(−0.5) is −0 and Math.round(0.5) is 1.
+ * Positive inputs, and every non-half, match Math.round. Signed zero stays.
+ */
+function roundHalfAway(x: number): number {
+  if (!Number.isFinite(x)) return x;
+  const neg = x < 0 || Object.is(x, -0);
+  const rounded = Math.round(Math.abs(x));
+  return neg ? -rounded : rounded;
+}
+
+/**
  * cos(θ) + i sin(θ), reduced to the nearest quarter turn first.
  * Math.sin and Math.cos of a large or near-axis angle differ between
  * engines and lose the component that sits on the other axis. The
  * reduction uses only the distance to that quarter turn, which is what
  * makes exp(iπ) exactly −1 and still leaves a 10^(−15) step off the axis
  * where it is. A pure axis (delta 0) is that axis; anything else is not moved.
+ * The quarter index rounds ties away from zero, so the reduction of −θ is
+ * the conjugate of the reduction of θ.
  */
+
 function reducedTrig(im: number): { re: number; im: number } {
   if (!Number.isFinite(im)) return { re: NaN, im: NaN };
   const quarter = Math.PI / 2;
-  const steps = Math.round(im / quarter);
+  const steps = roundHalfAway(im / quarter);
   const delta = im - steps * quarter;
   const sine = delta === 0 ? 0 : Math.sin(delta);
   const cosine = delta === 0 ? 1 : Math.cos(delta);

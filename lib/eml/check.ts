@@ -11,7 +11,7 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { acceptsConstantProgram, acceptsConstantValue, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { acceptsConstantProgram, acceptsConstantValue, floatComponentKey, floatDedupKey, functionFingerprint, ln0Dependence, lowerHitTarget, searchConstants, searchConstantsMerged } from "./golf";
 import { DiskGrid, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
 import { SoundDedup } from "./sound";
 import {
@@ -686,6 +686,37 @@ if (clog(c(-1, 0)).im !== -Math.PI || clog(c(-1, -0)).im !== -Math.PI) {
   failed += 1;
   console.log("FAIL pinned cut", clog(c(-1, 0)), clog(c(-1, -0)));
 }
+{
+  const word = (x: number) => {
+    const f = new Float64Array(1);
+    const u = new Uint32Array(f.buffer);
+    f[0] = x;
+    return `${u[0] ?? 0}:${u[1] ?? 0}`;
+  };
+  const quarter = Math.PI / 2;
+  const pos = cexp(c(0.25, 0.5 * quarter));
+  const neg = cexp(c(0.25, -0.5 * quarter));
+  if (word(pos.re) !== word(neg.re) || word(pos.im) !== word(-neg.im)) {
+    failed += 1;
+    console.log("FAIL half-turn exp is not conjugation-symmetric", pos, neg);
+  }
+  const principal = lowerHitTarget({ id: "-ipi", re: 0, im: -Math.PI }, true);
+  if (principal.id !== "ipi" || principal.im !== Math.PI) {
+    failed += 1;
+    console.log("FAIL principal −iπ is not the lower hit of +iπ", principal);
+  }
+  const same = lowerHitTarget({ id: "ipi", re: 0, im: Math.PI }, false);
+  if (same.id !== "ipi" || same.im !== Math.PI) {
+    failed += 1;
+    console.log("FAIL lower hit was reflected", same);
+  }
+  const posInf = floatComponentKey(Infinity);
+  const negInf = floatComponentKey(-Infinity);
+  if (posInf[0] !== 1 || posInf[1] !== 0 || negInf[0] !== ((1 << 20) | 1) || negInf[1] !== 0 || floatComponentKey(NaN)[0] !== 0) {
+    failed += 1;
+    console.log("FAIL ±∞ key is not conjugation-symmetric", posInf, negInf, floatComponentKey(NaN));
+  }
+}
 if (evaluate(constantNode("i")).im <= 0) {
   failed += 1;
   console.log("FAIL i sign");
@@ -825,6 +856,82 @@ if (inShard("core")) {
   if (!cleanPi || cleanPi.k !== 23 || cleanPi.usesLn0 || cleanPi.rpn !== k23Word) {
     failed += 1;
     console.log("FAIL no-inf +iπ", cleanPi);
+  }
+}
+if (inShard("core")) {
+  // v1.1 (baca175) committed floats and hit records. The digest is FNV-1a over
+  // every committed (re, im) bit pattern, in commit order, not including the seed 1.
+  const hitLine = (hit: { id: string; k: number; rpn: string; singular: boolean; usesLn0: boolean; branch: string; domain: string }) =>
+    [hit.id, hit.k, hit.rpn, hit.singular, hit.usesLn0, hit.branch, hit.domain].join("|");
+  const v11: { k: number; allowLn0: boolean; pool: number; digest: number; hits: string }[] = [
+    {
+      k: 17,
+      allowLn0: true,
+      pool: 1569,
+      digest: 3917316957,
+      hits: ["e|3|11E|false|false|either|C", "0|7|111E1EE|false|false|either|C", "-1|15|11111E1EEEE11EE|false|true|lower-bank|extended"].join("\n"),
+    },
+    {
+      k: 19,
+      allowLn0: true,
+      pool: 5013,
+      digest: 418583411,
+      hits: [
+        "e|3|11E|false|false|either|C",
+        "0|7|111E1EE|false|false|either|C",
+        "-1|15|11111E1EEEE11EE|false|true|lower-bank|extended",
+        "2|19|111111EEE1EE11EE1EE|false|false|either|C",
+      ].join("\n"),
+    },
+    {
+      k: 21,
+      allowLn0: true,
+      pool: 16311,
+      digest: 900952470,
+      hits: [
+        "e|3|11E|false|false|either|C",
+        "0|7|111E1EE|false|false|either|C",
+        "-1|15|11111E1EEEE11EE|false|true|lower-bank|extended",
+        "2|19|111111EEE1EE11EE1EE|false|false|either|C",
+        "ipi|21|111111E1EEEE11E1E1EEE|false|true|lower-bank|extended",
+      ].join("\n"),
+    },
+    {
+      k: 23,
+      allowLn0: true,
+      pool: 53982,
+      digest: 3518807416,
+      hits: [
+        "e|3|11E|false|false|either|C",
+        "0|7|111E1EE|false|false|either|C",
+        "-1|15|11111E1EEEE11EE|false|true|lower-bank|extended",
+        "2|19|111111EEE1EE11EE1EE|false|false|either|C",
+        "ipi|21|111111E1EEEE11E1E1EEE|false|true|lower-bank|extended",
+      ].join("\n"),
+    },
+    {
+      k: 23,
+      allowLn0: false,
+      pool: 44057,
+      digest: 3829186137,
+      hits: [
+        "e|3|11E|false|false|either|C",
+        "0|7|111E1EE|false|false|either|C",
+        "-1|17|11111EEE1EE11E1EE|false|false|either|C",
+        "2|19|111111EEE1EE11EE1EE|false|false|either|C",
+        "ipi|23|111111E1E1EEE1EE11E1EEE|false|false|lower-bank|C",
+      ].join("\n"),
+    },
+  ];
+  for (const spec of v11) {
+    const got = searchConstants(spec.k, { allowLn0: spec.allowLn0 ? undefined : false, digest: true });
+    const label = `K${spec.k} ln0=${spec.allowLn0}`;
+    const lines = got.hits.map(hitLine).join("\n");
+    if (got.pool !== spec.pool || got.digest !== spec.digest || lines !== spec.hits) {
+      failed += 1;
+      console.log("FAIL cut conjugation changed v1.1 search", label, "pool", got.pool, spec.pool, "digest", got.digest, spec.digest);
+      if (lines !== spec.hits) console.log(lines);
+    }
   }
 }
 if (minusOne && ln0Dependence(minusOne) !== "depends on ln 0 = −∞") {

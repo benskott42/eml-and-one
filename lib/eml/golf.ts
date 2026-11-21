@@ -30,6 +30,12 @@ import { SoundDedup, type SoundReport } from "./sound";
  * A class is dropped only when exact proves equality, so a sound-mode count
  * is an upper bound. Disks are the bounds in docs/interval-bounds.md for
  * normal components; a subnormal component or a subnormal hypot is inconclusive.
+ * Off the negative-real axis, eml(conj a, conj b) equals conj(eml(a, b)). The
+ * search evaluates the lower cut only; the principal value is that conjugate,
+ * not a second evaluation. On the axis the conjugate is the principal value
+ * and not the lower one, so it is not substituted. Hit acceptance evaluates
+ * the lower cut only, so a principal hit for a target is the lower hit of
+ * that target's conjugate.
  */
 
 export type GolfHit = {
@@ -68,6 +74,8 @@ export type SearchResult = {
   levels: SearchLevel[];
   sound?: SoundReport;
   classes?: TracedClass[];
+  /** Present only when `digest: true`. FNV-1a of committed float bits. */
+  digest?: number;
 };
 
 type Target = { id: string; re: number; im: number };
@@ -124,8 +132,16 @@ function near(re: number, im: number, target: Target): boolean {
   return Math.abs(re - target.re) <= 1e-6 * scale && Math.abs(im - target.im) <= 1e-6 * scale;
 }
 
+export function floatComponentKey(x: number): [number, number] {
+  return sig(x);
+}
+
 function sig(x: number): [number, number] {
-  if (!Number.isFinite(x)) return [x > 0 ? 1 : 2, 0];
+  // ±∞ share the finite sign bit, so negating a component flips that bit and
+  // no other. +∞ stays [1, 0]. NaN is not a sign. The old code stored −∞ and
+  // NaN as the same word [2, 0], which is not the sign flip of +∞.
+  if (Number.isNaN(x)) return [0, 0];
+  if (!Number.isFinite(x)) return [((x < 0 ? 1 : 0) << 20) | 1, 0];
   if (x === 0) return [3, 0];
   const neg = x < 0 ? 1 : 0;
   const ax = Math.abs(x);
@@ -266,6 +282,17 @@ function rpnOf(left: Int32Array, right: Int32Array, id: number): string {
   return tokens.join("");
 }
 
+/**
+ * Acceptance evaluates the lower cut only. A float from the other cut sits on
+ * the principal target, and the hit it proves is the lower hit of the conjugate
+ * target. Real targets are their own conjugates.
+ */
+export function lowerHitTarget(target: Target, otherCut: boolean): Target {
+  if (!otherCut || target.im === 0 || Object.is(target.im, -0)) return target;
+  const id = target.id === "ipi" ? "-ipi" : target.id === "-ipi" ? "ipi" : target.id;
+  return { id, re: target.re, im: -target.im };
+}
+
 export function searchConstants(
   maxK: number,
   options: {
@@ -283,6 +310,8 @@ export function searchConstants(
     trace?: boolean;
     shouldStop?: () => boolean;
     onProgress?: (progress: SearchProgress) => void;
+    /** Hash every committed float, in commit order. Off the hot path. */
+    digest?: boolean;
   } = {},
 ): SearchResult {
   const workers = options.workers ?? 1;
@@ -351,6 +380,19 @@ export function searchConstants(
     flow[id] = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn) ? 1 : 0;
   };
 
+let digest = 2166136261;
+  const digF = new Float64Array(1);
+  const digU = new Uint32Array(digF.buffer);
+  const mixDigest = (valueRe: number, valueIm: number) => {
+    digF[0] = valueRe;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digF[0] = valueIm;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digest = digest >>> 0;
+  };
+
   const reportOf = (id: number): ExactReport | null => {
     const cached = exactCache[id];
     if (cached !== undefined) return cached;
@@ -364,22 +406,26 @@ export function searchConstants(
     }
   };
 
-  const maybeRecord = (a: number, b: number, valueRe: number, valueIm: number, gates: number, id: number | null) => {
+  const maybeRecord = (a: number, b: number, valueRe: number, valueIm: number, gates: number, id: number | null, otherCut: boolean) => {
     const imagAbs = Math.abs(valueIm);
     const watch =
       imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4
-        ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(valueRe, valueIm, target))
+        ? CONSTANT_TARGETS.filter((target) => {
+            const recorded = otherCut ? lowerHitTarget(target, true).id : target.id;
+            return !found.has(recorded) && near(valueRe, valueIm, target);
+          })
         : [];
     if (watch.length === 0) return;
     const built = E(buildNode(left, right, a, nodeMemo), buildNode(left, right, b, nodeMemo));
     for (const target of watch) {
-      if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
+      const lower = lowerHitTarget(target, otherCut);
+      if (found.has(lower.id) || !acceptsConstantProgram(built, lower.re, lower.im)) continue;
       const report = evaluateReport(built);
       const onCut = Math.abs(valueIm) > 1e-8 && Math.abs(Math.abs(valueIm) - Math.PI) < 1e-6;
       const rpn = id === null ? (rpnTokens(built, gates * 2 + 1)?.join("") ?? "") : rpnOf(left, right, id);
       if (!rpn) continue;
-      found.set(target.id, {
-        id: target.id,
+      found.set(lower.id, {
+        id: lower.id,
         k: gates * 2 + 1,
         rpn,
         singular: report.singular === SINGULAR_LN0,
@@ -390,7 +436,7 @@ export function searchConstants(
     }
   };
 
-  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number) => {
+  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number, otherCut: boolean) => {
     const fromLn = touchesLn0(a, b);
     const nonFinite = !Number.isFinite(valueRe) || !Number.isFinite(valueIm);
     const overflow = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn);
@@ -426,7 +472,7 @@ export function searchConstants(
       });
       if (decision.merged) {
         rejected += 1;
-        maybeRecord(a, b, valueRe, valueIm, gates, null);
+        maybeRecord(a, b, valueRe, valueIm, gates, null, otherCut);
         return;
       }
       if (count >= cap) grow();
@@ -439,14 +485,17 @@ export function searchConstants(
       im[id] = valueIm;
       count += 1;
       soundDedup.remember(id, keyString(valueRe, valueIm), decision.disk);
-      maybeRecord(a, b, valueRe, valueIm, gates, id);
+      maybeRecord(a, b, valueRe, valueIm, gates, id, otherCut);
       return;
     }
     const value = { re: valueRe, im: valueIm };
     const imagAbs = Math.abs(value.im);
     const watch =
       imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4
-        ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(value.re, value.im, target))
+        ? CONSTANT_TARGETS.filter((target) => {
+            const id = otherCut ? lowerHitTarget(target, true).id : target.id;
+            return !found.has(id) && near(value.re, value.im, target);
+          })
         : [];
     if (watch.length === 0) {
       const key = keyOf(value.re, value.im);
@@ -475,6 +524,7 @@ export function searchConstants(
       re[count] = value.re;
       im[count] = value.im;
       count += 1;
+      if (options.digest) mixDigest(value.re, value.im);
       return;
     }
     if (count >= cap) grow();
@@ -486,14 +536,16 @@ export function searchConstants(
     re[id] = value.re;
     im[id] = value.im;
     count += 1;
+    if (options.digest) mixDigest(value.re, value.im);
     const built = buildNode(left, right, id, nodeMemo);
     let kept = false;
     for (const target of watch) {
-      if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
+      const lower = lowerHitTarget(target, otherCut);
+      if (found.has(lower.id) || !acceptsConstantProgram(built, lower.re, lower.im)) continue;
       const report = evaluateReport(built);
       const onCut = Math.abs(value.im) > 1e-8 && Math.abs(Math.abs(value.im) - Math.PI) < 1e-6;
-      found.set(target.id, {
-        id: target.id,
+      found.set(lower.id, {
+        id: lower.id,
         k: gates * 2 + 1,
         rpn: rpnOf(left, right, id),
         singular: report.singular === SINGULAR_LN0,
@@ -537,6 +589,7 @@ export function searchConstants(
     pool: count,
     rejected,
     levels,
+    ...(options.digest ? { digest } : {}),
     ...(soundDedup ? { sound: soundDedup.report() } : {}),
     ...(trace ? { classes: traced() } : {}),
   });
@@ -545,7 +598,7 @@ export function searchConstants(
     if (options.shouldStop?.()) break;
     const start = count;
     let pair = 0;
-    const buckets: { pair: number; a: number; b: number; re: number; im: number }[][] = options.partition
+    const buckets: { pair: number; a: number; b: number; re: number; im: number; otherCut: boolean }[][] = options.partition
       ? Array.from({ length: workers }, () => [])
       : [];
     for (let i = 0; i < gates; i += 1) {
@@ -555,7 +608,7 @@ export function searchConstants(
           const index = pair++;
           if ((index & 2047) === 0 && options.shouldStop?.()) {
             level[gates + 1] = count;
-            return finish();
+return finish();
           }
           if (options.allowLn0 === false && touchesLn0(a, b)) continue;
           const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
@@ -564,16 +617,16 @@ export function searchConstants(
             continue;
           }
           if (options.partition) {
-            buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im });
+            buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im, otherCut: false });
             continue;
           }
-          commit(a, b, value.re, value.im, gates);
+          commit(a, b, value.re, value.im, gates, false);
         }
       }
     }
     if (options.partition) {
       const ordered = buckets.flat().sort((p, q) => p.pair - q.pair);
-      for (const item of ordered) commit(item.a, item.b, item.re, item.im, gates);
+      for (const item of ordered) commit(item.a, item.b, item.re, item.im, gates, item.otherCut);
     }
     level[gates + 1] = count;
     const added = count - start;
@@ -581,7 +634,7 @@ export function searchConstants(
     options.onProgress?.({ k: gates * 2 + 1, pool: added });
   }
 
-  return finish();
+return finish();
 }
 
 /** The with-infinity search keeps these and says so. The finite search rejects them. */
