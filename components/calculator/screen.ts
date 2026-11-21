@@ -1,5 +1,5 @@
 import { type C } from "@/lib/eml/complex";
-import { exactScreen, finiteLossMessage, underflowDisclosure, FLOAT_DIFFERS } from "@/lib/eml/history";
+import { exactScreen, finiteLossMessage, underflowDisclosure } from "@/lib/eml/history";
 import { floatText, scalarNode, seriesShortcutNote } from "@/lib/eml/library";
 import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describe, evaluateReport, isPure, rpnTokens } from "@/lib/eml/node";
 import { agreementNote, compileExpression } from "@/lib/eml/parse";
@@ -169,15 +169,16 @@ export function noteFor(item: Entry): string | null {
     number ? programFlags(item) : null,
     item.pendingExact ? item.progress ?? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
-    item.floatDiffers && item.exactBeside ? `${FLOAT_DIFFERS} · ${item.exactBeside}` : null,
+    // v1.1 (C2): the flag lines own the float-differs and singular strings, so the note skips them.
     item.notice,
     item.overflowed ? "overflow" : null,
     underflowDisclosure(item.value, item.underflowed === true),
     item.nearCut ? "on or very near the branch cut" : null,
     seriesShortcutNote(item.node),
     isPure(item.node) ? "pure" : null,
-    shownSingular(item),
-    agreementNote(item.caption, item.value, item.bound ?? {}, item.text, { cancelledZero: item.cancelledZero, notCertified: item.notCertified }),
+    item.floatDiffers
+      ? null
+      : agreementNote(item.caption, item.value, item.bound ?? {}, item.text, { cancelledZero: item.cancelledZero, notCertified: item.notCertified }),
   ].filter(Boolean);
   return bits.length ? bits.join(" · ") : null;
 }

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type C } from "@/lib/eml/complex";
-import { recognize } from "@/lib/eml/format";
 import { applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
 import {
   BINARY_KEYS,
@@ -270,9 +269,8 @@ export function useCalculatorModel() {
       }
       try {
         const item = entry(node, caption, modeRef.current);
-        const known = recognize(item.value);
-        const name = known && known !== caption ? `this is ${known}` : null;
-        const bits = [noteFor(item), name].filter(Boolean);
+        // v1.1 (C2): the caption already names the value, so the note does not repeat "this is X".
+        const bits = [noteFor(item)].filter(Boolean);
         pushEntry(item, tapeLabel, bits.length ? bits.join(" · ") : null);
       } catch (err) {
         const next = { ...modelRef.current, error: failure(err) };
@@ -303,9 +301,7 @@ export function useCalculatorModel() {
           ...entry(node, text.trim(), modeRef.current),
           bound: valuesOf(textRef.current.xText, textRef.current.yText),
         };
-        const known = recognize(item.value);
-        const name = known && known !== item.caption ? `this is ${known}` : null;
-        const bits = [noteFor(item), name].filter(Boolean);
+        const bits = [noteFor(item)].filter(Boolean);
         pushEntry(item, tapeLabel, bits.length ? bits.join(" · ") : null);
       } catch (err) {
         const next = { ...modelRef.current, error: failure(err) };
