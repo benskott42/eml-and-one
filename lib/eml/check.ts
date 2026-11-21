@@ -1673,6 +1673,51 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL exact typed 0*inf", formatExact(typedExact.value), typedExact.singular);
   }
+  const extended = [
+    ["ln(0)*2", "−∞"],
+    ["ln(0)*(-2)", "∞"],
+    ["(-2)*ln(0)", "∞"],
+    ["2*ln(0)", "−∞"],
+    ["ln(0)*0", "undefined"],
+    ["sin(inf)", "undefined"],
+    ["sin(ln(0))", "undefined"],
+    ["cos(inf)", "undefined"],
+    ["cos(ln(0))", "undefined"],
+    ["sin((inf+1)-1)", "undefined"],
+    ["tan(inf)", "undefined"],
+    ["tan(ln(0))", "undefined"],
+  ] as const;
+  for (const [source, want] of extended) {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, { maxNodes: 200_000 });
+    const ex = exactReport(node, {}, { maxNodes: 200_000 });
+    const floatText = formatC(hw.value);
+    const exactText = formatExact(ex.value).replace(/\u200b/g, "");
+    if (floatText !== want || exactText !== want || floatText !== exactText) {
+      failed += 1;
+      console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular);
+    }
+  }
+  // The in-process rows never pack. The screen's exact worker evaluates the packed circuit.
+  const freshAngles = ["sin(inf)", "cos(inf)", "sin(ln(0))", "cos(ln(0))", "tan(inf)", "tan(ln(0))"];
+  const freshJobs = freshAngles.map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const freshAnglesRun = runTsx("scripts/fresh-exact.ts", JSON.stringify(freshJobs));
+  if (freshAnglesRun.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh trig infinity", freshAnglesRun.status, freshAnglesRun.stderr);
+  } else {
+    const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null }>;
+    for (const row of rows) {
+      const text = row.text.replace(/\u200b/g, "");
+      if (text !== "undefined" || row.singular === null) {
+        failed += 1;
+        console.log("FAIL fresh trig infinity", row.source, text, row.singular);
+      }
+    }
+  }
   const gap = compileExpression("inf-inf", {});
   const gapReport = evaluateReport(gap);
   const gapExact = exactReport(gap, {}, { maxNodes: 20_000 });
@@ -3158,9 +3203,11 @@ if (inShard("core")) {
         e3.push([`item 3 ${src} exact`, shownExact(src), "0"]);
       }
       // Item 6: an operand that may be infinite (or an overflow minus itself) is not a value in either mode.
+      // sin of that open value, and (−∞) − (−∞) once ln(0)*2 has its sign, are the decided undefined.
       for (const src of ["(ln(0)-1)-ln(0)", "exp(800)-exp(800)", "(inf+1)-1", "inf+1", "ln(0)-1", "2*((inf+1)-1)", "sin((inf+1)-1)", "ln(0)*2-ln(0)", "(0/0)-(1/0)"]) {
-        e3.push([`item 6 ${src} float`, shownFloat(src), "couldn't verify"]);
-        e3.push([`item 6 ${src} exact`, shownExact(src), "couldn't verify"]);
+        const want = src === "sin((inf+1)-1)" || src === "ln(0)*2-ln(0)" ? "undefined" : "couldn't verify";
+        e3.push([`item 6 ${src} float`, shownFloat(src), want]);
+        e3.push([`item 6 ${src} exact`, shownExact(src), want]);
       }
       // ...but ∞ − ∞ of one node, a + (−a), and same-sign infinities stay "undefined"; a finite overflow beside 1 keeps exact digits.
       for (const src of ["ln(0)-ln(0)", "inf-inf", "(0/0)+(-(0/0))", "tan(pi/2)-tan(pi/2)", "ln(0)+(-ln(0))", "exp(-ln(0))-exp(-ln(0))"]) {

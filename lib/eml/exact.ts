@@ -14,6 +14,7 @@ import {
   unverifiedKind,
   precisionMessage,
   provenInteger,
+  trigArg,
 } from "./node";
 import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
@@ -1111,7 +1112,10 @@ function exactReportOnce(
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
-    const hit = NOCACHE ? undefined : cache.get(n);
+    // A sin, cos, or tan node can already be cached as the exp formula.
+    // Recompute so an infinite argument stays undefined instead of that infinity.
+    const angle = trigArg(n);
+    const hit = NOCACHE || angle ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -1149,7 +1153,11 @@ function exactReportOnce(
     emlAbsorbExp = Number.POSITIVE_INFINITY;
     nodeLoss = 0;
     nodeCut = false;
-    const value = exactEml(a, b);
+    // sin, cos, and tan of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    // The argument may sit under a cached intermediate, so this walk never visits it.
+    const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
+    const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
+    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
     const collapsedHere = expCollapsed && !collapsedBefore;
     const shell = inScaledShell(n);
     const own: Work = shell
