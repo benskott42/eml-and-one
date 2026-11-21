@@ -1704,6 +1704,10 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["(-inf)^3", "−∞"],
     ["(-inf)^2", "∞"],
     ["(inf*i)^0.5", "unverified"],
+    ["ln(0)-1", "unverified"],
+    ["ln(0)+i", "unverified"],
+    ["(inf*i)/2", "unverified"],
+    ["ln(ln(0)*i)", "unverified"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1748,6 +1752,10 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["(-inf)^3", "−∞"],
     ["(-inf)^2", "∞"],
     ["(inf*i)^0.5", "unverified"],
+    ["ln(0)-1", "unverified"],
+    ["ln(0)+i", "unverified"],
+    ["(inf*i)/2", "unverified"],
+    ["ln(ln(0)*i)", "unverified"],
   ] as const;
   const freshJobs = [...freshAngles, ...freshDirected.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));

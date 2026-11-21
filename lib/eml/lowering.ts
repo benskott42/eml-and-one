@@ -1246,6 +1246,11 @@ function domainAddBuild(a: Node, b: Node): Node {
 
 const negOf = new WeakMap<Node, Node>();
 
+/** b was built as −a, or a as −b. */
+export function isNegationPair(a: Node, b: Node): boolean {
+  return negOf.get(b) === a || negOf.get(a) === b;
+}
+
 /** a + (−a) is 0 when a is unmarked. A marked a falls through to the ordinary sum. */
 export function sumOfNegation(a: Node, b: Node): Node | null {
   const base = negOf.get(b) === a ? a : negOf.get(a) === b ? b : null;
