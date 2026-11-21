@@ -24,8 +24,10 @@ document.addEventListener("keydown", function (event) {
   var target = event.target;
   var inField = target && target.closest && target.closest("input, textarea");
   if (event.key === "Enter") {
-    if (inField && target.id !== "expression") return;
-    emlQueue("Enter", event);
+    // A live Enter outside the expression does nothing. Inside it, keep the
+    // text that is on screen now; hydration would otherwise restore the default.
+    if (!inField || target.id !== "expression") return;
+    emlQueue("Enter:" + (target.value || ""), event);
     return;
   }
   if (inField) return;

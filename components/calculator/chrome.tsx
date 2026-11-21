@@ -133,6 +133,8 @@ function copyShownPart(printed: string, raw: number): { text: string; expanded: 
   const scientific = /e/i.test(printed);
   const digits = mantissaDigits(printed);
   if (scientific || digits >= 12) {
+    // A shown ±1×10^k is that power. The gates can be a double a few ulps away.
+    if (/^-?1(?:\.0+)?e/i.test(printed)) return { text: printed, expanded: parsed !== raw };
     const text = floatPart(raw);
     return { text, expanded: text !== printed };
   }
@@ -152,8 +154,11 @@ export function copiedValue(input: {
 }): { text: string; copiedLabel: string } {
   const display = displayedCopy(input.shown);
   if (input.node && input.value == null) {
+    if (display.text === "undefined" || display.text === "NaN") return { text: "NaN", copiedLabel: "Copied" };
     const whole = provenInteger(input.node);
-    if (whole !== undefined) return { text: whole.toString(), copiedLabel: "Copied" };
+    // Past the float range the carried integer can have dropped a finite term.
+    // Copy the screen instead of those digits.
+    if (whole !== undefined && Number.isFinite(Number(whole))) return { text: whole.toString(), copiedLabel: "Copied" };
     const digits = mantissaDigits(display.text);
     return { text: display.text, copiedLabel: `Copied as shown (${digits} digits)` };
   }

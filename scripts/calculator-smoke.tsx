@@ -854,8 +854,8 @@ async function main() {
     failed = true;
   }
   const tiny = floatOf("10^(-8)");
-  if (tiny.copied.text.includes("i") || Number(tiny.copied.text) !== tiny.row.value.re) {
-    console.error("float 10^(-8) copied a hidden imaginary part", tiny.copied, tiny.row.value);
+  if (tiny.copied.text !== "1e-8" || tiny.copied.text.includes("i") || !tiny.copied.copiedLabel.includes("≈ not certified")) {
+    console.error("float 10^(-8) did not copy the shown power", tiny.copied, tiny.row.value);
     failed = true;
   }
   const half = floatOf("sin(pi/6)");
@@ -890,6 +890,16 @@ async function main() {
   const nan = floatOf("0/0");
   if (nan.copied.text !== "NaN" || nan.copied.text.includes("i")) {
     console.error("NaN copied a hidden imaginary part", nan.copied, nan.row.text);
+    failed = true;
+  }
+  const exactNan = copiedValue({ shown: "undefined", node: compileExpression("0/0", {}) });
+  if (exactNan.text !== "NaN") {
+    console.error("exact 0/0 copied a name", exactNan);
+    failed = true;
+  }
+  const hugeCopy = copiedValue({ shown: "1×10^4100", node: compileExpression("10^4100+1", {}) });
+  if (hugeCopy.copiedLabel === "Copied" || hugeCopy.text.endsWith("0000")) {
+    console.error("10^4100+1 copied a float-truncated integer", hugeCopy.text.slice(-6), hugeCopy.copiedLabel);
     failed = true;
   }
   const signedZero = runNode(compileExpression("-0", {}), "float");
@@ -1001,8 +1011,8 @@ async function main() {
       editRoot.render(<EmlCalculator />);
     });
     const edited = editView.document.querySelector(".ti-lcd-result")?.textContent?.trim();
-    if (edited !== "computing") {
-      console.error("an early Backspace and Enter were not replayed", edited);
+    if (edited !== "Stack empty. Press 1.") {
+      console.error("an early Enter on the page computed", edited);
       failed = true;
     }
     await act(async () => {
@@ -1010,6 +1020,38 @@ async function main() {
     });
   }
   editView.close();
+  const typedDom = new JSDOM("<!doctype html><html><body><input id=\"expression\" value=\"2^10\"><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const typedView = typedDom.window;
+  globals.window = typedView;
+  globals.self = typedView;
+  globals.document = typedView.document;
+  globals.HTMLElement = typedView.HTMLElement;
+  typedView.eval(EARLY_KEY_SCRIPT);
+  typedView.document.getElementById("expression")?.dispatchEvent(new typedView.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const typedMount = typedView.document.getElementById("root");
+  if (!typedMount) {
+    console.error("missing early expression root");
+    failed = true;
+  } else {
+    const typedRoot = createRoot(typedMount);
+    await act(async () => {
+      typedRoot.render(<EmlCalculator />);
+    });
+    const typedResult = typedView.document.querySelector(".ti-lcd-result")?.textContent?.trim();
+    const typedField = typedView.document.querySelector("#expression");
+    const typedValue = typedField instanceof typedView.HTMLInputElement ? typedField.value : "";
+    if (typedValue !== "2^10" || typedResult === "0.5" || typedResult === "sin(pi/6)") {
+      console.error("an early Enter lost the typed expression", typedResult, typedValue);
+      failed = true;
+    }
+    await act(async () => {
+      typedRoot.unmount();
+    });
+  }
+  typedView.close();
   globals.window = uiView;
   globals.self = uiView;
   globals.document = uiView.document;

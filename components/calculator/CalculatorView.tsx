@@ -92,7 +92,7 @@ export function CalculatorView(props: CalculatorModel) {
     for (const key of queued) {
       if (key === "1") pushOne();
       else if (key === "B") undo();
-      else if (key === "Enter") compute(expr);
+      else if (key.startsWith("Enter:")) compute(key.slice("Enter:".length));
       else applyEml();
     }
   }, [applyEml, compute, dismissCard, expr, pushOne, undo]);
