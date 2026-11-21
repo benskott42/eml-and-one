@@ -3944,7 +3944,7 @@ failed += runCertifyChecks();
   // beside a nonzero part after a value below the precision, a finite overflow
   // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
   const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
-  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"]];
+  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "undefined"], ["(1-1)^0", "undefined"], ["0^(1-1)", "undefined"]];
   for (const source of refused) {
     const node = compileExpression(source, {});
     const packed = packCircuit(node);
