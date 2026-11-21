@@ -7,7 +7,7 @@ import { circuitStats, E, EmlLimitError, nodeFromRpn, ONE, V } from "./node";
 import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
 import { exactClose, exactReport } from "./exact";
 import { applyProgram, SHORT_PROGRAMS } from "./programs";
-import { compilePresses, compilePressNode, IMUL_LIMIT, POW_MAX, POW_MIN, PressCompileError, REAL_LIMIT, recipeExtra } from "./exprSeq";
+import { compilePresses, oversizedPressNodeIsRejected, IMUL_LIMIT, POW_MAX, POW_MIN, PressCompileError, REAL_LIMIT, recipeExtra } from "./exprSeq";
 
 const D = Decimal.clone({ precision: 90 });
 
@@ -256,16 +256,7 @@ export function runExprChecks(): number {
   if (!exactSource.includes("EXACT_TOO_LARGE") || exactSource.includes("too large for exact mode")) {
     fail("exact mode does not use the shared cap sentence");
   }
-  let wide = ONE;
-  for (let i = 0; i < 16; i += 1) wide = E(wide, wide);
-  try {
-    compilePressNode(wide);
-    fail("over-cap circuit compiled");
-  } catch (err) {
-    if (!(err instanceof PressCompileError) || err.message !== EXACT_TOO_LARGE) {
-      fail(`over-cap ${err instanceof Error ? `${err.name}: ${err.message}` : err}`);
-    }
-  }
+  if (!oversizedPressNodeIsRejected()) fail("over-cap circuit compiled");
   let chain = ONE;
   for (let i = 0; i < 40; i += 1) chain = E(chain, ONE);
   try {

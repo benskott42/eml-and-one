@@ -2,7 +2,7 @@ import { countWord, countWordLength } from "./countWord";
 import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
 import { tagValue } from "./lowering";
 import { tAdd, tNeg, tSub } from "./library";
-import { circuitStats, nodeFromRpn, rpnTokens, type Node } from "./node";
+import { circuitStats, E, nodeFromRpn, ONE, rpnTokens, type Node } from "./node";
 import { SHORT_PROGRAMS } from "./programs";
 import rows from "./integer-table.json";
 
@@ -543,8 +543,23 @@ export function compilePresses(source: string): PressSequence {
   return { node: built.node, word: built.word, presses: built.word.length, via: built.via };
 }
 
-/** The press-budget check on a circuit that is already a node. */
-export function compilePressNode(node: Node): PressSequence {
+/** The press-budget check on a circuit that is already a node. Not exported: the calculator uses compilePresses. */
+function compilePressNode(node: Node): PressSequence {
   const built = spell(node, realG(0), []);
   return { node: built.node, word: built.word, presses: built.word.length, via: built.via };
+}
+
+/**
+ * A full binary circuit past the shared cap must fail with the worker's sentence.
+ * The expression parser never builds that node, so compilePresses cannot reach it.
+ */
+export function oversizedPressNodeIsRejected(): boolean {
+  let wide = ONE;
+  for (let i = 0; i < 16; i += 1) wide = E(wide, wide);
+  try {
+    compilePressNode(wide);
+    return false;
+  } catch (err) {
+    return err instanceof PressCompileError && err.message === EXACT_TOO_LARGE;
+  }
 }
