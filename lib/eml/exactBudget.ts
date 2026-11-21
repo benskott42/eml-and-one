@@ -5,5 +5,10 @@
  */
 export const EXACT_MAX_NODES = 80_000;
 
-/** Shown by the worker and by the compiler when that budget is exceeded. */
+/**
+ * Shown when a circuit exceeds the evaluation budget.
+ * Exact mode, the float evaluator, and the press compiler all use this
+ * sentence. "Too large to evaluate" covers those three; "for exact mode"
+ * would be the wrong reason on the float evaluator and on the compiler.
+ */
 export const EXACT_TOO_LARGE = "This circuit is too large to evaluate.";

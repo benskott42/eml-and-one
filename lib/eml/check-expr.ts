@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Decimal from "decimal.js";
-import { circuitStats, nodeFromRpn, V } from "./node";
+import { circuitStats, E, EmlLimitError, nodeFromRpn, ONE, V } from "./node";
 import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
 import { exactClose, exactReport } from "./exact";
 import { applyProgram, SHORT_PROGRAMS } from "./programs";
-import { compilePresses, IMUL_LIMIT, POW_MAX, POW_MIN, PressCompileError, REAL_LIMIT, recipeExtra } from "./exprSeq";
+import { compilePresses, compilePressNode, IMUL_LIMIT, POW_MAX, POW_MIN, PressCompileError, REAL_LIMIT, recipeExtra } from "./exprSeq";
 
 const D = Decimal.clone({ precision: 90 });
 
@@ -249,8 +249,32 @@ export function runExprChecks(): number {
     fail(`worker budget ${EXACT_MAX_NODES} ${EXACT_TOO_LARGE}`);
   }
   const compilerSource = readFileSync(new URL("./exprSeq.ts", import.meta.url), "utf8");
-  if (!compilerSource.includes("EXACT_MAX_NODES") || !compilerSource.includes("EXACT_TOO_LARGE") || /100_?000/.test(compilerSource)) {
+  if (!compilerSource.includes("EXACT_MAX_NODES") || !compilerSource.includes("EXACT_TOO_LARGE") || /100_?000/.test(compilerSource) || compilerSource.includes("EmlLimitError")) {
     fail("the compiler cap is not the worker budget");
+  }
+  const exactSource = readFileSync(new URL("./exact.ts", import.meta.url), "utf8");
+  if (!exactSource.includes("EXACT_TOO_LARGE") || exactSource.includes("too large for exact mode")) {
+    fail("exact mode does not use the shared cap sentence");
+  }
+  let wide = ONE;
+  for (let i = 0; i < 16; i += 1) wide = E(wide, wide);
+  try {
+    compilePressNode(wide);
+    fail("over-cap circuit compiled");
+  } catch (err) {
+    if (!(err instanceof PressCompileError) || err.message !== EXACT_TOO_LARGE) {
+      fail(`over-cap ${err instanceof Error ? `${err.name}: ${err.message}` : err}`);
+    }
+  }
+  let chain = ONE;
+  for (let i = 0; i < 40; i += 1) chain = E(chain, ONE);
+  try {
+    exactReport(chain, {}, { maxNodes: 1 });
+    fail("exact cap did not throw");
+  } catch (err) {
+    if (!(err instanceof EmlLimitError) || err.message !== EXACT_TOO_LARGE) {
+      fail(`exact cap ${err instanceof Error ? `${err.name}: ${err.message}` : err}`);
+    }
   }
   runWorkerPathChecks(fail);
 
