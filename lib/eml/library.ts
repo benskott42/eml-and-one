@@ -624,9 +624,27 @@ export function tDiv(a: Node, b: Node): Node {
   return tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
 }
 
+/** A proven integer exponent, including negatives. A float that is not integral is not one. */
+function integerExponent(node: Node): bigint | null {
+  const tagged = rangeOf(node).int;
+  if (tagged !== undefined) return tagged;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (!v || v.im !== 0 || !Number.isInteger(v.re)) return null;
+  return BigInt(v.re);
+}
+
 export function tPow(a: Node, b: Node): Node {
-  // x^2 is the square. A directed infinity doubles its angle there.
-  if (rangeOf(b).int === BigInt(2) && directionOf(a)) return tSqr(a);
+  // An integer power multiplies the quarter turn. ^2 was the only case, so
+  // (∞i)^3 stayed the power word and came out a real infinity.
+  // A negative integer power is 0, the same zero as 1 over that infinity.
+  // Any other exponent is not a quarter turn and must not be certified.
+  const dir = directionOf(a);
+  if (dir) {
+    const exp = integerExponent(b);
+    if (exp !== null && exp > BigInt(0)) return rememberDirection(dir.magnitude, dir.quarter * Number(exp % BigInt(4)));
+    if (exp !== null && exp < BigInt(0)) return tZero();
+    return markUnverified(markInfiniteSource(applyProgram("pow", { x: a, y: b })));
+  }
   const node = applyProgram("pow", { x: a, y: b });
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
