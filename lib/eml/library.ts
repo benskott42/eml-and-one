@@ -26,6 +26,7 @@ import {
   noteExp,
   noteLn,
   noteNonfinite,
+  noteOverflow,
   rangeOf,
   sumOfNegation,
   tagInteger,
@@ -35,7 +36,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, isUnverified, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -189,13 +190,14 @@ export function tExp(t: Node): Node {
   expArg.set(node, t);
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
   // exp(−∞) stays a zero: exp(−∞) − exp(−∞) is 0.
-  // A finite real past about 709 overflows float to +∞. The range stays
-  // unknown, so the node has to be marked or exp(exp(800)) − itself folds to 0.
+  // A finite real past about 709 overflows float to +∞. Mark it as overflow,
+  // not a pole, so exp(800) − exp(800) folds to 0. exp of that overflow is a
+  // pole, or exp(exp(800)) − itself would also fold to 0.
   if (t.type === "input" && t.value.re === Infinity && imagZero(t.value)) return noteNonfinite(node, 1);
   const known = knownValue(t);
   if (known && known.re === Infinity && imagZero(known)) return noteNonfinite(node, 1);
   if (known && known.re < 0 && !Number.isFinite(known.re)) return node;
-  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteNonfinite(node, 1);
+  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteOverflow(node);
   if (isNonfiniteNode(t) && !(known && known.re < 0)) return noteNonfinite(node, 1);
   return node;
 }
@@ -455,10 +457,27 @@ export function userSub(a: Node, b: Node): Node {
 function userSum(a: Node, b: Node, sub: boolean): Node {
   const same = a === b;
   const negation = !sub && isNegationPair(a, b);
-  const left = same || negation ? null : infinityClass(a);
-  const right = same || negation ? null : infinityClass(b);
+  // Classify before any sum or negation is built. Adding 0 reuses the ln(0)
+  // node and would clear its range, so the sign must be read first.
+  // Identical addends such as ln(0)+ln(0) still need a class: skipping that
+  // would leave the indeterminate label on a same-direction sum.
+  const left = negation ? null : infinityClass(a);
+  const right = negation ? null : infinityClass(b);
+  // Exact 0 is an identity. Passing the other operand through keeps a
+  // directed infinity such as ∞i + 0, which the refusal path would drop.
+  if (!same && !negation) {
+    if (exactZero(b)) return a;
+    if (!sub && exactZero(a)) return b;
+    if (sub && exactZero(a)) return tNeg(b);
+  }
   const node = sub ? tSub(a, b) : tAdd(a, b);
-  if (same || negation || !left || !right || (!left.inf && !right.inf)) return node;
+  // Identical subtraction stays on the circuit so ∞ − ∞ is undefined, not 0.
+  if (same && sub) return node;
+  if (negation || !left || !right || (!left.inf && !right.inf)) {
+    // 1+(2+∞) must not drop the inner refusal and certify a NaN as ∞−∞.
+    if (isUnverified(a) || isUnverified(b)) return markUnverified(node);
+    return node;
+  }
   return refuseInfiniteSum(node, left, right, sub);
 }
 
@@ -612,8 +631,11 @@ function oppositeSign(sign: -1 | 1): -1 | 1 {
 
 /**
  * ±∞ beside a finite term, when the add or sub word does not already show that
- * real infinity. Two infinities stay on the circuit when float is NaN, so
- * inf − inf stays undefined. The operands were classified before the sum was built.
+ * real infinity. A NaN float stays indeterminate only when both sides are
+ * infinite and not proven to point the same way, so 1 + ∞ is refused and
+ * ∞ − ∞ stays undefined. Two infinities that do point the same way keep the
+ * circuit when it already shows that real infinity, so ∞ − (−∞) stays ∞.
+ * The operands were classified before the sum was built.
  */
 function refuseInfiniteSum(
   node: Node,
@@ -622,24 +644,26 @@ function refuseInfiniteSum(
   sub: boolean,
 ): Node {
   const value = floatOf(node);
-  const leftSign = left.sign;
-  const rightSign = right.sign;
-  const cancel =
-    left.inf &&
-    right.inf &&
-    leftSign !== undefined &&
-    rightSign !== undefined &&
-    (sub ? leftSign === rightSign : leftSign !== rightSign);
-  if (cancel) return floatIsNaN(value) ? node : markUnverified(node);
+  const leftEff = left.sign;
+  const rightEff = right.sign === undefined ? undefined : sub ? oppositeSign(right.sign) : right.sign;
+  const bothInf = left.inf && right.inf;
+  const knownPair = bothInf && leftEff !== undefined && rightEff !== undefined;
+  if (knownPair && leftEff !== rightEff) return floatIsNaN(value) ? node : markUnverified(node);
+  if (knownPair && leftEff === rightEff) {
+    if (floatIsRealInfinity(value, leftEff)) return node;
+    return markUnverified(node);
+  }
   if (left.inf !== right.inf) {
-    const known = left.inf ? leftSign : rightSign;
+    const known = left.inf ? left.sign : right.sign;
     const sign = known === undefined ? undefined : !left.inf && sub ? oppositeSign(known) : known;
     if (sign !== undefined) {
-      if (floatIsRealInfinity(value, sign) || floatIsNaN(value)) return node;
+      if (floatIsRealInfinity(value, sign)) return node;
       return markUnverified(node);
     }
   }
-  if (floatIsNaN(value)) return node;
+  // Both infinite, but the directions are not proven. A NaN float is the
+  // indeterminate cancellation; anything else is refused.
+  if (bothInf && floatIsNaN(value)) return node;
   return markUnverified(node);
 }
 

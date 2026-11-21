@@ -491,6 +491,16 @@ export function noteNonfinite(node: Node, sign: -1 | 1 = 1): Node {
   return node;
 }
 
+/**
+ * A finite overflow such as exp(800). The node is non-finite in float, but it is
+ * not a pole: exp(800) − exp(800) is 0. exp of this node is a pole, because
+ * exp(exp(800)) has already left any finite range.
+ */
+export function noteOverflow(node: Node): Node {
+  nonfiniteNode.add(node);
+  return node;
+}
+
 let negZero: Node | undefined;
 
 /** Literal −0. The zero program is +0, and negating it must keep the sign. */

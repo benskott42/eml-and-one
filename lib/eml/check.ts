@@ -1708,6 +1708,28 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["ln(0)+i", "unverified"],
     ["(inf*i)/2", "unverified"],
     ["ln(ln(0)*i)", "unverified"],
+    ["ln(0)+0", "−∞"],
+    ["ln(0)-0", "−∞"],
+    ["ln(0)+1", "unverified"],
+    ["ln(0)*i+1", "unverified"],
+    ["inf+1", "unverified"],
+    ["1+inf", "unverified"],
+    ["1+2+inf", "unverified"],
+    ["inf+inf", "unverified"],
+    ["1+ln(0)", "unverified"],
+    ["ln(0)+ln(0)", "unverified"],
+    ["1+inf*i", "unverified"],
+    ["inf-ln(0)", "∞"],
+    ["inf*i+0", "∞i"],
+    ["sqrt(ln(0))+0", "∞i"],
+    ["ln(0)*i-0", "−∞i"],
+    ["sqrt(inf*i)", "unverified"],
+    ["ln(inf*i)", "unverified"],
+    ["(inf*i)/i", "unverified"],
+    ["ln(ln(0))", "∞ + 3.14159265359i"],
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1756,6 +1778,28 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["ln(0)+i", "unverified"],
     ["(inf*i)/2", "unverified"],
     ["ln(ln(0)*i)", "unverified"],
+    ["ln(0)+0", "−∞"],
+    ["ln(0)-0", "−∞"],
+    ["ln(0)+1", "unverified"],
+    ["ln(0)*i+1", "unverified"],
+    ["inf+1", "unverified"],
+    ["1+inf", "unverified"],
+    ["1+2+inf", "unverified"],
+    ["inf+inf", "unverified"],
+    ["1+ln(0)", "unverified"],
+    ["ln(0)+ln(0)", "unverified"],
+    ["1+inf*i", "unverified"],
+    ["inf-ln(0)", "∞"],
+    ["inf*i+0", "∞i"],
+    ["sqrt(ln(0))+0", "∞i"],
+    ["ln(0)*i-0", "−∞i"],
+    ["sqrt(inf*i)", "unverified"],
+    ["ln(inf*i)", "unverified"],
+    ["(inf*i)/i", "unverified"],
+    ["ln(ln(0))", "∞ + 3.14159265359i"],
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
   ] as const;
   const freshJobs = [...freshAngles, ...freshDirected.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
@@ -1785,6 +1829,25 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
         failed += 1;
         console.log("FAIL fresh trig infinity", row.source, text, row.singular);
       }
+    }
+  }
+  // Direct compile is checked in `extended`. The screen packs the same circuit
+  // for the exact worker; unpack here so a packed overflow difference cannot
+  // ship a certified −∞.
+  for (const [source, want] of [
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
+  ] as const) {
+    const packed = packCircuit(compileExpression(source, {}));
+    const rebuilt = unpackCircuit(packed.tokens, packed.root);
+    const direct = exactReport(compileExpression(source, {}), {}, { maxNodes: 200_000 });
+    const wire = exactReport(rebuilt, {}, { maxNodes: 200_000 });
+    const directText = formatExact(direct.value).replace(/\u200b/g, "");
+    const wireText = formatExact(wire.value).replace(/\u200b/g, "");
+    if (direct.unverified || wire.unverified || directText !== want || wireText !== want) {
+      failed += 1;
+      console.log("FAIL packed overflow cancel", source, directText, wireText, direct.unverified, wire.unverified);
     }
   }
   if (gap === programNode("0") || gapReport.singular !== SINGULAR_INDET) {
