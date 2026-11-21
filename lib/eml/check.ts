@@ -3043,6 +3043,11 @@ if (inShard("core")) {
     console.log("FAIL series note on sin(1)");
   }
   const under = agreementNote("ln(1+1e-130)", { re: 1e-130, im: 0 }, {}, "1×10^−130");
+  const roundedAway = agreementNote("(10^40+1)-10^40", { re: 1, im: 0 }, {}, "1");
+  if (roundedAway !== "lost to rounding") {
+    failed += 1;
+    console.log("FAIL lost to rounding note", roundedAway);
+  }
   if (under !== "float underflows") {
     failed += 1;
     console.log("FAIL float underflows note", under);
@@ -3380,7 +3385,7 @@ if (inShard("core")) {
   expect.set("bare4000", { re: bareText(bare4000), im: "0" });
   packSource("neg4000", `-${bare4000}`);
   expect.set("neg4000", { re: bareText(`-${bare4000}`), im: "0" });
-  for (const digits of [50, 300]) {
+  for (const digits of [50, 300, 360, 384]) {
     const frac = "1234567891";
     const whole = "1" + "0".repeat(digits - frac.length - 1);
     const lit = `${whole}.${frac}`;
@@ -3389,6 +3394,14 @@ if (inShard("core")) {
     const tail = `8.${frac}${"0".repeat(digits - frac.length - 1)}`;
     packSource(`tail${digits}`, `${tail}-8`);
     expect.set(`tail${digits}`, { re: `0.${frac}`, im: "0" });
+  }
+  {
+    const digits = 400;
+    const frac = "1234567891";
+    const whole = "1" + "0".repeat(digits - frac.length - 1);
+    const lit = `${whole}.${frac}`;
+    packSource("frac400", `${lit}-${whole}`);
+    expect.set("frac400", { re: `0.${frac}`, im: "0", unverifiedOk: true });
   }
   const ks = [40, 41, 99, 120, 121, 308, 309, 310, 464, 465, 480, 481, 1000, 3999];
   for (const k of ks) {
@@ -3415,11 +3428,11 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL exp of a 310-digit literal", formatExact(expChecked.value), expChecked.unverified, expFloat.value, expFloat.singular);
   }
-  for (const n of [100, 200, 464, 470, 1000]) {
+  for (const n of [100, 200, 329, 400, 464, 470, 1000]) {
     const text = `0.${"3".repeat(n)}`;
     const oracle = new wide(text).times(3).minus(1).toFixed();
     packSource(`threes${n}`, `${text}*3-1`);
-    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n + 120 + 32 > 480 });
+    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n > 464 });
   }
   const leaf = (id: string, re: number, im: number, label: string, want: { re: string; im: string }) => {
     const packed = packCircuit(input({ re, im }, label));

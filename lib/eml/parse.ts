@@ -547,8 +547,8 @@ export function referenceExpression(source: string, variables: Record<string, C>
 
 /**
  * How the screen compares a result with an ordinary calculator.
- * A reference that collapsed to 0 while the printed value did not is float underflow,
- * including ln(1+10^(−130)), whose addend never reaches the float sum.
+ * A reference that collapsed to 0 while the printed value did not is either float
+ * underflow, as in ln(1+10^(−130)), or a digit lost to rounding, as in (10^40+1)−10^40.
  */
 export function agreementNote(
   caption: string,
@@ -567,7 +567,12 @@ export function agreementNote(
   if (textZero && lost) return null;
   const matches = isUsable(value) && formatC(value) === formatC(ref);
   if (textZero && matches && (flags.cancelledZero || flags.notCertified)) return null;
-  if (refZero && !textZero) return "float underflows";
+  if (refZero && !textZero) {
+    const mag = Math.hypot(value.re, value.im);
+    // A unit lost beside 10^40 still prints 1. That 1 was rounded away.
+    if (Number.isFinite(mag) && mag >= 1e-6) return "lost to rounding";
+    return "float underflows";
+  }
   if (isUsable(value) && formatC(value) === formatC(ref)) return "matches the usual value";
   if (/tan\s*\(\s*pi\s*\/\s*2\s*\)/i.test(caption)) {
     return "near a pole: this π/2 is not the mathematical pole, and the digits depend on the engine";
