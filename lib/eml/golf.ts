@@ -19,8 +19,10 @@ import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflow
  * Any program that overflowed is rejected, even when a later step looks finite.
  * An exponential of a finite nonzero input that underflows to 0 or a
  * subnormal is rejected the same way. exp(−∞) from ln 0 is not that case.
- * Dedup keys are 10 significant digits, stored in an open-addressed table
- * because a JS Set cannot hold the K=35 pool.
+ * Keys are 10 significant digits in an open-addressed table, because a JS Set
+ * cannot hold the K=35 pool. Slot 3 and any mantissa >= 2^31 are negative as
+ * signed int32s, so they always admit. Clean dedup is effectively off, and the
+ * pool is not a set of 10-digit value classes.
  */
 
 export type GolfHit = {
@@ -117,6 +119,16 @@ class KeySet {
   size = 0;
 
   add(a: number, b: number, c: number, d: number): boolean {
+    // A salted word is a signed int32 and the slot array is unsigned. A negative
+    // word never compared equal, so each repeat walked every earlier copy.
+    // Remember the unsigned bits once. This call still returns true, so the
+    // circuit is still admitted. Slot 3 (0xa5a5a5a5) is negative as an int32,
+    // and a mantissa >= 2^31 makes slot 0 negative too: those keys always
+    // admit, and clean 10-digit dedup is effectively off.
+    if (a < 0 || b < 0 || c < 0 || d < 0) {
+      this.add(a >>> 0, b >>> 0, c >>> 0, d >>> 0);
+      return true;
+    }
     if (this.size * 10 >= this.cap * 7) this.grow();
     let i = (Math.imul(a ^ Math.imul(b, 0x9e3779b1), 0x85ebca6b) ^ Math.imul(c ^ d, 0xc2b2ae35)) & this.mask;
     for (;;) {
@@ -294,12 +306,11 @@ export function searchConstants(
         : [];
     if (watch.length === 0) {
       const key = keyOf(value.re, value.im);
-      // One float key can hide several circuits. 10 digits do not separate a
-      // residue near 10^(−114), which is the difference between exact +iπ and
-      // a near miss. Keep a few of them. Overflowed words never take these keys.
-      // Four slots, not one. A single 10-digit key hid a residue near
-      // 10^(−114). The extra slots multiply the pool, and the K=35 search
-      // with them is much slower than the one-slot search. K=23 stays short.
+      // Overflowed words never take these keys. The four salts are not a
+      // partition into 10-digit value classes: slot 3 is a negative int32, and
+      // a mantissa >= 2^31 makes slot 0 negative, so those keys always admit.
+      // Clean dedup is effectively off. The signed insert still counts as new,
+      // which is the same pool as before the probe walk was removed.
       const slots = [0, 0x51ed51ed, 0x7f4a7c15, 0xa5a5a5a5];
       let admitted = false;
       for (const salt of slots) {
