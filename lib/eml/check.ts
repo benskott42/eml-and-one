@@ -3939,8 +3939,14 @@ failed += runPropertyChecks();
 {
   // A repeat evaluation in one process (the exact worker is reused across jobs) must
   // match an evaluation with the pure cache off: same text, same note, same verdict.
-  const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)"];
-  const warmRows = ["1e100", "1e22", "1e7", "sqrt(1/10^130)", "6*i", "pi/2"];
+  // Large trig arguments: each certified a wrong value on a repeat before (cos(1e119) → −0.98499,
+  // true −0.37226; cos(1e125/1e130/1e200) → 1; sin(1e150/1e300) → −0; tan(1e140) → −2.306, true −3.307).
+  const bigTrig = [
+    "cos(1e119)", "cos(1e125)", "cos(1e130)", "cos(1e200)", "sin(1e150)", "sin(1e300)", "tan(1e140)",
+    "sin(1e23)", "cos(1e23)", "tan(1e23)", "sin(1e60)", "cos(1e60)", "tan(1e60)", "sin(1e250)", "cos(1e250)", "tan(1e300)",
+  ];
+  const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)", ...bigTrig];
+  const warmRows = ["1e100", "1e22", "1e7", "1e119", "1e300", "sqrt(1/10^130)", "6*i", "pi/2"];
   const verdict = (report: ReturnType<typeof exactReport>) =>
     `${report.unverified ? "unverified" : formatExact(report.value)} [${report.singular ?? ""}]`;
   const saved = process.env.EML_NOCACHE;
@@ -3948,6 +3954,13 @@ failed += runPropertyChecks();
   const cold = repeatRows.map((source) => verdict(exactReport(compileExpression(source, {}))));
   if (saved === undefined) delete process.env.EML_NOCACHE;
   else process.env.EML_NOCACHE = saved;
+  bigTrig.forEach((source) => {
+    const want = cold[repeatRows.indexOf(source)];
+    if (!want?.includes("argument too large to reduce")) {
+      failed += 1;
+      console.log("FAIL large trig argument not flagged", source, want);
+    }
+  });
   for (const source of warmRows) exactReport(compileExpression(source, {}));
   repeatRows.forEach((source, index) => {
     const node = compileExpression(source, {});
