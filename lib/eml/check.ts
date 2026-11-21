@@ -3,6 +3,7 @@ import DecimalValue from "decimal.js";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
+import { runReviewChecks } from "./check-review";
 import { runExprChecks } from "./check-expr";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
@@ -4123,6 +4124,9 @@ if (inShard("core")) {
 }
 
 if (inShard("core")) failed += runExprChecks();
+
+// The outside review of 2026-11-21: series marking, tanh/sigmoid tails, exact integer powers.
+if (inShard("props")) failed += runReviewChecks();
 
 if (failed) {
   console.log(`\n${failed} failed`);
