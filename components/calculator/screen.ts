@@ -163,6 +163,10 @@ export function shownSingular(item: Entry): string | null {
 
 export function noteFor(item: Entry): string | null {
   const number = programNumberText(item.node);
+  const agreement = agreementNote(item.caption, item.value, item.bound ?? {}, item.text, {
+    cancelledZero: item.cancelledZero,
+    notCertified: item.notCertified,
+  });
   const bits = [
     programText(item.node),
     number,
@@ -170,15 +174,14 @@ export function noteFor(item: Entry): string | null {
     item.pendingExact ? item.progress ?? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
     // v1.1 (C2): the flag lines own the float-differs and singular strings, so the note skips them.
+    // Under the float-differs flag only "matches the usual value" contradicts it; other caveats stay.
     item.notice,
     item.overflowed ? "overflow" : null,
     underflowDisclosure(item.value, item.underflowed === true),
     item.nearCut ? "on or very near the branch cut" : null,
     seriesShortcutNote(item.node),
     isPure(item.node) ? "pure" : null,
-    item.floatDiffers
-      ? null
-      : agreementNote(item.caption, item.value, item.bound ?? {}, item.text, { cancelledZero: item.cancelledZero, notCertified: item.notCertified }),
+    item.floatDiffers && agreement === "matches the usual value" ? null : agreement,
   ].filter(Boolean);
   return bits.length ? bits.join(" · ") : null;
 }
