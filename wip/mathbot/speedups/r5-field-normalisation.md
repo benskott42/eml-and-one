@@ -6,9 +6,12 @@ after 23:52 on Nov 20; the cause is unknown (the whole `eml-hub` tree carries 23
 present). This version is rebuilt from my task-1 report and from the scripts and logs in `speedups/checks/` and
 `speedups/checks/recip/`. §1–§3 summarise the task-1 findings; §4 onward is the final rule set. Local only, **not reviewed**.
 
-> **The a(11)/a(12) bounds in this file are upper bounds, not for publication.**
+> **Bounds (n = leaves, K = 2n−1), upper bounds only, both cuts, cleared by reviewbot as upper bounds (not exact values):** a(10) = K19 = 5059, a(11) = K21 ≤ 16847, a(12) = K23 ≤ 56909, a(13) = K25 ≤ 194605 (194602 plus 3 unresolved).
 >
-> Agreed status wording (Jimmy1; to be used only after reviewbot signs off): 'Sound normalisation; no lost emlcore merges and order-independent through K25; termination open; known to lose 2 merges at K27.'
+> *2026-11-21: bound labels corrected; earlier text shifted the index by one.*
+>
+> Status wording (Jimmy1 via mathbot, after reviewbot's review, 2026-11-21): 'Sound normalisation; no lost emlcore merges and order-independent through K25; not terminating in general (runaway (★)/R4 recursion found at K33), none through K27.' This describes the **v1** rule set of §4. (Separately, v1 is known to lose 2 emlcore merges at K27, §7.)
+> Never describe any version of this rule set as confluent.
 
 Naming: "emlcore R3–R5" means emlcore's internal rules: `_rule_R3` (emlcore:566-609), R4 inside `exp_f`
 (emlcore:262-289, exp(rest + Log w) = w·exp(rest)) and `_rule_R5` (emlcore:531-564). These are **not** compscibot's R1–R5
@@ -16,8 +19,12 @@ Naming: "emlcore R3–R5" means emlcore's internal rules: `_rule_R3` (emlcore:56
 
 ## 0. Summary
 - **Final rule set** (§4): emlcore, plus the reciprocal rule (★) with a canonical coset representative, plus R6
-  ("factor the certified dominant term"), which replaces R5 and, on all-exp forms, R3. Every id-dependent choice
-  emlcore makes is replaced by a structural one.
+  ("factor the certified dominant term"), which replaces R5 and, on all-exp forms, R3. emlcore's R5 and R3 id-order
+  choices are replaced by structural ones. **Exception (reviewbot):** in v1, emlcore's R4 atom choice (`_r4_atom`,
+  emlcore.py:283-289, first eligible L atom in atom-id order) is still id-dependent. It is live (≥ 2 eligible atoms
+  2,574× in C0 and 288× in C1 at K25) but harmless there: first/last/akey choices give identical partitions (reviewbot
+  `rv/recip/mine/r4_alt.py`). Ball sums (emlcore.py:136-137) and v1's R3 tie-break (`float(li[2].upper())`, radius
+  dependent) are also id/precision dependent. v2 (§11) fixes R4's choice.
 - **Results** (§5, both cuts, identical; **upper bounds**): K19 **5059**, K21 **16847**, K23 **56909**,
   K25 **194602** (+3 unresolved raw pairs, so ≤ 194605).
 - **Criteria** (§7): (1) pass, word by word over all 290,512 words through K25 on both cuts. Beyond the brief, it
@@ -112,7 +119,7 @@ alone is not a refinement there (§7, criterion 1). The independent word-by-word
 All are upper bounds on the true counts: every merge is a proven identity, and unseen identities only overcount.
 The canonical layer alone is not a refinement of emlcore (at K23 and K25 it splits 1 and 7 emlcore classes and makes
 other merges instead). The final key repairs every split (§7, criterion 1).
-**a(11) = K23 and a(12) = K25 bounds: upper bound, not for publication.**
+**Bounds (n = leaves, K = 2n−1): a(11) = K21 ≤ 16847, a(12) = K23 ≤ 56909, a(13) = K25 ≤ 194605; upper bounds only.** (2026-11-21: bound labels corrected; earlier text shifted the index by one.)
 
 Timing (measured, 8 jobs on 8 cores): unmodified emlcore DP at K25 takes 3.7–4.4 s; the final variant (layer-0 DP plus
 key) takes 17–20 s per order.
@@ -124,9 +131,11 @@ every call terminates:
 1. **Hash-consing.** Within a context, a form's id corresponds one-to-one to its structure, because atoms are interned
    by (kind, argument id). So the structural keys `skey`/`akey` are id-independent invariants.
 2. **Every decision is structural or value-determined.** Each branch in `exp_f`/`log_f`/`sign`/the rules depends only on
-   the structural form, on certified predicates of its value, and on candidate order. emlcore's id-order choices (R5
-   first success, R3 ties) are gone: R6 has no choice, R3 ties use `akey`, and (★) uses `akey` and the absolute coset
-   minimiser.
+   the structural form, on certified predicates of its value, and on candidate order. emlcore's R5 (first success)
+   and R3-tie id-order choices are gone: R6 has no choice, R3 ties use `akey`, and (★) uses `akey` and the absolute
+   coset minimiser. **Not gone in v1:** emlcore's R4 atom choice (first eligible atom in id order, emlcore.py:283-289),
+   Arb ball-sum order, and R3's primary comparison `float(li[2].upper())`, which depends on ball radius. All three were
+   harmless through K25 (identical partitions in 5 orders; reviewbot's R4 first/last/akey test).
 3. **Memo tables** cache function values, so they do not change results.
 
 Rewriting-system view: the strategy is deterministic, so no joinability claim is made or needed. Rule overlaps matter only for
@@ -136,19 +145,26 @@ completeness (whether two representations of one value meet). Overlaps:
 |---|---|
 | (★) vs R4 | Disjoint on an atom (R4 needs a +1 Log coefficient, (★) needs −1). When both occur, R4 fires first and (★) acts in the recursive exp(rest). |
 | (★) vs (★) | Two qualifying L atoms: `akey` order. The other order is not proven to give the same form; it never arises, because the choice is fixed. |
-| (★) vs itself | Cannot re-fire on the same atom in its own output, because the coset minimiser is a coset invariant (it is its own representative). This was the bug fixed today: the old tie-break "smaller \|m\|" was relative, so −e − Lw and −1 − Lw were both "minimal" (lost merge at K25). |
+| (★) vs itself | **(★) alone** (no other rule in between): cannot re-fire on the same atom in its own output, because the coset minimiser is a coset invariant. This does **not** cover R4 re-entering: R4 can return a coset member with an extra Log term, and (★) then fires again (§6.2, K33/K45 counterexample). (it is its own representative). This was the bug fixed today: the old tie-break "smaller \|m\|" was relative, so −e − Lw and −1 − Lw were both "minimal" (lost merge at K25). |
 | R6 vs R3 | Disjoint by construction (R3 is off on all-exp forms). |
 | R6 vs R5 | R5 is replaced. When emlcore's R5 picks the dominant atom, it computes the same identity and the same D as R6. |
 | R6 vs Log(±e^g) strip | Disjoint (the strip rule needs a single term and no constant). |
 | (★) vs R6 | (★) acts in exp_f, R6 in log_f. N normalises w by (★) before R6 sees Log w; the order is fixed by structural recursion. |
 
-### 6.2 Termination: **not proven**
+### 6.2 Termination (v1): **fails in general** (counterexample below)
 - A structural size measure on R3/R5's recursive Log arguments (task-2 first variant, `size_block=True`) is provably
   well-founded. It **loses emlcore merges** (layer-0 K21 16879 vs 16871, plus unresolved pairs), so it fails criterion 1.
 - The final set has no measure. What is known: (★) does not re-fire on its own atom (§6.1). R6's output u has the
   constant ±1 as its dominant top term whenever the shifted exponentials stay single atoms, so R6 does not re-fire on u
   itself. The concrete emlcore loop (R5 factoring a non-dominant atom, R3 factoring it back) is impossible under R6.
-- Observed: no `RecursionError` and no loop anywhere: 5 orders × K19–K25 × 2 cuts, plus all 290,512 words per cut.
+- Observed: no `RecursionError` and no loop anywhere: 5 orders × K19–K25 × 2 cuts, plus all 290,512 words per cut,
+  and (reviewbot) all 725,867 K27 derivations.
+- **Counterexample (reviewbot, fuzzing): v1 does not terminate in general.** The key computation runs away on
+  `11E111EE111E11E11E1EEEE1E11EEEE1E` (17 leaves, K33) and `11E1111E1E11E1EEEE111EE11EE11EEEE11E1E1E11EEE` (23 leaves,
+  K45), both cuts. Mechanism (K45): g = 1 − e + e^e − L17, L17 = Log(1 + e^f), f = 1 − e − L8 + L15, L8 a two-E-term
+  Log. (★) sees an L1 tie between R and R − f and skey picks m = 1, giving e^e + L8 − L15 − L17; R4 expands +L8, giving
+  1 − e + e^e − L15 − L17; (★) fires again on another L1 tie; the coefficient of L15 goes −1, −2, −3, … without bound
+  (not an exact cycle). (★)'s coset invariance does not survive R4 in between. v2 (§11) removes this mechanism.
 
 ### 6.3 Counterexample: unmodified emlcore is order-dependent
 In the `random1` order (`raw_dp(13, conv, 'random', 1)`), unmodified emlcore recurses forever (R3↔R5, a 4-step log_f
@@ -178,7 +194,7 @@ unresolved lists are identical across orders. Fix for production: sum in structu
    emlcore's, and the key cannot repair it, because W has **two** E terms and (★) handles one. This is the same gap as
    compscibot's R3.2 pair 0 (§7.2). So criterion 1 holds through K25 but **fails at K27** for the final set as it
    stands. The fix is a multi-term-w reciprocal rule (§9 item 8).
-2. **Order-independent canonical forms: PASS (empirical) + argument §6.1; termination open (§6.2).** Forward, reverse
+2. **Order-independent canonical forms: PASS (empirical) + argument §6.1; v1 does not terminate in general (§6.2).** Forward, reverse
    and random seeds 1, 2, 3, at K19/21/23/25 on both cuts. Layer-0 partitions, key partitions, cumulative counts and
    unresolved lists are identical in every case.
 3. **Every new merge is a true identity: PASS.** By rule: §4.1. Spot-checks (`check_merges.py`, `check_fail.py`) on all
@@ -231,7 +247,7 @@ inside a complex outer Log.
   and sympy spot-checks (§7.1).
 - **Not proven:** termination of the final log_f/exp_f recursion. Without it, §6.1 is a normal-form definition only
   for inputs on which it terminates. Ball-sum order (§6.4).
-- **Conjectured:** that the final set stays loop-free and order-independent beyond K25.
+- **Refuted** (reviewbot): "loop-free beyond K25". v1 runs away at K33 and K45 (§6.2). None through K27.
 
 ## 9. For reviewbot
 1. R6's dominance certification via `sign()` on towers (`_pos`), and the constant comparison f_D > ln|c|
@@ -255,3 +271,107 @@ inside a complex outer Log.
 `superseded/`: the quotient-over-raw-emlcore runs (`run_orders.py`, `orders_*.log`: these exposed §6.3), and
 variants A (akey R5, loses 25+ merges at K25), B (dominant-only R5, loses 1) and C. These were run before the (★)
 tie-break fix.
+
+## 11. Status at wrap-up (2026-11-21, ~10:35 AM ET; work stopped on Ben's request, **not reviewed**)
+Code: `checks/recip/emlcore_recip.py`, now with a `version` switch. `version='v1'` is the §4 rule set (the copy is in
+`checks/recip/superseded/emlcore_recip_v1.py`), and `version='v2'` is the class default. Logs are in `checks/recip/logs_v2/`.
+
+### 11.1 v2 rule set (C1 = key layer; C0 = canonical emlcore unless stated)
+- **Measure** μ(g) = (ordw(g), skey(g)). ordw = Σ_h ω^h·n_h, where n_h = Σ|coef| of the atoms of height h, and
+  n_0 = |cre| + |cim|. It is compared as a tuple in decreasing h.
+- **(★) v2**: jumps in closed form straight to the coset representative that minimises μ of the **full** exponent.
+  The window check now also requires ordw to be strictly worse at every non-boundary window end, which catches a plateau.
+- **(★m)**, the new multi-term reciprocal rule: for w = c + Σ k_i e^{f_i} with ≥ 2 E terms and integer c,
+  c·X(T) + Σ k_i X(T+f_i) = e^T, where X(T) = exp(T − Log w). It rewrites X(R) through a pivot p with |k_p| = 1, and only
+  if every output exponent has strictly smaller μ. This is a greedy, deterministic strategy, not a claimed normal form.
+  It is sound because exp(Log w) = w and w ≠ 0.
+- **R4**: the atom choice is the smallest akey, not atom id. In C1, R4 is unlimited (`r4_max=None`); C0 keeps emlcore's
+  limit of 3.
+- **Loud guards** (an `Unverified` exception; the word is counted separately and never silently keyed):
+  - nesting depth of exp_f/log_f (limit 1500);
+  - an exact-cycle (re-entry) check in log_f;
+  - XC/XA re-entry, replacing emlcore's silent memo-None guards at emlcore.py:783/856;
+  - N re-entry;
+  - a μ-decrease check on every recursive exp_f call made by R4, (★) or (★m);
+  - emlcore's sign depth-40 cap, now loud instead of a silent "rule does not fire".
+- **Key changes for the guards**: `Ext.key` returns `('UNVERIFIED', v)` and counts and lists such words, and raw-form
+  fallbacks are counted (`n_fallback`). `allwords.py` counts UNVERIFIED words separately, never as a key class.
+- **Should-fixes done in v2**: ball sums run in akey order; R3's choice is certified (highest LI level, then a ball
+  certified above all others, else smallest akey); R6's `lc` is computed at precision p; `log_f(u)` is wrapped.
+- **R6a/R3a** (`log_atoms`; on in C1, off in C0): R6/R3 fire only if every shifted exponential they build is a single
+  ±atom, and for R6, c = 0 or |c| ≥ 1.
+
+### 11.2 Results (partial)
+**v2u**: v2 with R6a/R3a off in C1. The `logs_v2/*v2u*` logs predate the `log_atoms` switch.
+
+| | K19 | K21 | K23 | K25 |
+|---|---|---|---|---|
+| v2u, both cuts (`allwords_v2u_13_*`, `o2_v2u_13_*`) | 5059 | 16847 | **56907** | **194577** (+3 unresolved → ≤ 194580) |
+| v2 (R6a/R3a in C1), lower, K ≤ 23 only (run interactively; not logged) | 5059 | 16847 | 56908 | – |
+| R6a/R3a in C0 as well (rejected) | 5060 | 16854 | 56945 | – |
+
+- **v2u**:
+  - 0 emlcore merges lost, word by word, over all 290,512 words through K25 on both cuts.
+  - 0 UNVERIFIED words and 0 guard firings.
+  - In 5 orders on both cuts, the canon and key partitions, counts and unresolved lists are identical
+    (partition-level only; see 11.4).
+  - 362 merge groups (372 merges) against emlcore at K25, compared with 347 for v1.
+- **v2 with R6a/R3a in C1**: 0 merges lost through K23 (lower). R6a/R3a in **C0** loses emlcore merges (43 at K23), so
+  it is rejected there.
+- **K23 two-term pairs** (`test_v2.py`): compscibot's R3.2 pair 0 and `1111EEE11E11EEE` = `111111EEE11E11EEEE1EE1E` are
+  now merged. They need R4 on a Log argument with **4** E terms followed by (★); they did not need (★m).
+  `111E11EEE111EEE` = `11111E11EEE111EEEE1EE1E` is still unmerged. That identity needs division by w where the Log
+  argument V has a non-E term: V = −λw + e^{−e}, with λ = Log(1−e^{−1}) and w = 1 − e^{−e}. No linear rule here can
+  express that.
+- **reviewbot's runaway words** (K33, K45): both terminate under v2, at depth ≤ 3, with 0 guard firings, on lower.
+  Principal was not run.
+- **K27 lost pair**: worked by hand, (★m) maps both forms to e + X(0) − X(1), with W = 1 + e^{−e} − e^{1−e}. The K27
+  run (`allwords.py 14`) under v2 was **not run** because of the wrap-up.
+- **Soundness**: the new rules have derivations (§11.1) only. **The 25 extra K25 merges of v2u have not been
+  numerically spot-checked.** Next step: `check_merges.py logs_v2/merges2_v2u_<cut>_13.json`.
+
+### 11.3 Termination (goal B)
+**Theorem 1 (exp side; proof sketch).** In v2, the exp_f recursion through R4, (★) and (★m) terminates in both
+layers.
+1. Every recursive exp_f call strictly decreases μ:
+   - R4 and the e^U/e^T outputs drop one unit at the height H of a Log atom and change only lower heights.
+   - (★) moves to the μ-minimiser with m ≠ 0, and skey is injective.
+   - (★m) fires only on a strict decrease.
+2. Along any call path, ordw is non-increasing and well-ordered (< ω^ω), so it is eventually constant.
+3. From then on, only X-moves occur. They stay in g_N + span_Z(F), where F is the finite set of exponents inside the
+   Log atoms that are subterms of g_N.
+4. Inside that coset, ordw bounds every coefficient, so only finitely many forms are reachable. A strictly decreasing
+   μ-chain on them is finite.
+5. The call tree is finitely branching, so by Kőnig's lemma it is finite.
+
+This excludes reviewbot's runaway mechanism, because an L1 tie that increases a lower Log coefficient now increases
+ordw. exp_f never calls log_f.
+
+**Theorem 2 (log side, C1 with R6a/R3a; proof sketch).**
+- **R6.** Write v = c + Σ k_j e^{f_j}, with dominant term e^{f_D}. After an R6a step, u = k_D + Σ (±atoms whose
+  exponents are truly negative). That follows from certified dominance, since f_D > ln|c| ≥ 0 when c ≠ 0. So R6 cannot
+  fire on u, R3 is off because u is all-exp, and u > 0. So log_f(u) is a leaf.
+- **R3.** R3a recurses on |R|, which has one fewer top-level term, and on 1 ± E(h). There, R6 fires at most once, and
+  then the u case above applies.
+- **The Log(−x) branch** (emlcore:428) is entered once.
+- **Measure.** By induction on the number of top-level terms, log_f depth is ≤ 2·#terms + 3, given that sign, LI and
+  XC terminate. sign is capped at depth 40, now loudly; LI and XC recurse structurally, with loud re-entry guards.
+
+**Exact remaining obstruction.** C0 (canonical emlcore: unrestricted R6/R3) has no proof. In C0, exp_f(f_j − f_D)
+can expand through R4 when f_D carries −Log(w) with w ≤ 3 E terms. Then u has arbitrary terms whose sum is < 1 while
+individual terms are large, so R6 can fire again on u, and no structural measure is known to decrease. Restricting C0
+(R6a/R3a) gives termination but loses emlcore merges (43 at K23), so termination of the **whole** pipeline (C0 then
+N) is still open. It is guarded loudly: an exact cycle hits log_f re-entry, and unbounded descent hits the depth guard.
+Candidate pattern to search for: a log_f chain v → u → u′ where each R6 step's shifted exponential R4-expands.
+
+### 11.4 Left open
+- (A):
+  - the v2 K27 run (`allwords.py 14`, both cuts: does it recover the 2 lost merges, and are 0 merges lost?);
+  - the v2 run with R6a/R3a at K25 on both cuts, and `run_orders2.py 13` for v2;
+  - numeric checks of the new merges;
+  - the third K23 pair.
+- Word-by-word order independence: `orders_words.py` (structural hashes per word, 5 orders) is written but **never
+  run**. The order claims for v2/v2u are partition-level only.
+- (B): the C0 log side (above).
+- Status wording: still the v1 wording at the top of this file. v2 has no reviewed claims, and nothing here may be
+  described as confluent.

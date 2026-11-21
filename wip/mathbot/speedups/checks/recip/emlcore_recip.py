@@ -21,9 +21,21 @@ Final design (2026-11-21); see speedups/r5-field-normalisation.md section 9.
 import sys, math
 sys.path.insert(0, '/workspace/eml-proofs'); sys.setrecursionlimit(20000)
 import emlcore as EC
-from flint import arb
+from flint import arb, acb, ctx as _fctx
+from fractions import Fraction
+
+class Unverified(Exception):
+    """Loud guard (breakerbot): a depth, loop, re-entry or measure guard fired.  Never caught inside the rules; the
+    caller flags the word UNVERIFIED and counts it separately.  Never a silent fallback to the current form."""
 
 class RecipCtx(EC.Ctx):
+    version = 'v2'        # 'v1' = the rule set of doc section 4 (reviewed 2026-11-21); 'v2' = section 11
+    multi = True          # v2: multi-term reciprocal rule (*m) for a Log argument with >= 2 E terms
+    r4_max = None         # v2: R4 term limit in C1 (emlcore: 3); None = unlimited (decreases ordw, section 11)
+    depth_limit = 1500    # v2: nested exp_f/log_f calls; exceeding it raises Unverified
+    strict = True         # v2: every rule's recursive exp_f call must strictly decrease mu = (ordw, skey)
+    log_atoms = True      # v2: R6a/R3a -- R6 and R3 fire only if every shifted exponential they build is a single
+                          # +-atom (and, for R6, c = 0 or |c| >= 1); this is what the log-side termination proof needs
     recip = True          # CanonCtx below = same class with the reciprocal rule switched off
     size_block = False    # (True = structural size measure, superseded variant) on R3/R5 recursive Log arguments
     r5_mode = 'R6'        # final. Others: 'akey': first success in structural-key order; 'dominant': only the certified dominant atom
@@ -57,8 +69,245 @@ class RecipCtx(EC.Ctx):
     def _norm(self, key):
         return abs(key[0]) + abs(key[1]) + sum(abs(k) for _, k in key[2])
 
-    # ---- exp with the reciprocal rule ----
+    # ================= v2 =================
+    # ---- loud depth guard on exp_f / log_f ----
+    def _enter(self):
+        d = self.__dict__.get('_depth', 0) + 1
+        self._depth = d
+        if d > self.__dict__.get('_maxdepth', 0):
+            self._maxdepth = d
+        if d > self.depth_limit:
+            self.stats['guard_depth'] = self.stats.get('guard_depth', 0) + 1
+            raise Unverified(f'depth guard: {d} nested exp_f/log_f calls')
     def exp_f(self, fid):
+        r = self.exp_memo.get(fid)
+        if r is not None:
+            return r
+        if self.version == 'v1':
+            return self._exp_f1(fid)
+        try:
+            self._enter()
+            r = self._exp_f2(fid)
+        finally:
+            self._depth -= 1
+        self.exp_memo[fid] = r
+        return r
+    def log_f(self, fid):
+        r = self.log_memo.get(fid)
+        if r is not None or self.version == 'v1':
+            return r if r is not None else EC.Ctx.log_f(self, fid)
+        ip = self.__dict__.setdefault('_log_ip', set())
+        if fid in ip:
+            self.stats['guard_log_reentry'] = self.stats.get('guard_log_reentry', 0) + 1
+            raise Unverified(f'log_f re-entry on fid {fid} (exact cycle)')
+        ip.add(fid)
+        try:
+            self._enter()
+            return EC.Ctx.log_f(self, fid)
+        finally:
+            self._depth -= 1; ip.discard(fid)
+    def sign(self, fid, depth=0):
+        if self.version == 'v1':
+            return EC.Ctx.sign(self, fid, depth)
+        try:
+            return EC.Ctx.sign(self, fid, depth)
+        except EC.Unresolved as e:
+            if str(e).startswith('sign recursion depth'):     # emlcore's depth-40 cap: loud in v2
+                self.stats['guard_sign_depth'] = self.stats.get('guard_sign_depth', 0) + 1
+                raise Unverified('sign recursion depth > 40')
+            raise
+    # ---- re-entry guards replacing emlcore's silent memo-None guards (emlcore.py:783, 856) ----
+    def XC(self, fid):
+        if self.version == 'v1':
+            return EC.Ctx.XC(self, fid)
+        ip = self.__dict__.setdefault('_xc_ip', set())
+        if fid in ip:
+            self.stats['guard_XC_reentry'] = self.stats.get('guard_XC_reentry', 0) + 1
+            raise Unverified(f'XC re-entry on fid {fid}')
+        ip.add(fid)
+        try:
+            return EC.Ctx.XC(self, fid)
+        except BaseException:
+            self.__dict__.get('xc_memo', {}).pop(fid, None); raise
+        finally:
+            ip.discard(fid)
+    def XA(self, a):
+        if self.version == 'v1':
+            return EC.Ctx.XA(self, a)
+        ip = self.__dict__.setdefault('_xa_ip', set())
+        if a in ip:
+            self.stats['guard_XA_reentry'] = self.stats.get('guard_XA_reentry', 0) + 1
+            raise Unverified(f'XA re-entry on atom {a}')
+        ip.add(a)
+        try:
+            return EC.Ctx.XA(self, a)
+        except BaseException:
+            self.__dict__.get('xa_memo', {}).pop(a, None); raise
+        finally:
+            ip.discard(a)
+    # ---- ball sums in structural (akey) order, not atom-id order (reviewbot should-fix) ----
+    def _ball_from_key(self, key, prec):
+        if self.version == 'v1':
+            return EC.Ctx._ball_from_key(self, key, prec)
+        cre, cim, terms = key
+        if len(terms) <= 1:
+            return EC.Ctx._ball_from_key(self, key, prec)
+        return EC.Ctx._ball_from_key(self, (cre, cim, tuple(sorted(terms, key=lambda t: self.akey(t[0])))), prec)
+    # ---- heights and the measure mu = (ordw, skey) ----
+    def hgt(self, fid):
+        m = self.__dict__.setdefault('_hgt', {})
+        r = m.get(fid)
+        if r is None:
+            r = max((1 + self.hgt(self.aarg[a]) for a, _ in self.fkey[fid][2]), default=0)
+            m[fid] = r
+        return r
+    def ordw(self, key):
+        """ordinal weight  sum_h omega^h * n_h  (n_h = sum |coef| of atoms of height h; n_0 = |cre| + |cim|),
+        as a tuple of (h, n_h) in decreasing h: Python tuple order = ordinal order."""
+        cre, cim, terms = key
+        lev = {}
+        for a, k in terms:
+            h = 1 + self.hgt(self.aarg[a]); lev[h] = lev.get(h, 0) + abs(k)
+        n0 = abs(cre) + abs(cim)
+        if n0:
+            lev[0] = n0
+        return tuple(sorted(lev.items(), reverse=True))
+    def mu(self, key):
+        return (self.ordw(key), self.skey_of(key))
+    def _chk(self, parent, child):
+        """strict decrease of mu for every recursive exp_f call made by R4, (*) and (*m); loud otherwise."""
+        if not self.strict:
+            return
+        if not (self.mu(child) < self.mu(parent)):
+            self.stats['guard_measure'] = self.stats.get('guard_measure', 0) + 1
+            raise Unverified('measure did not decrease')
+    def _xexp(self, parent, key):
+        self._chk(parent, key)
+        return self.fkey[self.exp_f(self.intern(key))]
+    # ---- R4 with a structural atom choice ----
+    def _r4_atom(self, terms):
+        if self.version == 'v1':
+            return EC.Ctx._r4_atom(self, terms)
+        best = None
+        for a, k in terms:
+            if k == 1 and self.akind[a] == 'L':
+                w = self.fkey[self.aarg[a]]
+                if w[1] == 0 and (self.r4_max is None or len(w[2]) <= self.r4_max) and all(self.akind[aj] == 'E' for aj, _ in w[2]):
+                    if best is None or self.akey(a) < self.akey(best):
+                        best = a
+        return best
+    def _intc(self, c):
+        return Fraction(c).denominator == 1
+    def _exp_f2(self, fid):
+        g = self.fkey[fid]
+        cre, cim, terms = g
+        if (cre == 0 and not terms) or (cre == 0 and len(terms) == 1 and terms[0][1] == 1 and self.akind[terms[0][0]] == 'L'):
+            return EC.Ctx.exp_f(self, fid)
+        a4 = self._r4_atom(terms)
+        if a4 is not None:        # R4: exp(rest + Log w) = c_w exp(rest) + sum k_j exp(rest + f_j)
+            w = self.fkey[self.aarg[a4]]
+            rest = (cre, cim, tuple(t for t in terms if t[0] != a4))
+            acc = (0, 0, ())
+            if w[0]:
+                acc = self.add(acc, 1, self._xexp(g, rest), w[0])
+            for aj, kj in w[2]:
+                acc = self.add(acc, 1, self._xexp(g, self.add(rest, 1, self.fkey[self.aarg[aj]], 1)), kj)
+            self.stats['rule_R4'] = self.stats.get('rule_R4', 0) + 1
+            return self.intern(acc)
+        if self.recip:
+            r = self._recip1(g)
+            if r is None and self.multi:
+                r = self._recipm(g)
+            if r is not None:
+                return r
+        return EC.Ctx.exp_f(self, fid)     # plain atom (emlcore's R4 branch cannot fire: _r4_atom is None)
+    def _recip_atoms(self, terms):
+        for aL, kL in terms:
+            if kL != -1 or self.akind[aL] != 'L' or aL in self.__dict__.get('aopaque', ()):
+                continue
+            w = self.fkey[self.aarg[aL]]
+            if w[1] != 0 or not w[2] or not all(self.akind[aj] == 'E' for aj, _ in w[2]) or not self._intc(w[0]):
+                continue
+            yield aL, w
+    def _recip1(self, g):
+        """(*) v2: w = c + k e^f (k = +-1, c integer).  Jump straight to the coset representative minimising
+        (ordw, skey) of the FULL exponent; m < 0 (moving up, divides by c) only if |c| = 1."""
+        cre, cim, terms = g
+        cands = []
+        for aL, w in self._recip_atoms(terms):
+            if len(w[2]) != 1 or abs(w[2][0][1]) != 1:
+                continue
+            c, (aj, k) = int(w[0]), w[2][0]
+            f = self.fkey[self.aarg[aj]]
+            R = (cre, cim, tuple(t for t in terms if t[0] != aL))
+            Lw = (0, 0, ((aL, -1),))
+            WIN = 40
+            allowed = range(-WIN, WIN + 1) if abs(c) == 1 else range(0, WIN + 1)
+            sc = {}
+            for mm in allowed:
+                gm = self.add(self.add(R, 1, f, -mm), 1, Lw, 1)
+                sc[mm] = (self.ordw(gm), self.skey_of(gm))
+            best = min(allowed, key=lambda mm: (sc[mm], mm))
+            # window check (reviewbot should-fix): the ordinal weight must be strictly worse at every window end that is
+            # not a genuine boundary, so no plateau of minimisers can run past the window
+            ends = [allowed[-1]] + ([allowed[0]] if abs(c) == 1 else [])
+            if any(not (sc[e][0] > sc[best][0]) for e in ends):
+                self.stats['guard_window'] = self.stats.get('guard_window', 0) + 1
+                raise Unverified('(*) coset window: minimiser plateau reaches the window edge')
+            if best == 0:
+                continue
+            cands.append((self.akey(aL), aL, c, k, f, R, Lw, best))
+        if not cands:
+            return None
+        _, aL, c, k, f, R, Lw, m = min(cands, key=lambda t: t[0])
+        acc = (0, 0, ()); a = 1; U = R
+        if m > 0:      # X(U) = k e^{U-f} - k c X(U-f)
+            for _ in range(m):
+                U = self.add(U, 1, f, -1)
+                acc = self.add(acc, 1, self._xexp(g, U), a * k); a = a * (-k * c)
+        else:          # X(U) = c e^U - c k X(U+f),  |c| = 1
+            for _ in range(-m):
+                acc = self.add(acc, 1, self._xexp(g, U), a * c); a = a * (-c * k)
+                U = self.add(U, 1, f, 1)
+        acc = self.add(acc, 1, self._xexp(g, self.add(U, 1, Lw, 1)), a)
+        self.stats['rule_recip'] = self.stats.get('rule_recip', 0) + 1
+        return self.intern(acc)
+    def _recipm(self, g):
+        """(*m) v2: w = c + sum_i k_i e^{f_i}, >= 2 E terms, c integer.  With f_0 = 0, k_0 = c, X(T) = exp(T - Log w):
+             c X(T) + sum_i k_i X(T + f_i) = e^T                       (exp(Log w) = w, w != 0)
+        For a pivot p with |k_p| = 1 and T = R - f_p:   X(R) = k_p (e^T - sum_{i != p} k_i X(R - f_p + f_i)).
+        Fires only if every output exponent has strictly smaller mu than g (greedy descent; a deterministic strategy,
+        not a claimed normal form of the quotient module).  Choice: smallest akey of the L atom, then the pivot whose
+        outputs have the smallest sorted-descending mu list, then pivot skey."""
+        cre, cim, terms = g
+        mu0 = self.mu(g)
+        cands = []
+        for aL, w in self._recip_atoms(terms):
+            if len(w[2]) < 2:
+                continue
+            c = int(w[0])
+            T_terms = ([((0, 0, ()), c)] if c else []) + [(self.fkey[self.aarg[aj]], kj) for aj, kj in w[2]]
+            R = (cre, cim, tuple(t for t in terms if t[0] != aL))
+            Lw = (0, 0, ((aL, -1),))
+            for p, (fp, kp) in enumerate(T_terms):
+                if abs(kp) != 1:
+                    continue
+                T = self.add(R, 1, fp, -1)
+                outs = [(self.add(self.add(T, 1, fi, 1), 1, Lw, 1), ki) for i, (fi, ki) in enumerate(T_terms) if i != p]
+                mus = [self.mu(o) for o, _ in outs]
+                if all(x < mu0 for x in mus):
+                    cands.append(((self.akey(aL), sorted(mus, reverse=True), self.skey_of(fp)), kp, T, outs))
+        if not cands:
+            return None
+        _, kp, T, outs = min(cands, key=lambda t: t[0])
+        acc = self.add((0, 0, ()), 1, self._xexp(g, T), kp)
+        for o, ki in outs:
+            acc = self.add(acc, 1, self._xexp(g, o), -kp * ki)
+        self.stats['rule_recipm'] = self.stats.get('rule_recipm', 0) + 1
+        return self.intern(acc)
+
+    # ================= v1 (doc section 4; kept for reproducibility) =================
+    def _exp_f1(self, fid):
         r = self.exp_memo.get(fid)
         if r is not None:
             return r
@@ -126,20 +375,44 @@ class RecipCtx(EC.Ctx):
         aD, kD = D; fD = self.aarg[aD]
         if cre != 0:
             from fractions import Fraction
-            lc = (arb(abs(Fraction(cre)).numerator) / arb(abs(Fraction(cre)).denominator)).log()
-            if not (any((self.ball(fD, p).real - lc) > 0 for p in EC.PRECS[1:3]) or (abs(cre) == 1 and self._pos(fD))):
+            def _lc(p):
+                old = _fctx.prec; _fctx.prec = p
+                try: return (arb(abs(Fraction(cre)).numerator) / arb(abs(Fraction(cre)).denominator)).log()
+                finally: _fctx.prec = old
+            lcs = {p: _lc(p) if self.version == 'v2' else _lc(_fctx.prec) for p in EC.PRECS[1:3]}
+            if not (any((self.ball(fD, p).real - lcs[p]) > 0 for p in EC.PRECS[1:3]) or (abs(cre) == 1 and self._pos(fD))):
                 self.stats['R6_const_dominant'] = self.stats.get('R6_const_dominant', 0) + 1
                 return None
+        ra = self.version == 'v2' and self.log_atoms
+        if ra and cre != 0 and abs(cre) < 1:
+            self.stats['R6a_block'] = self.stats.get('R6a_block', 0) + 1
+            return None
         acc = (0, 0, ())
         for a, k in terms:
+            if a == aD:
+                acc = self.add(acc, 1, (1, 0, ()), k); continue          # e^{f_D - f_D} = 1 (exact)
             d = self.intern(self.add(self.fkey[self.aarg[a]], 1, self.fkey[fD], -1))
-            acc = self.add(acc, 1, self.fkey[self.exp_f(d)], k)
+            ed = self.exp_f(d)
+            if ra and not self._is_atom(ed):
+                self.stats['R6a_block'] = self.stats.get('R6a_block', 0) + 1
+                return None
+            acc = self.add(acc, 1, self.fkey[ed], k)
         if cre != 0:
-            acc = self.add(acc, 1, self.fkey[self.exp_f(self.intern(self.neg_key(self.fkey[fD])))], cre)
+            ed = self.exp_f(self.intern(self.neg_key(self.fkey[fD])))
+            if ra and not self._is_atom(ed):
+                self.stats['R6a_block'] = self.stats.get('R6a_block', 0) + 1
+                return None
+            acc = self.add(acc, 1, self.fkey[ed], cre)
         u = self.intern(acc)
         if u == self.ZERO or not self.freal[u]:
             return None
-        lu = self.log_f(u)
+        try:
+            lu = self.log_f(u)
+        except EC.Unresolved:
+            if self.version == 'v1':
+                raise
+            self.stats['R6_log_u_unresolved'] = self.stats.get('R6_log_u_unresolved', 0) + 1
+            return None
         if not isinstance(lu, int):
             return None
         self.stats['rule_R6'] = self.stats.get('rule_R6', 0) + 1
@@ -188,6 +461,10 @@ class RecipCtx(EC.Ctx):
             return self.intern(self.add(self.fkey[fD], 1, self.fkey[lS], 1))
         return None
 
+    def _is_atom(self, fid):
+        cre, cim, terms = self.fkey[fid]
+        return cre == 0 and cim == 0 and len(terms) == 1 and abs(terms[0][1]) == 1 and self.akind[terms[0][0]] == 'E'
+
     def _dominant(self, aD, terms):
         """certified: Re(f_D - f_j) > 0 for every other E atom j (balls at PRECS[1], then PRECS[2])."""
         fD = self.aarg[aD]
@@ -218,7 +495,27 @@ class RecipCtx(EC.Ctx):
         if not cands or (cre == 0 and len(terms) == 1):
             return None
         best = None
-        for a, k in cands:
+        if self.version == 'v2':
+            # certified choice (reviewbot should-fix): highest LI level; within it the candidate whose ball is certified
+            # above all others; if none is certified, the smallest akey.  No radius-dependent float comparison.
+            lis = []
+            for a, k in cands:
+                li = self.LI(self.aarg[a])
+                if li is None or li[0] <= 0:
+                    continue
+                lis.append((a, li))
+            if not lis:
+                return None
+            top = max(li[1] for _, li in lis)
+            lis = [(a, li) for a, li in lis if li[1] == top]
+            cert = [a for a, li in lis if all(a2 == a or li[2] > li2[2] for a2, li2 in lis)]
+            a = cert[0] if cert else min((a for a, _ in lis), key=self.akey)
+            if not cert and len(lis) > 1:
+                self.stats['R3_akey_fallback'] = self.stats.get('R3_akey_fallback', 0) + 1
+            g = self.aarg[a]
+            best = (None, a, g)
+        else:
+          for a, k in cands:
             g = self.aarg[a]
             li = self.LI(g)
             if li is None or li[0] <= 0:
@@ -245,6 +542,9 @@ class RecipCtx(EC.Ctx):
         if lR == 'LOG0' or not isinstance(lR, int):
             return None
         ex = self.exp_f(self.intern(self.add(self.fkey[lR], 1, self.fkey[g], -1)))
+        if self.version == 'v2' and self.log_atoms and not self._is_atom(ex):
+            self.stats['R3a_block'] = self.stats.get('R3a_block', 0) + 1
+            return None
         arg = self.intern(self.add((1, 0, ()), 1, self.fkey[ex], sR))
         if self.size_block and self.size(arg) >= self.size(fid):
             self.stats['R3_size_block'] = self.stats.get('R3_size_block', 0) + 1
@@ -264,6 +564,9 @@ class RecipCtx(EC.Ctx):
 class CanonCtx(RecipCtx):
     """emlcore with id-independent R3/R5 choices and the size measure, no reciprocal rule ('canonical emlcore')."""
     recip = False
+    multi = False         # layer 0 = canonical emlcore: no reciprocal rules, emlcore's R4 limit
+    log_atoms = False     # layer 0: unrestricted R6/R3 (R6a/R3a there lose emlcore merges: 43 at K23)
+    r4_max = 3
 
 class Ext:
     """C0 (raw layer: EC.Ctx, or CanonCtx if canon=True) + C1 (RecipCtx) + the map N."""
@@ -271,7 +574,7 @@ class Ext:
         self.C0 = CanonCtx(conv, 'allowed') if canon else EC.Ctx(conv, 'allowed')
         self.C1 = RecipCtx(conv, 'allowed')
         self.nf, self.na = {}, {}
-        self.n_fail = 0
+        self.n_fail = 0; self.n_unverified = 0; self.unverified = []   # loud: counted and listed, never silent
     def N(self, f):
         """C1 fid for C0 fid f, or None if a C1 decision is Unresolved (caller falls back to the raw key)."""
         r = self.nf.get(f)
@@ -295,8 +598,13 @@ class Ext:
         if a in self.na:
             return self.na[a]
         C0, C1 = self.C0, self.C1
-        self.na[a] = None                    # recursion guard: atom args are strictly smaller, never hit
-        x = self.N(C0.aarg[a])
+        if a in self.__dict__.setdefault('_na_ip', set()):
+            raise Unverified(f'N re-entry on atom {a}')   # impossible (atom args are strictly smaller); loud if it happens
+        self._na_ip.add(a)
+        try:
+            x = self.N(C0.aarg[a])
+        finally:
+            self._na_ip.discard(a)
         r = None
         if x is not None:
             try:
@@ -318,9 +626,16 @@ class Ext:
             return skey_special(v)
         try:
             n = self.N(v)
-        except RecursionError:
+        except (RecursionError, Unverified) as e:
+            # loud: the caller must count UNVERIFIED keys separately (they are never merged with anything)
             self.n_loop = getattr(self, 'n_loop', 0) + 1
-            return ('LOOP', v)
+            self.n_unverified += 1; self.unverified.append((v, type(e).__name__ + ': ' + str(e)[:120]))
+            for C in (self.C0, self.C1):
+                C._depth = 0; C.__dict__.get('_xc_ip', set()).clear(); C.__dict__.get('_xa_ip', set()).clear()
+            self.__dict__.get('_na_ip', set()).clear()
+            return ('UNVERIFIED', v)
+        if n is None:
+            self.n_fallback = getattr(self, 'n_fallback', 0) + 1   # C1 Unresolved: sound raw-form fallback, counted
         return ('N', n) if n is not None else ('R', v)
 
 _sc = [0]
@@ -352,9 +667,11 @@ def raw_dp(NMAX, conv, order='forward', seed=0, C=None):
                     v = EC.eml_val(C, a, b)
                 except EC.Unresolved:
                     unres.append(best[ka] + best[kb] + 'E'); continue
-                except RecursionError:
-                    # raw emlcore R3<->R5 non-termination (order dependent); recorded, class skipped like Unresolved
-                    unres.append('LOOP:' + best[ka] + best[kb] + 'E'); continue
+                except (RecursionError, Unverified) as e:
+                    # raw emlcore R3<->R5 non-termination (order dependent) or a v2 guard: recorded, class skipped
+                    unres.append(('LOOP:' if isinstance(e, RecursionError) else 'UNVERIFIED:') + best[ka] + best[kb] + 'E')
+                    if hasattr(C, '_depth'): C._depth = 0
+                    continue
                 if v in ('NAN', 'INVALID'): continue
                 k = ('F', v) if not EC.is_special(v) else skey_special(v)
                 if k in seen: continue
