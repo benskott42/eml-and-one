@@ -17,6 +17,7 @@ import {
   provenInteger,
   trigArg,
 } from "./node";
+import { EXACT_TOO_LARGE } from "./exactBudget";
 import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 import { floatShowsComponent } from "./format";
@@ -653,18 +654,6 @@ function residueParts(report: ExactReport): Array<"re" | "im"> {
   return out;
 }
 
-/**
- * A short exact value with a long run of 9s or 0s after it. That tail shows up when a
- * pasted literal was evaluated without the full cancellation guard.
- */
-function roundedTail(part: Decimal): boolean {
-  if (!part.isFinite() || part.isZero()) return false;
-  const sd = part.precision(true);
-  if (sd < 40) return false;
-  const sig = part.toSignificantDigits(sd).toFixed().replace("-", "").replace(".", "").replace(/^0+/, "");
-  return /^(.{1,20}?)([09])\2{29,}([018])?$/.test(sig);
-}
-
 /** Same relative move the dust check uses. An exact zero that becomes nonzero has moved. */
 function residueMoved(before: Decimal, after: Decimal): boolean {
   if (!before.isFinite() || !after.isFinite()) return !before.eq(after);
@@ -888,18 +877,43 @@ function exactReportCore(
     // that would need more than 480 digits, not for printing the number.
     const plain = root.type === "input" && exactLiteralOf(root) !== undefined;
     if (span > 0 && !plain) {
-      // The extra 120 digits are a guard for a cancellation. A literal whose own
-      // digits fit in the cap is still evaluated. Past that guard, a tail of 9s or
-      // 0s is rounding, not a value.
-      if (span > PRECISION_CAP) return certifyZero(exactReportOnce(root, env, budget));
-      const guard = span + PRECISION + 32;
-      const digits = Math.min(guard, PRECISION_CAP);
-      if (digits > D.precision) {
-        let lifted = atPrecision(digits, root, env, budget);
+      // The extra 120 digits are the cancellation guard. Without them the dust
+      // rule certifies a zero the cap cannot see, so the screen says it could
+      // not verify instead of printing that zero.
+      const need = span + PRECISION + 32;
+      if (need > PRECISION_CAP) return certifyZero(exactReportOnce(root, env, budget));
+      if (need > D.precision) {
+        let lifted = atPrecision(need, root, env, budget);
         lifted = settleResidue(lifted, root, env, budget);
         if (lifted.unverified) return lifted;
-        if (guard > PRECISION_CAP && (roundedTail(lifted.value.re) || roundedTail(lifted.value.im))) return certifyZero(lifted);
         if (expCollapsed && vanished(lifted.value)) return certifyZero(lifted);
+        // The span guard sees the pasted digits, not the square of a cancellation.
+        // (1 + 10^-(s-1))^2 − 2(1 + 10^-(s-1)) + 1 is about 10^-2(s-1). A zero
+        // at the span guard is that lost square when 2s does not fit, and a
+        // recomputed value when it does.
+        if (vanished(lifted.value)) {
+          const squared = span * 2 + 32;
+          if (squared > need) {
+            if (squared > PRECISION_CAP) return certifyZero(lifted);
+            lifted = atPrecision(squared, root, env, budget);
+            lifted = settleResidue(lifted, root, env, budget);
+            if (lifted.unverified) return lifted;
+          }
+        }
+        // A pasted decimal the float cannot hold is checked at a second
+        // precision. Rounding that moves, such as sin of that decimal minus
+        // the decimal, is not certified. A magnitude past the cap is not
+        // either: two precisions can share the same noise.
+        if (span > 40 && !vanished(lifted.value)) {
+          const digits = lifted.digits ?? need;
+          const againDigits = Math.min(PRECISION_CAP, digits + 96);
+          if (againDigits > digits) {
+            const again = atPrecision(againDigits, root, env, budget);
+            if (again.unverified || formatExact(again.value) !== formatExact(lifted.value)) return certifyZero(lifted);
+          }
+          const depth = (part: Decimal) => (part.isFinite() && !part.isZero() ? -part.e : 0);
+          if (Math.max(depth(lifted.value.re), depth(lifted.value.im)) > PRECISION_CAP) return certifyZero(lifted);
+        }
         return confirmDust(present(lifted), root, env, budget);
       }
     }
@@ -1032,7 +1046,7 @@ function exactReportOnce(
 
   while (stack.length) {
     if ((++steps & 31) === 0) {
-      if (steps > maxNodes) throw new EmlLimitError("This circuit is too large for exact mode.");
+      if (steps > maxNodes) throw new EmlLimitError(EXACT_TOO_LARGE);
       if (deadline && performance.now() > deadline) throw new EmlLimitError(EXACT_TIMED_OUT);
     }
     const frame = stack.pop();

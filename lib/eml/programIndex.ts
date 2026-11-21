@@ -250,7 +250,29 @@ export function unnumberedReason(node: Node): string | null {
 
 export type ParsedProgram =
   | { kind: "index"; index: bigint }
-  | { kind: "word"; word: string; rotatedFrom: string | null };
+  | {
+      kind: "word";
+      word: string;
+      /** What the user typed (bits stay bits), when a rotation changed it. */
+      rotatedFrom: string | null;
+      /** Set only for input that opted in with "old:". The bits it was typed as, in the old convention. */
+      oldBits: string | null;
+      /** For "old:" input, the same presses in the current convention (E = 1, the 1 key = 0), before any rotation. */
+      newBits: string | null;
+    };
+
+/** Opt-in prefix for bits in the old convention (0 = EML, 1 = the 1 key). Nothing else selects it. */
+export const OLD_BITS_PREFIX = "old:";
+
+/** Bits in the current convention: E = 1, the 1 key = 0. x and y stay letters. */
+export function bitsToWord(bits: string): string {
+  return bits.replace(/[01]/g, (bit) => (bit === "1" ? "E" : "1"));
+}
+
+/** A word of 1, E, x, y in the current bit convention: E = 1, the 1 key = 0. */
+export function wordToBits(word: string): string {
+  return word.replace(/[1E]/g, (key) => (key === "E" ? "1" : "0"));
+}
 
 /**
  * A word of 1, E, x, and y has to be one RPN program.
@@ -264,7 +286,7 @@ export function wordProgramError(word: string): string | null {
       if (height < 2) return "That word uses E before it has two values.";
       height -= 1;
     } else {
-      return "Use # and digits, a string of 0 and 1, or a word of 1, E, x, and y.";
+      return "Use # and digits, bits of 0 and 1, or a word of 1, E, x, and y.";
     }
   }
   if (height !== 1) return "That word does not leave one value.";
@@ -272,20 +294,34 @@ export function wordProgramError(word: string): string | null {
 }
 
 /**
- * A program number is # followed by digits. A string of 0 and 1 is button presses
- * (0 is EML, 1 is the 1 key) and is rotated into the one valid program.
- * rotatedFrom is the text the user typed when that rotation changed it.
- * A word of 1, E, x, and y is checked here, before it is built. Spaces inside
- * a number are an error, and a minus sign is reported on its own.
+ * A program number is # followed by digits. A string of 0 and 1 is button presses in
+ * the current convention, E = 1 and the 1 key = 0 (the ID bits without their leading 1),
+ * and is rotated into the one valid program. rotatedFrom is the text the user typed when
+ * that rotation changed it.
+ *
+ * Which reading applies is set by the characters, never by trying both:
+ * - any E or e: a word of 1, E, x, and y;
+ * - any 0: bits;
+ * - only 1, x, and y: bits, except the single key "1", which is the word 1
+ *   (as bits it would be one E, which is never a program).
+ *
+ * Old-convention bits (0 = EML, 1 = the 1 key) are read only after the explicit prefix
+ * "old:". Their meaning is never guessed from the content. Unprefixed old bits cannot be
+ * misread: a valid old string has its E's as 0s, so read in the new convention it has
+ * too many E's (pure 1/E) or ends in a leaf (with x or y), and is always rejected.
+ *
+ * A word of 1, E, x, and y is checked here, before it is built. Spaces inside a number are
+ * an error, and a minus sign is reported on its own.
  */
 export function parseProgramInput(source: string): ParsedProgram {
   const raw = source.trim();
-  if (!raw) throw new RangeError("Enter a program number, a press string, or a word of 1 and E.");
+  if (!raw) throw new RangeError("Enter a program number, bits, or a word of 1 and E.");
+  if (raw.toLowerCase().startsWith(OLD_BITS_PREFIX)) return parseOldBits(raw.slice(OLD_BITS_PREFIX.length));
   if (raw.includes("-")) throw new RangeError("Program numbers are not negative.");
   if (raw.startsWith("#")) {
     if (/\s/.test(raw)) throw new RangeError("A program number cannot contain spaces.");
     const digits = raw.slice(1);
-    if (!/^\d+$/.test(digits)) throw new RangeError("A program number is # followed by digits, such as #110.");
+    if (!/^\d+$/.test(digits)) throw new RangeError("A program number is # followed by digits, such as #1.");
     return { kind: "index", index: BigInt(digits) };
   }
   if (/\s/.test(raw) && /[2-9]/.test(raw)) {
@@ -293,30 +329,78 @@ export function parseProgramInput(source: string): ParsedProgram {
   }
   const compact = raw.replace(/\s+/g, "");
   if (/[2-9]/.test(compact)) {
-    throw new RangeError("Program numbers start with #. A string of 0 and 1 is button presses.");
+    throw new RangeError("Program numbers start with #. A string of 0 and 1 is bits.");
   }
-  if (/[eE]/.test(compact)) {
+  if (/[eE]/.test(compact) || compact === "1") {
     if (!/^[1eExXyY]+$/.test(compact)) {
-      throw new RangeError("Use # and digits, a string of 0 and 1, or a word of 1, E, x, and y.");
+      throw new RangeError("Use # and digits, bits of 0 and 1, or a word of 1, E, x, and y.");
     }
     const word = compact.replace(/e/g, "E").replace(/X/g, "x").replace(/Y/g, "y");
     if (/^[1E]+$/.test(word)) {
       const turned = rotateToProgram(word);
-      return { kind: "word", word: turned, rotatedFrom: turned === word ? null : word };
+      return { kind: "word", word: turned, rotatedFrom: turned === word ? null : word, oldBits: null, newBits: null };
     }
     const mixed = wordProgramError(word);
     if (mixed) throw new RangeError(mixed);
-    return { kind: "word", word, rotatedFrom: null };
+    return { kind: "word", word, rotatedFrom: null, oldBits: null, newBits: null };
   }
   if (!/^[01xXyY]+$/.test(compact)) {
-    throw new RangeError("Use # and digits, a string of 0 and 1, or a word of 1, E, x, and y.");
+    throw new RangeError("Use # and digits, bits of 0 and 1, or a word of 1, E, x, and y.");
   }
-  const pressed = compact.replace(/0/g, "E").replace(/X/g, "x").replace(/Y/g, "y");
+  const bits = compact.replace(/X/g, "x").replace(/Y/g, "y");
+  const pressed = bitsToWord(bits);
+  const hint = ` Bits read as E = 1 and the 1 key = 0. For bits in the old convention (0 = EML), type ${OLD_BITS_PREFIX} in front.`;
   if (/^[1E]+$/.test(pressed)) {
-    const turned = rotateToProgram(pressed);
-    return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : compact };
+    let turned: string;
+    try {
+      turned = rotateToProgram(pressed);
+    } catch {
+      throw new RangeError(`As bits, a program has exactly one more 0 (the 1 key) than 1 (E).${hint}`);
+    }
+    return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : bits, oldBits: null, newBits: null };
+  }
+  const mixed = wordProgramError(pressed);
+  if (mixed) throw new RangeError(`${mixed}${hint}`);
+  return { kind: "word", word: pressed, rotatedFrom: null, oldBits: null, newBits: null };
+}
+
+/**
+ * The note shown after loading parsed word input, or null when there is nothing to say.
+ * Old-convention input always says so, with the same presses in the current bits.
+ */
+export function loadNotice(parsed: ParsedProgram): string | null {
+  if (parsed.kind !== "word") return null;
+  const parts: string[] = [];
+  if (parsed.oldBits !== null && parsed.newBits !== null) {
+    parts.push(`Read in the old convention (0 = EML), shown here as ${parsed.newBits}.`);
+  }
+  const from = parsed.rotatedFrom;
+  if (from !== null) {
+    const fromBits = !/E/.test(from);
+    parts.push(`Rotated ${from} to ${fromBits ? wordToBits(parsed.word) : parsed.word}.`);
+  }
+  return parts.length ? parts.join(" ") : null;
+}
+
+/** Bits after "old:": 0 = EML, 1 = the 1 key. Bits only; no numbers or words. */
+function parseOldBits(rest: string): ParsedProgram {
+  const bits = rest.replace(/\s+/g, "").replace(/X/g, "x").replace(/Y/g, "y");
+  if (!bits) throw new RangeError(`Put old-convention bits after ${OLD_BITS_PREFIX}, such as ${OLD_BITS_PREFIX}110.`);
+  if (!/^[01xy]+$/.test(bits)) {
+    throw new RangeError(`After ${OLD_BITS_PREFIX} use only bits of 0 and 1 (0 = EML), with x or y.`);
+  }
+  const pressed = bits.replace(/0/g, "E");
+  const newBits = wordToBits(pressed);
+  if (/^[1E]+$/.test(pressed)) {
+    let turned: string;
+    try {
+      turned = rotateToProgram(pressed);
+    } catch {
+      throw new RangeError("Read in the old convention (0 = EML), a program has exactly one more 1 than 0.");
+    }
+    return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : newBits, oldBits: bits, newBits };
   }
   const mixed = wordProgramError(pressed);
   if (mixed) throw new RangeError(mixed);
-  return { kind: "word", word: pressed, rotatedFrom: null };
+  return { kind: "word", word: pressed, rotatedFrom: null, oldBits: bits, newBits };
 }

@@ -1,0 +1,167 @@
+{
+  "source": "v1.1 searchConstants with sound off. Pools, per-level class counts, hits and reject counts of the default path.",
+  "runs": [
+    {
+      "maxK": 17,
+      "pool": 1569,
+      "rejected": 153,
+      "levels": [
+        {
+          "k": 3,
+          "added": 1
+        },
+        {
+          "k": 5,
+          "added": 2
+        },
+        {
+          "k": 7,
+          "added": 5
+        },
+        {
+          "k": 9,
+          "added": 13
+        },
+        {
+          "k": 11,
+          "added": 37
+        },
+        {
+          "k": 13,
+          "added": 109
+        },
+        {
+          "k": 15,
+          "added": 337
+        },
+        {
+          "k": 17,
+          "added": 1064
+        }
+      ],
+      "hits": [
+        {
+          "id": "e",
+          "k": 3,
+          "rpn": "11E",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "0",
+          "k": 7,
+          "rpn": "111E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "-1",
+          "k": 15,
+          "rpn": "11111E1EEEE11EE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        }
+      ]
+    },
+    {
+      "maxK": 21,
+      "pool": 16311,
+      "rejected": 1604,
+      "levels": [
+        {
+          "k": 3,
+          "added": 1
+        },
+        {
+          "k": 5,
+          "added": 2
+        },
+        {
+          "k": 7,
+          "added": 5
+        },
+        {
+          "k": 9,
+          "added": 13
+        },
+        {
+          "k": 11,
+          "added": 37
+        },
+        {
+          "k": 13,
+          "added": 109
+        },
+        {
+          "k": 15,
+          "added": 337
+        },
+        {
+          "k": 17,
+          "added": 1064
+        },
+        {
+          "k": 19,
+          "added": 3444
+        },
+        {
+          "k": 21,
+          "added": 11298
+        }
+      ],
+      "hits": [
+        {
+          "id": "e",
+          "k": 3,
+          "rpn": "11E",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "0",
+          "k": 7,
+          "rpn": "111E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "-1",
+          "k": 15,
+          "rpn": "11111E1EEEE11EE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "2",
+          "k": 19,
+          "rpn": "111111EEE1EE11EE1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "ipi",
+          "k": 21,
+          "rpn": "111111E1EEEE11E1E1EEE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        }
+      ]
+    }
+  ]
+}

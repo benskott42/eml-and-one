@@ -1,4 +1,5 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, markUnverified, noteExactLiteral, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import Decimal from "decimal.js";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, exactLiteralOf, input, isSeriesShortcut, markSeriesShortcut, markUnverified, noteExactLiteral, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { noteBuilder } from "./provenance";
 import { applyProgram, programNode } from "./programs";
 
@@ -122,12 +123,29 @@ function setRange(node: Node, range: Range): Node {
   return node;
 }
 
+/** The stored float is the exact literal, not a rounding of a longer decimal. */
+function floatHoldsLiteral(text: string, re: number, im: number): boolean {
+  if (!Number.isFinite(re) || !Number.isFinite(im) || im !== 0) return false;
+  try {
+    return new Decimal(text).eq(re);
+  } catch {
+    return false;
+  }
+}
+
 export function rangeOf(node: Node): Range {
   if (node.type === "one") return { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 }, int: BigInt(1) };
   const hit = ranges.get(node);
   if (hit) return hit;
   if (node.type === "input") {
     const { re, im } = node.value;
+    const text = exactLiteralOf(node);
+    // A pasted decimal longer than the float is not that rounded value. Shortcuts
+    // that read a point would certify sqrt(1.000…1) − 1 as 0.
+    if (text !== undefined && !floatHoldsLiteral(text, re, im)) {
+      setRange(node, UNKNOWN);
+      return UNKNOWN;
+    }
     if (Number.isFinite(re) && Number.isFinite(im)) return point(re, im);
   }
   return UNKNOWN;
@@ -953,10 +971,8 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   if (ia !== undefined && ib !== undefined) {
     const diff = ia - ib;
     if (diff === BigInt(0)) return zeroNode();
-    if (diff <= SAFE && diff >= -SAFE) return smallInt(Number(diff));
-    // The float circuit cannot represent this difference. A pasted integer still can.
-    if (isMarkedExactInt(a) || isMarkedExactInt(b)) return exactIntNode(diff);
     const huge = ia > SAFE || ia < -SAFE || ib > SAFE || ib < -SAFE;
+    if (huge && diff <= SAFE && diff >= -SAFE) return smallInt(Number(diff));
     const node = buildSub(a, b, kFrom);
     return rememberSub(huge ? node : attachInt(node, diff), a, b);
   }

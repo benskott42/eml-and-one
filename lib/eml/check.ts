@@ -5,14 +5,17 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
 import { runPropertyChecks } from "./check-properties";
+import { runExprChecks } from "./check-expr";
 import path from "node:path";
 import Decimal from "decimal.js";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
-import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
+import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, exactShownText, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { acceptsConstantProgram, acceptsConstantValue, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { acceptsConstantProgram, acceptsConstantValue, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { DiskGrid, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
+import { SoundDedup } from "./sound";
 import {
   applyBinaryNode,
   applyUnaryNode,
@@ -838,6 +841,283 @@ for (const id of ["e", "0", "-1"]) {
     console.log("FAIL worker merge", id, solo, split);
   }
 }
+if (inShard("core")) {
+  const libm = libmCertification();
+  if (!libm.ok || libm.checked < 200 || libm.worst > 1) {
+    failed += 1;
+    console.log("FAIL libm self-test", libm);
+  }
+  const axis = logDisk(pointDisk(-1, 0));
+  const overY = expDisk(pointDisk(0, 2 ** 20));
+  const overX = expDisk(pointDisk(700));
+  const underX = expDisk(pointDisk(-700));
+  const deep = { re: Number.MIN_VALUE, im: Number.MIN_VALUE, r: 0, ok: true as const };
+  const edge = { re: 2 ** -1046, im: 2 ** -1046, r: 0, ok: true as const };
+  const deepLog = logDisk(deep);
+  const edgeLog = logDisk(edge);
+  const subPoint = pointDisk(Number.MIN_VALUE, 1);
+  if (
+    axis.ok ||
+    overY.ok ||
+    overX.ok ||
+    underX.ok ||
+    deepLog.ok ||
+    edgeLog.ok ||
+    subPoint.ok ||
+    !diskInconclusive(Number.MIN_VALUE, Number.MIN_VALUE, 0) ||
+    !diskInconclusive(2 ** -1046, 2 ** -1046, 0)
+  ) {
+    failed += 1;
+    console.log(
+      "FAIL interval guard",
+      axis.ok,
+      overY.ok,
+      overX.ok,
+      underX.ok,
+      deepLog.ok,
+      edgeLog.ok,
+      subPoint.ok,
+    );
+  }
+  const wide = pointDisk(1, 0, 1);
+  if (wide.ok) {
+    failed += 1;
+    console.log("FAIL wide disk was certified", wide);
+  }
+  if (!disksDisjoint(pointDisk(0, 0, 1e-8), pointDisk(1, 0, 1e-8)) || disksDisjoint(pointDisk(0, 0, 0.2), pointDisk(0.1, 0, 0.2))) {
+    failed += 1;
+    console.log("FAIL disk separation");
+  }
+  const grid = new DiskGrid();
+  const home = pointDisk(0.5, 0, 1e-8);
+  const neighbour = pointDisk(0.51, 0, 1e-8);
+  const far = pointDisk(1.5, 0, 1e-8);
+  grid.add(1, home);
+  grid.add(2, neighbour);
+  grid.add(3, far);
+  const seen = new Set(grid.nearby(home));
+  if (!seen.has(1) || !seen.has(2) || seen.has(3)) {
+    failed += 1;
+    console.log("FAIL disk grid", [...seen]);
+  }
+
+  const High = DecimalValue.clone({ precision: 60 });
+  const decOf = (n: number) => {
+    if (!Number.isFinite(n)) return new High(n);
+    const view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, n, false);
+    const hi = view.getUint32(0, false);
+    const lo = view.getUint32(4, false);
+    const sign = hi >>> 31 ? -1 : 1;
+    const exp = (hi >>> 20) & 0x7ff;
+    const frac = new High(hi & 0xfffff).mul(new High(2).pow(32)).add(lo);
+    if (exp === 0) {
+      if (frac.isZero()) return sign < 0 ? new High(0).neg() : new High(0);
+      const mag = frac.mul(new High(2).pow(-1074));
+      return sign < 0 ? mag.neg() : mag;
+    }
+    const mant = frac.add(new High(2).pow(52));
+    const mag = mant.mul(new High(2).pow(exp - 1075));
+    return sign < 0 ? mag.neg() : mag;
+  };
+  const contains = (disk: { re: number; im: number; r: number; ok: boolean }, re: InstanceType<typeof High>, im: InstanceType<typeof High>) => {
+    if (!disk.ok) return false;
+    const dist = re.sub(disk.re).pow(2).add(im.sub(disk.im).pow(2)).sqrt();
+    return dist.lte(disk.r);
+  };
+  const trueExp = (x: InstanceType<typeof High>, y: InstanceType<typeof High>) => {
+    const mag = x.exp();
+    return { re: mag.mul(y.cos()), im: mag.mul(y.sin()) };
+  };
+  const trueLog = (x: InstanceType<typeof High>, y: InstanceType<typeof High>) => {
+    const rho = x.pow(2).add(y.pow(2)).sqrt();
+    return { re: rho.ln(), im: High.atan2(y, x) };
+  };
+  let rng = 0x5eed;
+  const rand = () => {
+    rng = (rng + 0x6d2b79f5) | 0;
+    let t = Math.imul(rng ^ (rng >>> 15), 1 | rng);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const span = (lo: number, hi: number) => lo + (hi - lo) * rand();
+  let checked = 0;
+  let missed = 0;
+  const sampleN = 2000;
+  for (let n = 0; n < sampleN; n += 1) {
+    const band = n % 4;
+    let x = 0;
+    let y = 0;
+    let radius = 0;
+    if (band === 0) {
+      x = span(-3, 3);
+      y = span(-3, 3);
+      radius = rand() < 0.5 ? 0 : 10 ** span(-14, -8);
+    } else if (band === 1) {
+      x = span(-4, -0.05);
+      y = (rand() < 0.5 ? -1 : 1) * 10 ** span(-10, -7);
+      radius = 10 ** span(-14, -9);
+    } else if (band === 2) {
+      x = span(-2, 2);
+      y = (rand() < 0.5 ? -1 : 1) * (2 ** 20 - span(1, 5000));
+      radius = rand() < 0.7 ? 0 : 1e-6;
+    } else {
+      x = (rand() < 0.5 ? -1 : 1) * (700 - span(0, 3));
+      y = span(-1, 1);
+      radius = 0;
+    }
+    const input = pointDisk(x, y, radius);
+    const expOut = expDisk(input);
+    const logOut = logDisk(input);
+    const shift = radius === 0 ? 0 : radius * 0.3;
+    const px = decOf(x).add(shift);
+    const py = decOf(y).add(shift * 0.5);
+    if (expOut.ok) {
+      checked += 1;
+      const value = trueExp(px, py);
+      if (!contains(expOut, value.re, value.im)) missed += 1;
+    }
+    if (logOut.ok) {
+      checked += 1;
+      const value = trueLog(px, py);
+      if (!contains(logOut, value.re, value.im)) missed += 1;
+    }
+    const other = pointDisk(span(-1, 2), span(-1, 1), 0);
+    const both = emlDisk(input, other);
+    if (both.ok && other.ok && input.ok) {
+      checked += 1;
+      const left = trueExp(px, py);
+      const right = trueLog(decOf(other.re), decOf(other.im));
+      if (!contains(both, left.re.sub(right.re), left.im.sub(right.im))) missed += 1;
+    }
+  }
+  if (missed !== 0 || checked < 500) {
+    failed += 1;
+    console.log("FAIL interval containment", missed, "of", checked);
+  }
+
+  const traced = searchConstants(13, { sound: true, trace: true });
+  const evalRpn = (rpn: string) => {
+    const stack: { re: InstanceType<typeof High>; im: InstanceType<typeof High> }[] = [];
+    for (const token of rpn) {
+      if (token === "1") {
+        stack.push({ re: new High(1), im: new High(0) });
+        continue;
+      }
+      const right = stack.pop();
+      const left = stack.pop();
+      if (!left || !right) return null;
+      const mag = left.re.exp();
+      const er = mag.mul(left.im.cos());
+      const ei = mag.mul(left.im.sin());
+      const rho = right.re.pow(2).add(right.im.pow(2)).sqrt();
+      stack.push({ re: er.sub(rho.ln()), im: ei.sub(High.atan2(right.im, right.re)) });
+    }
+    return stack.length === 1 ? stack[0] : null;
+  };
+  let poolMiss = 0;
+  let poolChecked = 0;
+  const conclusive = (traced.classes ?? []).filter((item) => item.diskOk);
+  for (const item of conclusive) {
+    const value = evalRpn(item.rpn);
+    if (!value) continue;
+    poolChecked += 1;
+    if (!contains({ re: item.diskRe, im: item.diskIm, r: item.diskR, ok: true }, value.re, value.im)) poolMiss += 1;
+  }
+  const pairN = Math.min(200, conclusive.length * conclusive.length);
+  for (let n = 0; n < pairN; n += 1) {
+    const left = conclusive[Math.floor(rand() * conclusive.length)];
+    const right = conclusive[Math.floor(rand() * conclusive.length)];
+    if (!left || !right) continue;
+    const a = evalRpn(left.rpn);
+    const b = evalRpn(right.rpn);
+    if (!a || !b) continue;
+    const disk = emlDisk(
+      { re: left.diskRe, im: left.diskIm, r: left.diskR, ok: true },
+      { re: right.diskRe, im: right.diskIm, r: right.diskR, ok: true },
+    );
+    if (!disk.ok) continue;
+    const mag = a.re.exp();
+    const er = mag.mul(a.im.cos());
+    const ei = mag.mul(a.im.sin());
+    const rho = b.re.pow(2).add(b.im.pow(2)).sqrt();
+    poolChecked += 1;
+    if (!contains(disk, er.sub(rho.ln()), ei.sub(High.atan2(b.im, b.re)))) poolMiss += 1;
+  }
+  if (poolMiss !== 0 || poolChecked < 50) {
+    failed += 1;
+    console.log("FAIL pool disk containment", poolMiss, "of", poolChecked);
+  }
+
+  const fixture = JSON.parse(readFileSync(path.join(repoRoot, "lib/eml/golf-v11-fixture.json"), "utf8")) as {
+    runs: { maxK: number; pool: number; rejected: number; levels: { k: number; added: number }[]; hits: { id: string; k: number; rpn: string; singular: boolean; usesLn0: boolean; branch: string; domain: string }[] }[];
+  };
+  for (const want of fixture.runs) {
+    const got = searchConstants(want.maxK);
+    const sameHits = JSON.stringify(got.hits) === JSON.stringify(want.hits);
+    const sameLevels = JSON.stringify(got.levels) === JSON.stringify(want.levels);
+    if (got.pool !== want.pool || got.rejected !== want.rejected || !sameHits || !sameLevels) {
+      failed += 1;
+      console.log("FAIL v1.1 parity", want.maxK, got.pool, want.pool, got.rejected, want.rejected, sameHits, sameLevels);
+    }
+  }
+
+  const plain = searchConstants(21);
+  const sound = searchConstants(21, { sound: true });
+  if (JSON.stringify(plain.hits) !== JSON.stringify(sound.hits)) {
+    failed += 1;
+    console.log("FAIL sound hits", sound.hits, plain.hits);
+  }
+  if (!sound.sound?.upperBound || !sound.sound.certification) {
+    failed += 1;
+    console.log("FAIL sound report", sound.sound);
+  }
+  if ((sound.sound?.confirmations ?? 0) + (sound.sound?.rejections ?? 0) !== sound.sound?.exactChecks) {
+    failed += 1;
+    console.log("FAIL sound exact tally", sound.sound);
+  }
+  const keptA = "111E1E1EE11EE";
+  const keptB = "111E1E11EEE11EE";
+  const nodeA = nodeFromRpn(keptA.split(""));
+  const nodeB = nodeFromRpn(keptB.split(""));
+  const floatA = evaluate(nodeA);
+  const floatB = evaluate(nodeB);
+  const keyA = floatDedupKey(floatA.re, floatA.im).join(",");
+  const keyB = floatDedupKey(floatB.re, floatB.im).join(",");
+  const exactA = exactValueAt(nodeA, 80);
+  const exactB = exactValueAt(nodeB, 80);
+  if (keyA !== keyB || (exactA.re.eq(exactB.re) && exactA.im.eq(exactB.im))) {
+    failed += 1;
+    console.log("FAIL crafted key collision", keyA, keyB, exactA.re.toString(), exactB.re.toString());
+  }
+  const soundSmall = searchConstants(15, { sound: true, trace: true });
+  const rpns = new Set((soundSmall.classes ?? []).map((item) => item.rpn));
+  if (!rpns.has(keptA) || !rpns.has(keptB)) {
+    failed += 1;
+    console.log("FAIL sound dropped a distinct shared-key pair", rpns.has(keptA), rpns.has(keptB));
+  }
+  const badDisk = { re: Number.NaN, im: Number.NaN, r: Number.POSITIVE_INFINITY, ok: false as const };
+  const specials = new SoundDedup("1:0:0:0");
+  const firstSpecial = specials.consider(badDisk, badDisk, 3, "ln0", () => false);
+  specials.remember(1, "ln0", firstSpecial.disk);
+  const keptSpecial = specials.consider(badDisk, badDisk, 5, "ln0", () => false);
+  const provedSpecial = specials.consider(badDisk, badDisk, 7, "ln0", () => true);
+  if (firstSpecial.merged || firstSpecial.disk.ok || keptSpecial.merged || keptSpecial.disk.ok || !provedSpecial.merged) {
+    failed += 1;
+    console.log("FAIL ln0 inconclusive path", firstSpecial.merged, keptSpecial.merged, provedSpecial.merged);
+  }
+  let ln0Seen = 0;
+  let ln0Certified = 0;
+  for (const item of soundSmall.classes ?? []) {
+    if (!evaluateReport(nodeFromRpn(item.rpn.split(""))).touchedLn0) continue;
+    ln0Seen += 1;
+    if (item.diskOk) ln0Certified += 1;
+  }
+  if (ln0Seen === 0 || ln0Certified !== 0) {
+    failed += 1;
+    console.log("FAIL sound certified an ln0 class", ln0Seen, ln0Certified);
+  }
+}
 const fingerA = functionFingerprint(tAdd(X, Y), (point) => ({ x: point, y: { re: 0.3, im: -0.2 } }));
 const fingerB = functionFingerprint(tAdd(Y, X), (point) => ({ x: point, y: { re: 0.3, im: -0.2 } }));
 if (fingerA !== fingerB) {
@@ -1416,17 +1696,17 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL 31 presses", over);
   }
-  if (encodePresses(["1", "1", "E"]) !== "110" || encodePresses(["1", "x", "E", "y"]) !== "1x0y" || encodePresses(["2"]) !== null) {
+  if (encodePresses(["1", "1", "E"]) !== "001" || encodePresses(["1", "x", "E", "y"]) !== "0x1y" || encodePresses(["2"]) !== null) {
     failed += 1;
     console.log("FAIL press alphabet");
   }
   const emlPress = pressPreviewForNode(E(ONE, ONE));
   const named = pressPreviewForNode(E(V("x"), ONE));
-  if (!emlPress || emlPress.full !== "110" || emlPress.usesVariables) {
+  if (!emlPress || emlPress.full !== "001" || emlPress.usesVariables) {
     failed += 1;
     console.log("FAIL e presses", emlPress);
   }
-  if (!named || named.full !== "x10" || !named.usesVariables) {
+  if (!named || named.full !== "x01" || !named.usesVariables) {
     failed += 1;
     console.log("FAIL variable presses", named);
   }
@@ -1514,7 +1794,7 @@ if (inShard("core")) {
   const copied = pressPreviewForNode(unrankProgram(BigInt(1)));
   const pasted = copied ? parseProgramInput(copied.full) : null;
   const roundTrip = pasted && pasted.kind === "word" ? rankProgram(nodeFromRpn(pasted.word.split(""))) : null;
-  if (!copied || copied.full !== "110" || pasted?.kind !== "word" || pasted.word !== "11E" || roundTrip !== BigInt(1)) {
+  if (!copied || copied.full !== "001" || pasted?.kind !== "word" || pasted.word !== "11E" || roundTrip !== BigInt(1)) {
     failed += 1;
     console.log("FAIL copy paste round trip", copied?.full, pasted, roundTrip?.toString());
   }
@@ -1524,7 +1804,7 @@ if (inShard("core")) {
   const wordE = parseProgramInput("1E1");
   const wordLower = parseProgramInput("1e1");
   const spacedWord = parseProgramInput("1 1 E");
-  const variable = parseProgramInput("x10");
+  const variable = parseProgramInput("x01");
   if (one.kind !== "word" || rankRpn(one.word) !== BigInt(0)) {
     failed += 1;
     console.log("FAIL press 1 is program 0", one);
@@ -1538,8 +1818,8 @@ if (inShard("core")) {
     console.log("FAIL word input", wordE, wordLower, spacedWord);
   }
   const turned = parseProgramInput("E11");
-  const turnedPress = parseProgramInput("011");
-  if (turned.kind !== "word" || turned.word !== "11E" || turned.rotatedFrom !== "E11" || turnedPress.kind !== "word" || turnedPress.word !== "11E" || turnedPress.rotatedFrom !== "011") {
+  const turnedPress = parseProgramInput("100");
+  if (turned.kind !== "word" || turned.word !== "11E" || turned.rotatedFrom !== "E11" || turnedPress.kind !== "word" || turnedPress.word !== "11E" || turnedPress.rotatedFrom !== "100") {
     failed += 1;
     console.log("FAIL rotated word", turned, turnedPress);
   }
@@ -1991,9 +2271,10 @@ if (inShard("core")) {
     const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify([{ source: "(1+1/0)-1/0", tokens: packed.tokens, root: packed.root }]));
     const row = fresh.status === 0 ? (JSON.parse(fresh.stdout) as Array<{ unverified: boolean; text: string }>)[0] : undefined;
     const verdict = row ? compareVerdict({ text: row.text, unverified: row.unverified, notCertified: false, cancelledZero: false, differs: true }) : null;
-    if (!row || !row.unverified || !verdict || !("notice" in verdict) || verdict.notice !== "couldn't verify") {
+    const exactText = row ? exactShownText(row.unverified, row.text) : "";
+    if (!row || exactText !== "—" || !verdict || !("notice" in verdict) || verdict.notice !== "couldn't verify") {
       failed += 1;
-      console.log("FAIL (1+∞)-∞ exact screen", fresh.status, row?.text, row?.unverified, fresh.stderr?.slice(0, 200));
+      console.log("FAIL (1+∞)-∞ exact screen", fresh.status, exactText, row?.unverified, fresh.stderr?.slice(0, 200));
     }
   }
   const varFold = evaluateReport(compileExpression("(x+y)-y", { x: V("x"), y: V("y") }), { x: c(1), y: c(Infinity) });
@@ -3327,6 +3608,11 @@ if (inShard("core")) {
 {
   // Long literals and non-finite leaves cross a fresh process. JSON and a
   // structured-clone worker both have to recover the same value.
+  const sevenThree = packCircuit(compileExpression("7-3", {}));
+  if (sevenThree.tokens.length !== 32) {
+    failed += 1;
+    console.log("FAIL 7-3 wire tokens", sevenThree.tokens.length);
+  }
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const tsxCli = createRequire(path.join(repoRoot, "package.json")).resolve("tsx/cli");
   const wide = Decimal.clone({ precision: 1200, minE: -9e15, maxE: 9e15 });
@@ -3335,7 +3621,7 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL positive imaginary axis", axis);
   }
-  type Expect = { re?: string; im?: string; unverifiedOk?: boolean; leaf?: { re: string; im: string } };
+  type Expect = { re?: string; im?: string; text?: string; unverifiedOk?: boolean; leaf?: { re: string; im: string } };
   const jobs: { id: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number }[] = [];
   const expect = new Map<string, Expect>();
   const packSource = (id: string, source: string) => {
@@ -3385,7 +3671,7 @@ if (inShard("core")) {
   expect.set("bare4000", { re: bareText(bare4000), im: "0" });
   packSource("neg4000", `-${bare4000}`);
   expect.set("neg4000", { re: bareText(`-${bare4000}`), im: "0" });
-  for (const digits of [50, 300, 360, 384]) {
+  for (const digits of [50, 300]) {
     const frac = "1234567891";
     const whole = "1" + "0".repeat(digits - frac.length - 1);
     const lit = `${whole}.${frac}`;
@@ -3394,14 +3680,6 @@ if (inShard("core")) {
     const tail = `8.${frac}${"0".repeat(digits - frac.length - 1)}`;
     packSource(`tail${digits}`, `${tail}-8`);
     expect.set(`tail${digits}`, { re: `0.${frac}`, im: "0" });
-  }
-  {
-    const digits = 400;
-    const frac = "1234567891";
-    const whole = "1" + "0".repeat(digits - frac.length - 1);
-    const lit = `${whole}.${frac}`;
-    packSource("frac400", `${lit}-${whole}`);
-    expect.set("frac400", { re: `0.${frac}`, im: "0", unverifiedOk: true });
   }
   const ks = [40, 41, 99, 120, 121, 308, 309, 310, 464, 465, 480, 481, 1000, 3999];
   for (const k of ks) {
@@ -3428,11 +3706,42 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL exp of a 310-digit literal", formatExact(expChecked.value), expChecked.unverified, expFloat.value, expFloat.singular);
   }
-  for (const n of [100, 200, 329, 400, 464, 470, 1000]) {
+  const pasted = (s: number) => `1.${"0".repeat(s - 2)}1`;
+  const a41 = pasted(41);
+  packSource("sqrt41", `sqrt(${a41})-1`);
+  expect.set("sqrt41", { text: "5×10^−41" });
+  packSource("sin41", `sin(${a41}-1)-(${a41}-1)`);
+  expect.set("sin41", { text: "−1.66666666667×10^−121" });
+  packSource("poly41", `(${a41})^2-2*${a41}+1`);
+  expect.set("poly41", { text: "1×10^−80" });
+  packSource("sqrtPow", "sqrt(1+10^(-40))-1");
+  expect.set("sqrtPow", { text: "5×10^−41" });
+  packSource("sinPow", "sin(10^(-40))-10^(-40)");
+  expect.set("sinPow", { text: "−1.66666666667×10^−121" });
+  const a200 = pasted(200);
+  packSource("poly200", `(${a200})^2-2*${a200}+1`);
+  expect.set("poly200", { text: "1×10^−398" });
+  packSource("polyPow", "(1+10^(-199))^2-2*(1+10^(-199))+1");
+  expect.set("polyPow", { text: "1×10^−398" });
+  packSource("sin200", `sin(${a200}-1)-(${a200}-1)`);
+  expect.set("sin200", { unverifiedOk: true });
+  packSource("sub479", `${pasted(479)}-1`);
+  expect.set("sub479", { unverifiedOk: true });
+  packSource("sub480", `${pasted(480)}-1`);
+  expect.set("sub480", { unverifiedOk: true });
+  packSource("nines479", `0.${"9".repeat(479)}*2-2`);
+  expect.set("nines479", { unverifiedOk: true });
+  const a329 = pasted(329);
+  packSource("poly329", `(${a329})^2-2*${a329}+1`);
+  expect.set("poly329", { unverifiedOk: true });
+  const a299 = pasted(299);
+  packSource("inv299", `1/${a299}-1+(${a299}-1)`);
+  expect.set("inv299", { unverifiedOk: true });
+  for (const n of [100, 200, 464, 470, 1000]) {
     const text = `0.${"3".repeat(n)}`;
     const oracle = new wide(text).times(3).minus(1).toFixed();
     packSource(`threes${n}`, `${text}*3-1`);
-    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n > 464 });
+    expect.set(`threes${n}`, { re: oracle, im: "0", unverifiedOk: n + 120 + 32 > 480 });
   }
   const leaf = (id: string, re: number, im: number, label: string, want: { re: string; im: string }) => {
     const packed = packCircuit(input({ re, im }, label));
@@ -3494,7 +3803,11 @@ if (inShard("core")) {
         }
         continue;
       }
-      if (row.re !== want.re || (want.im !== undefined && row.im !== want.im)) {
+      if (want.text !== undefined && row.text !== want.text) {
+        failed += 1;
+        console.log(`FAIL ${label} ${id}`, row.text, "want", want.text);
+      }
+      if (want.re !== undefined && (row.re !== want.re || (want.im !== undefined && row.im !== want.im))) {
         failed += 1;
         console.log(`FAIL ${label} ${id}`, row.text, row.re, "want", want.re);
       }
@@ -3595,6 +3908,18 @@ if (inShard("core")) {
     { src: "-1/inf", leaf: false, exact: "0" },
     { src: "-(10^(-400))", leaf: false, exact: "−1×10^−400" },
   ];
+  for (const empty of ["", null] as const) {
+    let threw = false;
+    try {
+      readWireNum(empty);
+    } catch {
+      threw = true;
+    }
+    if (!threw) {
+      failed += 1;
+      console.log("FAIL readWireNum empty", JSON.stringify(empty));
+    }
+  }
   const isNegZero = (x: WireNum | null | undefined) => x !== null && x !== undefined && Object.is(readWireNum(x), -0);
   const jobs = zeroRows.map((row) => {
     const packed = packCircuit(compileExpression(row.src, {}));
@@ -4096,6 +4421,8 @@ if (inShard("core")) {
     }
   }
 }
+
+if (inShard("core")) failed += runExprChecks();
 
 if (failed) {
   console.log(`\n${failed} failed`);

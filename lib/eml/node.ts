@@ -1,5 +1,6 @@
 import { type C, C1, eml } from "./complex";
 import { noteFloatGate, onNegativeCutF } from "./cut";
+import { EXACT_TOO_LARGE } from "./exactBudget";
 
 /**
  * A circuit in the grammar S → 1 | var | input | eml(S, S).
@@ -353,7 +354,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
   while (stack.length) {
     if ((++steps & 63) === 0) {
       if (steps > maxNodes) {
-        throw new EmlLimitError("This circuit is too large to evaluate.");
+        throw new EmlLimitError(EXACT_TOO_LARGE);
       }
       if (deadline && performance.now() > deadline) {
         throw new EmlLimitError("Evaluation timed out.");

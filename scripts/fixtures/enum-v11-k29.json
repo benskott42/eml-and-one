@@ -1,0 +1,162 @@
+{
+  "commit": "63e0d8d1a422b71d4d653f6fc3a10e017ff7e1ac",
+  "maxK": 29,
+  "runs": [
+    {
+      "allowLn0": true,
+      "pool": 2099314,
+      "hits": [
+        {
+          "id": "e",
+          "k": 3,
+          "rpn": "11E",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "0",
+          "k": 7,
+          "rpn": "111E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "-1",
+          "k": 15,
+          "rpn": "11111E1EEEE11EE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "2",
+          "k": 19,
+          "rpn": "111111EEE1EE11EE1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "ipi",
+          "k": 21,
+          "rpn": "111111E1EEEE11E1E1EEE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "-2",
+          "k": 25,
+          "rpn": "111111E1EEEE11E1E1EEE11EE",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "-1/2",
+          "k": 29,
+          "rpn": "1111111E1EEEE11EEE11E1E1EEE1E",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "1/2",
+          "k": 29,
+          "rpn": "111E11111E1EEEE11E1E1EE1EEE1E",
+          "singular": false,
+          "usesLn0": true,
+          "branch": "lower-bank",
+          "domain": "extended"
+        },
+        {
+          "id": "3",
+          "k": 29,
+          "rpn": "11111111EEE1EE11EEE1EE11EE1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        }
+      ]
+    },
+    {
+      "allowLn0": false,
+      "pool": 1612870,
+      "hits": [
+        {
+          "id": "e",
+          "k": 3,
+          "rpn": "11E",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "0",
+          "k": 7,
+          "rpn": "111E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "-1",
+          "k": 17,
+          "rpn": "11111EEE1EE11E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "2",
+          "k": 19,
+          "rpn": "111111EEE1EE11EE1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "ipi",
+          "k": 23,
+          "rpn": "111111E1E1EEE1EE11E1EEE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "lower-bank",
+          "domain": "C"
+        },
+        {
+          "id": "-2",
+          "k": 27,
+          "rpn": "1111111EEE1EE11EEE1EE11E1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        },
+        {
+          "id": "3",
+          "k": 29,
+          "rpn": "11111111EEE1EE11EEE1EE11EE1EE",
+          "singular": false,
+          "usesLn0": false,
+          "branch": "either",
+          "domain": "C"
+        }
+      ]
+    }
+  ]
+}

@@ -51,9 +51,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run eml:parity
+      - run: npx tsx scripts/interval-containment.ts
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
+      - run: npm run program-id:check
+      - run: npm run load-bits:smoke
       - run: npx tsx scripts/count-check.ts
       - run: npm run build
         env:
@@ -354,7 +358,8 @@ jobs:
               const started = generation;
               const deadline = Date.now() + 20000;
               let text = "";
-              let tries = 0;
+              let pressed = false;
+              let waits = 0;
               while (Date.now() < deadline) {
                 count();
                 text = result?.textContent?.trim() ?? "";
@@ -362,21 +367,20 @@ jobs:
                   observer.disconnect();
                   return text;
                 }
-                // The keys are in the first HTML, before the page is live. A click then is
-                // lost and the empty screen stays 0, so press the three keys again.
-                if (tries < 8 && (text === "0" || text === "")) {
+                // The keys are in the first HTML. Click only after hydration marks the
+                // screen, and only once, so a press that does not land is a failure.
+                const screen = document.querySelector("[aria-label='Calculator screen']");
+                if (!pressed) {
+                  if (screen?.dataset.ready !== "1") {
+                    waits += 1;
+                    if (waits > 40) break;
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                    continue;
+                  }
                   document.querySelector(".ti-btn-one").click();
                   document.querySelector(".ti-btn-one").click();
                   document.querySelector(".ti-btn-eml").click();
-                  tries += 1;
-                  const until = Date.now() + 500;
-                  while (Date.now() < until) {
-                    count();
-                    text = result?.textContent?.trim() ?? "";
-                    if (text !== "0" && text !== "") break;
-                    await new Promise((resolve) => setTimeout(resolve, 40));
-                  }
-                  continue;
+                  pressed = true;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 40));
               }

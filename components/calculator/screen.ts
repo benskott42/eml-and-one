@@ -241,7 +241,7 @@ export function shortcutTitle(node: Node, hint?: string): string {
   const presses = pressPreviewForNode(node);
   const lead = hint ? `${hint}. ` : "";
   if (!presses) return `${lead}Shortcut for the 1 and EML keys.`;
-  return `${lead}Presses ${presses.preview}${presses.truncated ? ` (${presses.presses} presses)` : ""}`;
+  return `${lead}Presses ${presses.preview}${presses.truncated ? ` (${presses.presses} presses)` : ""}, in bits with E = 1 and the 1 key = 0`;
 }
 
 export function binaryCaption(id: string, x: string, y: string): string {

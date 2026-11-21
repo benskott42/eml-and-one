@@ -1333,6 +1333,8 @@ function finiteLiteral(text: string): number {
 }
 
 function exactRealInput(text: string): Node {
+  // The float is only the hardware stand-in. It is not an exact point when the
+  // text does not equal that float, so a later shortcut must not fold on it.
   const node = noteExactLiteral(input({ re: finiteLiteral(text), im: 0 }, text), text);
   if (/^[+-]?\d+$/.test(text)) return markExactInt(node, BigInt(text));
   return node;

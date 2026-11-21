@@ -592,3 +592,146 @@ html.ti-two-buttons .ti-btn-eml {
     filter: brightness(0.9);
   }
 }
+
+/* Program ID panel (local prototype) */
+.ti-pid {
+  margin-top: 14px;
+  padding: 10px 12px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  color: #e8edf1;
+}
+
+.ti-pid h2 {
+  margin: 0 0 6px;
+  color: #d7e0e8;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ti-pid-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.ti-pid-list > div {
+  display: grid;
+  grid-template-columns: 8.5em 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ti-pid-list dt {
+  color: #c9d3dc;
+  font-size: 0.78rem;
+}
+
+.ti-pid-list dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.ti-pid-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.ti-pid-sentinel {
+  padding: 0 2px;
+  border-bottom: 2px solid #f4e7a1;
+}
+
+.ti-pid-dim {
+  color: #b7c2cc;
+}
+
+.ti-pid-note {
+  margin: 6px 0 0;
+  color: #c9d3dc;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.ti-pid-step {
+  margin-top: 10px;
+}
+
+.ti-pid-step .ti-text-btn,
+.ti-pid .ti-text-btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.ti-pid-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ti-pid-modes legend {
+  padding: 0;
+  margin-bottom: 2px;
+  color: #d5dde4;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ti-pid-modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.ti-pid-modes input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: #f4e7a1;
+}
+
+.ti-pid-modes input:focus-visible,
+.ti-pid .ti-field:focus-visible,
+.ti-pid .ti-text-btn:focus-visible {
+  outline: 3px solid #f4e7a1;
+  outline-offset: 2px;
+}
+
+.ti-pid-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.ti-pid-row .ti-field {
+  flex: 1;
+  min-height: 44px;
+  margin-top: 0;
+}
+
+.ti-pid-error {
+  margin: 0;
+  color: #ffc9c2;
+  font-size: 0.82rem;
+}
+
+.ti-pid-error::before {
+  content: "Error: ";
+  font-weight: 650;
+}
+
+.ti-pid-status {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
