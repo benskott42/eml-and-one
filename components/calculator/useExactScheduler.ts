@@ -1,15 +1,44 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { type C } from "@/lib/eml/complex";
 import { beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "@/lib/eml/exact";
-import { exactScreen, type History } from "@/lib/eml/history";
+import { compareVerdict, exactProgressNote, exactScreen, fillNotice, type History } from "@/lib/eml/history";
 import { type Node } from "@/lib/eml/node";
 import { packCircuit } from "@/lib/eml/wire";
 import { failure, noteFor, resultError, type Entry, type Model } from "./screen";
 
 type JobKind = "fill" | "compare";
 
+/** What exact.worker.ts posts: "done", "error", or (v1.1, E6) "progress" for each pass. */
+export type WorkerMessage = {
+  type?: string;
+  request?: number;
+  text?: string;
+  re?: number;
+  im?: number;
+  singular?: string | null;
+  touchedLn0?: boolean;
+  underflowedExact?: boolean;
+  unverified?: boolean;
+  notCertified?: unknown;
+  cancelledZero?: boolean;
+  message?: string;
+  digits?: number;
+  elapsedMs?: number;
+};
+
 type ExactPayload =
-  | { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean }
+  | {
+      text: string;
+      re: number;
+      im: number;
+      singular: string | null;
+      touchedLn0: boolean;
+      underflowedExact?: boolean;
+      unverified?: boolean;
+      /** v1.1 (E3) */
+      notCertified?: boolean;
+      cancelledZero?: boolean;
+    }
   | { error: string };
 
 /**
@@ -66,12 +95,20 @@ export function useExactScheduler(input: {
       }
       const exact = { re: payload.re, im: payload.im };
       if (job.kind === "compare") {
-        if (payload.unverified) {
-          publishWatch(job.watch, { ...current, notice: "couldn't verify" });
+        // v1.1 (E3): a cancelled or not-certified exact 0 is not shown as the reference.
+        const verdict = compareVerdict({
+          text: payload.text,
+          unverified: payload.unverified === true,
+          notCertified: payload.notCertified === true,
+          cancelledZero: payload.cancelledZero === true,
+          differs: payload.underflowedExact === true || beyondFloatBound(job.floated, exact),
+        });
+        if (!verdict) return;
+        if ("notice" in verdict) {
+          publishWatch(job.watch, { ...current, notice: verdict.notice });
           return;
         }
-        if (!payload.underflowedExact && !beyondFloatBound(job.floated, exact)) return;
-        publishWatch(job.watch, { ...current, floatDiffers: true, exactBeside: payload.text });
+        publishWatch(job.watch, { ...current, floatDiffers: true, exactBeside: verdict.beside });
         return;
       }
       if (payload.unverified) {
@@ -82,10 +119,14 @@ export function useExactScheduler(input: {
       publishWatch(job.watch, {
         ...current,
         pendingExact: false,
+        progress: undefined,
         value: exact,
         text: payload.text,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
+        cancelledZero: payload.cancelledZero === true,
+        notCertified: payload.notCertified === true,
+        notice: fillNotice({ notCertified: payload.notCertified === true }) ?? current.notice,
       });
     },
     [modelRef, publishWatch],
@@ -135,13 +176,25 @@ export function useExactScheduler(input: {
           touchedLn0: report.touchedLn0,
           underflowedExact: exactUnderflowsFloat(report.value),
           unverified: report.unverified === true,
+          notCertified: report.notCertified !== undefined,
+          cancelledZero: report.cancelledZero === true,
         });
       } catch (err) {
         finishExact(request, { error: failure(err) });
       }
     };
-    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; message?: string }) => {
+    const accept = (data: WorkerMessage) => {
       if (data.request === undefined || !exactJobs.current.has(data.request)) return;
+      // v1.1 (E6): the worker posts progress on the FIRST pass. It is not the result: the job
+      // stays in flight, and only the pending fill row shows the line.
+      if (data.type === "progress") {
+        const job = exactJobs.current.get(data.request);
+        if (!job || job.kind !== "fill") return;
+        const row = modelRef.current.stack.find((item) => item.watch === job.watch);
+        if (!row || !row.pendingExact || row.cancelled) return;
+        publishWatch(job.watch, { ...row, progress: exactProgressNote(data.digits ?? 0, data.elapsedMs ?? 0) });
+        return;
+      }
       inflight.current.fill.delete(data.request);
       inflight.current.compare.delete(data.request);
       if (data.type === "error") {
@@ -156,6 +209,8 @@ export function useExactScheduler(input: {
         touchedLn0: data.touchedLn0 === true,
         underflowedExact: data.underflowedExact === true,
         unverified: data.unverified === true,
+        notCertified: data.notCertified !== undefined && data.notCertified !== null,
+        cancelledZero: data.cancelledZero === true,
       });
     };
     const onStack = (watch: number) => stack.some((item) => item.watch === watch);
@@ -241,7 +296,7 @@ export function useExactScheduler(input: {
       for (const [name, value] of Object.entries(bound)) env[name] = { re: value.re, im: value.im };
       worker.postMessage({ request, tokens: packed.tokens, root: packed.root, env });
     }
-  }, [finishExact, modelRef, stack]);
+  }, [finishExact, modelRef, publishWatch, stack]);
 
   return { cancel };
 }

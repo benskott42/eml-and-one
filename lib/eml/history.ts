@@ -41,6 +41,61 @@ export function modeRequest<T extends string>(current: T, next: T, busy: boolean
  */
 export const FLOAT_DIFFERS = "float differs from exact";
 
+/** v1.1 (reviewbot E3/M4): the only status words besides "couldn't verify". */
+export const NOT_CERTIFIED = "≈ not certified";
+
+export type ExactVerdictInput = {
+  /** Exact display text. */
+  text: string;
+  unverified: boolean;
+  /** Sticky absorbed-term flag from the engine (item 0). */
+  notCertified: boolean;
+  /** The engine's 0 came through a recorded cancellation. */
+  cancelledZero: boolean;
+  /** The float compare found the float outside its bound (or exact underflows float). */
+  differs: boolean;
+};
+
+/**
+ * v1.1 (E3): what a float row's compare job may say.
+ * An exact 0 that came from cancellation, or any not-certified exact value, is not a
+ * reference: "float differs from exact · 0" would present a possibly wrong 0 as the truth.
+ */
+export function compareVerdict(input: ExactVerdictInput): { notice: string } | { beside: string } | null {
+  if (input.unverified) return { notice: "couldn't verify" };
+  if (!input.differs) return null;
+  const zero = isZeroText(input.text);
+  // Not certified: the 0 may be the lost term's victim, so the compare cannot conclude.
+  if (zero && input.notCertified) return { notice: "couldn't verify" };
+  // Certified after a cancellation (sin π): the 0 may be right, but "· 0" is not shown as the
+  // reference (E3). The float row keeps its own value and no caption.
+  if (zero && input.cancelledZero) return null;
+  if (input.notCertified) return { beside: `${input.text} (${NOT_CERTIFIED})` };
+  return { beside: input.text };
+}
+
+/** v1.1 (E3): the note an exact-mode fill adds beside its value, if any. */
+export function fillNotice(input: { notCertified: boolean }): string | null {
+  return input.notCertified ? NOT_CERTIFIED : null;
+}
+
+/** v1.1 (E3): the "· 0" caption name is withheld for a cancelled or not-certified 0. */
+export function withholdZeroName(input: { text: string; cancelledZero: boolean; notCertified: boolean }): boolean {
+  return isZeroText(input.text) && (input.cancelledZero || input.notCertified);
+}
+
+/** v1.1 (E6): the note under a pending exact fill once the worker reports a pass. */
+export function exactProgressNote(digits: number, elapsedMs: number): string {
+  const secs = Math.floor(Math.max(0, elapsedMs) / 1000);
+  const where = digits > 0 ? ` · ${digits} digits` : "";
+  return secs >= 1 ? `computing${where} · ${secs} s` : `computing${where}`;
+}
+
+export function isZeroText(text: string): boolean {
+  const t = text.trim();
+  return t === "0" || t === "−0" || t === "-0";
+}
+
 /**
  * Exact mode never keeps a previous result up. Computing and cancel both
  * replace it. A finished value is the only number the screen may show.

@@ -25,7 +25,6 @@ import {
   chypot,
 } from "./complex";
 import {
-  tAdd,
   tAvg,
   tDiv,
   tE,
@@ -38,7 +37,8 @@ import {
   tPi,
   tPow,
   tSqrt,
-  tSub,
+  userAdd,
+  userSub,
   literalNode,
   unaryBuilders,
 } from "./library";
@@ -330,11 +330,35 @@ function balanced(op: "+" | "*", nodes: Node[]): Node {
   const mid = Math.floor(nodes.length / 2);
   const left = balanced(op, nodes.slice(0, mid));
   const right = balanced(op, nodes.slice(mid));
-  return op === "+" ? tAdd(left, right) : tMul(left, right);
+  return op === "+" ? userAdd(left, right) : tMul(left, right);
+}
+
+/** True when a sum contains the negation of another sum or difference. Iterative: a sum of many terms is a deep spine. */
+function holdsNegatedGroup(root: Ast): boolean {
+  const stack: Ast[] = [root];
+  const seen = new Set<Ast>();
+  while (stack.length) {
+    const ast = stack.pop();
+    if (!ast || seen.has(ast)) continue;
+    seen.add(ast);
+    if (ast.k === "pre" && ast.name === "neg") {
+      if (ast.arg.k === "+" || (ast.arg.k === "bin" && ast.arg.name === "-")) return true;
+      continue;
+    }
+    if (ast.k === "+") for (const child of ast.args) stack.push(child);
+  }
+  return false;
 }
 
 function foldAst(ast: Ast): Node {
   if (ast.k === "n") return ast.node;
+  // Flattening would split (a+b)+(-(a+b)) into a, b, and -(a+b), so the identical nodes never meet.
+  if (ast.k === "+" && holdsNegatedGroup(ast)) {
+    const parts = ast.args.map(foldAst);
+    const first = parts[0];
+    if (!first) throw new EmlError("The expression ended early.");
+    return parts.slice(1).reduce((sum, part) => userAdd(sum, part), first);
+  }
   if (ast.k === "+" || ast.k === "*") {
     const flat: Ast[] = [];
     const pending: Ast[] = [ast];
@@ -357,7 +381,7 @@ function foldAst(ast: Ast): Node {
   if (ast.k === "call") return applyNode(ast.name, ast.args.map(foldAst));
   const left = foldAst(ast.args[0]);
   const right = foldAst(ast.args[1]);
-  if (ast.name === "-") return tSub(left, right);
+  if (ast.name === "-") return userSub(left, right);
   if (ast.name === "/") return tDiv(left, right);
   return tPow(left, right);
 }
@@ -456,7 +480,21 @@ function refNeg(value: C): C {
 }
 
 /** The same expression on an ordinary complex calculator, for comparison. */
+/** v1.1 (E3): set by referenceExpression when the float reference dropped a term or underflowed. */
+let refLost = false;
+const nonzero = (v: C) => Number.isFinite(v.re) && Number.isFinite(v.im) && (v.re !== 0 || v.im !== 0);
+const isZeroC = (v: C) => v.re === 0 && v.im === 0;
+const sameC = (a: C, b: C) => a.re === b.re && a.im === b.im;
+
+/** v1.1 (E3): did the float reference lose a nonzero term (1 + 1e−130 = 1) or underflow to 0? */
+export function referenceLostTerm(source: string, variables: Record<string, C>): boolean {
+  refLost = false;
+  referenceExpression(source, variables);
+  return refLost;
+}
+
 export function referenceExpression(source: string, variables: Record<string, C>): C | null {
+  refLost = false;
   try {
     const stack: C[] = [];
     for (const item of toRpn(tokenize(source))) {
@@ -474,7 +512,9 @@ export function referenceExpression(source: string, variables: Record<string, C>
       }
       if (item.k === "call") {
         const args = stack.splice(stack.length - item.argc, item.argc);
-        stack.push(applyRef(item.name, args));
+        const out = applyRef(item.name, args);
+        if (item.name === "exp" && args[0] && nonzero(args[0]) && isZeroC(out)) refLost = true;
+        stack.push(out);
         continue;
       }
       if (item.name === "neg" || item.name === "sqrt") {
@@ -486,11 +526,18 @@ export function referenceExpression(source: string, variables: Record<string, C>
       const right = stack.pop();
       const left = stack.pop();
       if (!left || !right) return null;
-      if (item.name === "+") stack.push(cadd(left, right));
-      else if (item.name === "-") stack.push(csub(left, right));
-      else if (item.name === "*") stack.push(cmul(left, right));
-      else if (item.name === "/") stack.push(cdiv(left, right));
-      else stack.push(cpow(left, right));
+      let out: C;
+      if (item.name === "+") out = cadd(left, right);
+      else if (item.name === "-") out = csub(left, right);
+      else if (item.name === "*") out = cmul(left, right);
+      else if (item.name === "/") out = cdiv(left, right);
+      else out = cpow(left, right);
+      if (nonzero(left) && nonzero(right)) {
+        const additive = item.name === "+" || item.name === "-";
+        if (additive && (sameC(out, left) || (item.name === "+" && sameC(out, right)) || (item.name === "-" && sameC(out, { re: -right.re, im: -right.im })))) refLost = true;
+        if (!additive && isZeroC(out)) refLost = true;
+      }
+      stack.push(out);
     }
     return stack.length === 1 ? stack[0] ?? null : null;
   } catch {
@@ -503,11 +550,23 @@ export function referenceExpression(source: string, variables: Record<string, C>
  * A reference that collapsed to 0 while the printed value did not is float underflow,
  * including ln(1+10^(−130)), whose addend never reaches the float sum.
  */
-export function agreementNote(caption: string, value: C, variables: Record<string, C>, text: string): string | null {
+export function agreementNote(
+  caption: string,
+  value: C,
+  variables: Record<string, C>,
+  text: string,
+  flags: { cancelledZero?: boolean; notCertified?: boolean } = {},
+): string | null {
   const ref = referenceExpression(caption, variables);
+  const lost = refLost;
   if (!ref || !isUsable(ref)) return null;
   const refZero = ref.re === 0 && (ref.im === 0 || Object.is(ref.im, -0));
   const textZero = text.trim() === "0" || text.trim() === "−0" || text.trim() === "-0";
+  // v1.1 (E3): a displayed 0 is never "the usual value" when the float reference lost a
+  // term or underflowed, or when exact reached 0 through a recorded cancellation.
+  if (textZero && lost) return null;
+  const matches = isUsable(value) && formatC(value) === formatC(ref);
+  if (textZero && matches && (flags.cancelledZero || flags.notCertified)) return null;
   if (refZero && !textZero) return "float underflows";
   if (isUsable(value) && formatC(value) === formatC(ref)) return "matches the usual value";
   if (/tan\s*\(\s*pi\s*\/\s*2\s*\)/i.test(caption)) {

@@ -3,6 +3,7 @@ import type { C } from "./complex";
 import {
   EmlError,
   EmlLimitError,
+  EXACT_TIMED_OUT,
   SINGULAR_INDET,
   SINGULAR_LN0,
   SINGULAR_NONFINITE,
@@ -10,10 +11,13 @@ import {
   type EvalBudget,
   type Node,
   exactLiteralOf,
+  unverifiedKind,
   precisionMessage,
+  provenInteger,
 } from "./node";
-import { decadeOf, inScaledShell, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
+import { floatShowsComponent } from "./format";
 
 /**
  * Wide-exponent complex values for EML circuits.
@@ -36,9 +40,9 @@ import { isSeriesShortcut } from "./node";
  */
 
 const PRECISION = 120;
-/** Digits on screen, the same count float mode prints with toPrecision(12). */
+/** Significant digits on screen, the same as float mode's toPrecision(12). */
 const SHOWN_DIGITS = 12;
-/** Scientific notation below this, as float mode does below 10^(−6). */
+/** Below this, scientific notation, as float mode does below 10^(−6). */
 const FIXED_FLOOR = "1e-6";
 
 const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
@@ -105,6 +109,16 @@ function expZ(v: Z): Z {
     return { re: NAN, im: NAN };
   }
   const mag = v.re.exp();
+  if (!v.re.isZero() && mag.eq(1)) noteAbsorb(ONE, v.re);
+  // v1.1 (overnight Finding 8): exp(iθ) with a huge θ carries |θ|·10^(−digits) of angle
+  // error, so its parts are only good to that absolute size. Record it as working scale,
+  // and the dust check clears i^(10^20)'s 3.5×10^(−97) i once it moves with the digits.
+  if (!v.im.isZero() && v.im.e >= 2 && mag.isFinite() && !mag.isZero()) {
+    const w = v.im.e + mag.e;
+    if (w > emlWork) emlWork = w;
+    if (w > emlWorkRe) emlWorkRe = w;
+    if (w > emlWorkIm) emlWorkIm = w;
+  }
   if (mag.isZero()) {
     // A finite argument whose exponential left the exponent range is not the mathematical 0.
     if (v.re.isFinite()) expCollapsed = true;
@@ -129,6 +143,10 @@ function lnEml(v: Z): Z {
   const mag = D.hypot(v.re, v.im);
   if (mag.isZero()) return { re: NEG_INF, im: v.re.isNeg() ? negPi : ZERO };
   const onCut = v.im.isZero() && v.re.isNeg();
+  if (v.re.isNeg() && v.re.isFinite() && (v.im.isZero() || v.re.e - v.im.e > D.precision - 24)) {
+    cutSeen = true;
+    nodeCut = true;
+  }
   let arg = onCut ? negPi : (atan2Fast(v.im, v.re) ?? D.atan2(v.im, v.re));
   if (!onCut && !v.im.isZero() && (arg.eq(negPi) || arg.eq(negPi.neg()))) {
     const gap = v.re.e - v.im.e;
@@ -138,6 +156,11 @@ function lnEml(v: Z): Z {
     }
   }
   if (!mag.isFinite()) return { re: POS_INF, im: arg.isFinite() ? arg : ZERO };
+  if (!v.re.isZero() && !v.im.isZero()) {
+    const [big, small] = v.re.abs().gte(v.im.abs()) ? [v.re.abs(), v.im.abs()] : [v.im.abs(), v.re.abs()];
+    // ln|z| = ln|big| + small²/(2 big²) + …; hypot drops that term once 2·gap passes the precision.
+    if (mag.eq(big)) noteAbsorb(ONE, new D(10).pow(-2 * (big.e - small.e)));
+  }
   return { re: D.ln(mag), im: arg };
 }
 
@@ -203,14 +226,41 @@ let lossGap = 0;
 let expCollapsed = false;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
+/**
+ * Finding 4 (v1.1): a Log argument sat on, or within dust of, the negative real axis in
+ * this pass. Its bank then depends on an imaginary part that may have fallen off the
+ * working precision (ln(−2 − i/10^130), sqrt(−4 − 10^(−130) i)).
+ */
+let cutSeen = false;
+let nodeCut = false;
 
+/** Smallest nonzero exponent of a value, as noteSeen counts it (0 when none). */
+function partExp(v: Z): number {
+  let e = 0;
+  for (const part of [v.re, v.im]) if (part.isFinite() && !part.isZero() && part.e < e) e = part.e;
+  return e;
+}
+function leafTiny(n: Node | undefined): number {
+  if (!n || n.type !== "input") return 0;
+  return partExp(z(n.value.re, n.value.im));
+}
+function imExp(v: Z): number {
+  return v.im.isFinite() && !v.im.isZero() && v.im.e < 0 ? v.im.e : 0;
+}
+function leafTinyIm(n: Node | undefined): number {
+  if (!n || n.type !== "input") return 0;
+  return imExp(z(n.value.re, n.value.im));
+}
 function noteSeen(v: Z): void {
   const take = (part: Decimal) => {
     if (part.isFinite() && !part.isZero() && part.e < tiniest) tiniest = part.e;
   };
   take(v.re);
   take(v.im);
+  if (v.im.isFinite() && !v.im.isZero() && v.im.e < tiniestIm) tiniestIm = v.im.e;
 }
+/** Finding 4: decade of the smallest nonzero imaginary part this pass saw (the side of a cut). */
+let tiniestIm = 0;
 /**
  * Size of the terms that cancelled by at least two decades in the last
  * exactEml call (decimal exponent). Rounding there leaves absolute noise near
@@ -220,8 +270,52 @@ function noteSeen(v: Z): void {
 let emlWork = Number.NEGATIVE_INFINITY;
 let emlWorkRe = Number.NEGATIVE_INFINITY;
 let emlWorkIm = Number.NEGATIVE_INFINITY;
+/**
+ * v1.1 prototype (compscibot): absorbed terms. A nonzero operand that a gate
+ * dropped whole because it sat below the working precision of its partner:
+ * |small| < ulp(big). `emlAbsorbGap` is the decade gap, `emlAbsorbExp` the
+ * decade of the lost term. Cancellation to dust is not this; that is lossGap.
+ */
+let emlAbsorbGap = Number.NEGATIVE_INFINITY;
+let emlAbsorbExp = Number.POSITIVE_INFINITY;
+function noteAbsorb(big: Decimal, small: Decimal): void {
+  if (ABSORB_OFF) return;
+  if (!big.isFinite() || !small.isFinite() || big.isZero() || small.isZero()) return;
+  const gap = big.e - small.e;
+  if (!Number.isFinite(gap) || gap < D.precision - 2) return;
+  if (gap > emlAbsorbGap) emlAbsorbGap = gap;
+  if (small.e < emlAbsorbExp) emlAbsorbExp = small.e;
+}
+/** diff = left − right came out equal to one operand while the other was nonzero. */
+function checkAbsorb(diff: Decimal, left: Decimal, right: Decimal): void {
+  if (ABSORB_OFF) return;
+  if (!diff.isFinite() || !left.isFinite() || !right.isFinite()) return;
+  if (!right.isZero() && diff.eq(left) && !left.isZero()) noteAbsorb(left, right);
+  else if (!left.isZero() && diff.eq(right.neg()) && !right.isZero()) noteAbsorb(right, left);
+}
 /** Working precision is never raised past this. A value that still needs more is not certified. */
 const PRECISION_CAP = 480;
+
+/**
+ * v1.1 suite profiling, off unless EML_PROF names an output file. Inclusive wall
+ * time and counts per policy path, so the suite slowdown can be attributed.
+ * EML_ABSORB_OFF=1 disables the absorbed-term detector (profiling only).
+ */
+const PROF_FILE = typeof process !== "undefined" ? process.env?.EML_PROF : undefined;
+const PROF = PROF_FILE ? new Map<string, { n: number; ms: number }>() : null;
+const profRoots = new WeakSet<object>();
+const ABSORB_OFF = typeof process !== "undefined" && process.env?.EML_ABSORB_OFF === "1";
+function prof(key: string, t0: number): void {
+  if (!PROF) return;
+  const row = PROF.get(key) ?? { n: 0, ms: 0 };
+  row.n += 1;
+  row.ms += performance.now() - t0;
+  PROF.set(key, row);
+}
+if (PROF && PROF_FILE && typeof process !== "undefined") {
+  // One stderr line, tagged with EML_PROF's value; no fs import, so the browser bundle is unaffected.
+  process.on("exit", () => console.error(`EML_PROF ${PROF_FILE} ${JSON.stringify(Object.fromEntries(PROF))}`));
+}
 
 function noteWork(left: Decimal, right: Decimal, diff: Decimal, part: "re" | "im"): void {
   const scale = D.max(left.abs(), right.abs());
@@ -232,9 +326,12 @@ function noteWork(left: Decimal, right: Decimal, diff: Decimal, part: "re" | "im
   else emlWorkIm = Math.max(emlWorkIm, scale.e);
 }
 
+/** The loss gap noted by the node being evaluated (reset per node), for the cache replay. */
+let nodeLoss = 0;
 function noteLoss(scale: Decimal, residual: Decimal): void {
   if (!scale.isFinite() || scale.isZero() || !residual.isFinite() || residual.isZero()) return;
   const gap = scale.e - residual.abs().e;
+  if (Number.isFinite(gap) && gap > nodeLoss) nodeLoss = gap;
   if (Number.isFinite(gap) && gap > lossGap) lossGap = gap;
 }
 
@@ -257,13 +354,14 @@ function cancelled(diff: Decimal, left: Decimal, right: Decimal, part: "re" | "i
  * and 10^(−125) i beside 10^(−18), are real parts. Cancellation dust is removed
  * only after a second evaluation shows that the part moved.
  */
-function scrubDust(v: Z): Z {
+function scrubDust(v: Z, floorDigits = D.precision, keepBuried = false): Z {
   if (!v.re.isFinite() || !v.im.isFinite()) return v;
   const scale = D.max(v.re.abs(), v.im.abs());
   if (!scale.isFinite() || scale.isZero()) return v;
-  const floor = scale.mul(new D(10).pow(-(D.precision - 12)));
+  // v1.1: after a raised pass the floor is that pass's, so a part it resolved (the K33 −iπ word's 5.7e−116) survives.
+  const floor = scale.mul(new D(10).pow(-(floorDigits - 12)));
   const buried = scale.mul(new D(10).pow(-160));
-  const limit = D.max(floor, buried);
+  const limit = keepBuried ? floor : D.max(floor, buried);
   const visible = new D(10).pow(-12);
   const leading = D.max(v.re.abs(), v.im.abs());
   const keep = (part: Decimal) => {
@@ -284,6 +382,8 @@ function exactEml(x: Z, y: Z): Z {
   const b = lnEml(y);
   if (a.re.isNaN() || a.im.isNaN() || b.re.isNaN() || b.im.isNaN()) return { re: NAN, im: NAN };
   if (sameInfinity(a.re, b.re) || sameInfinity(a.im, b.im)) return { re: NAN, im: NAN };
+  checkAbsorb(a.re.sub(b.re), a.re, b.re);
+  checkAbsorb(a.im.sub(b.im), a.im, b.im);
   const re = cancelled(a.re.sub(b.re), a.re, b.re, "re");
   const im = cancelled(a.im.sub(b.im), a.im, b.im, "im");
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
@@ -305,13 +405,38 @@ export type ExactReport = {
   /** Per-component cancellation size. A part with no finite work was not a residue. */
   workRe?: number;
   workIm?: number;
+  /** v1.1: largest decade gap of a nonzero term a gate dropped (|small| < ulp(big)). */
+  absorbedGap?: number;
+  /** v1.1: decades below x of the furthest odd-series term exact mode kept (exact.ts series hook). */
+  seriesKept?: number;
+  /** v1.1: decade of the smallest such term. */
+  absorbedExp?: number;
+  /** v1.1: set when an absorbed term could not be resolved under the cap. Sticky to the display. */
+  notCertified?: { reason: "absorbed"; termDecade: number; gap: number };
   /** Precision the value was computed at. */
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
+  /** A Log argument was on or within dust of the negative real axis (Finding 4). */
+  cutSeen?: boolean;
+  /** Decade of the smallest nonzero value this pass saw. */
+  tiniestExp?: number;
+  /** Decade of the smallest nonzero imaginary part this pass saw (Finding 4). */
+  tiniestImExp?: number;
+  /**
+   * v1.1 (reviewbot E3): the value is 0 and the first pass recorded a cancellation
+   * (lossGap or an absorbed term). The screen must not call such a 0 "the usual value"
+   * or show it as the reference in "float differs from exact · 0".
+   */
+  cancelledZero?: boolean;
 };
 
-type Work = { all: number; re: number; im: number };
+/**
+ * `loss`, `tiny` and `lead` (v1.1, overnight Finding 1/5): what a subtree contributed to the
+ * pass-wide lossGap, tiniest and sawLead. A pureCache hit skips the subtree, so it must
+ * replay these, or a repeat compute certifies a 0 the first compute escalated away.
+ */
+type Work = { all: number; re: number; im: number; ab?: number; abE?: number; kept?: number; loss?: number; tiny?: number; tinyIm?: number; lead?: boolean; cut?: boolean };
 type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
@@ -378,9 +503,11 @@ function demandedTinyDigits(root: Node, env: Record<string, C | Z>): number {
   return need;
 }
 
-function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport {
+function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, budget: EvalBudget, keepBuried = false): ExactReport {
   const saved = D.precision;
   D.set({ precision: digits });
+  const savedKeep = keepBuriedPass;
+  keepBuriedPass = keepBuried;
   try {
     const report = exactReport(root, env, budget, 2);
     if (digits <= saved) return report;
@@ -388,9 +515,10 @@ function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, bud
     // working-precision value, so round back once the hidden component is recovered.
     D.set({ precision: saved });
     const round = (part: Decimal) => (part.isFinite() ? new D(part.toSignificantDigits(saved).toString()) : part);
-    return { ...report, digits, value: scrubDust({ re: round(report.value.re), im: round(report.value.im) }) };
+    return { ...report, digits, value: scrubDust({ re: round(report.value.re), im: round(report.value.im) }, process.env?.EML_SCRUB_AT_SAVED === "1" ? saved : digits, keepBuried) };
   } finally {
     D.set({ precision: saved });
+    keepBuriedPass = savedKeep;
   }
 }
 
@@ -417,8 +545,14 @@ function nearCut(part: Decimal): boolean {
   return part.abs().sub(pi).abs().lt("1e-6");
 }
 
-function present(report: ExactReport): ExactReport {
-  return { ...report, value: scrubDust(report.value) };
+/** Set while the cut-side escalation's own pass runs, so its pass-2 present() keeps the part too. */
+let keepBuriedPass = false;
+function present(report: ExactReport, cutFloor?: number): ExactReport {
+  if (keepBuriedPass && cutFloor === undefined) return { ...report, value: scrubDust(report.value, D.precision, true) };
+  // v1.1 (Finding 4): after the cut-side escalation the small part is the one that decided
+  // the bank (sqrt(−4 − i/10^130) = 2.5×10^(−131) − 2i), so it keeps that pass's floor and is
+  // not dropped as buried. Everywhere else the pristine floor stands.
+  return { ...report, value: scrubDust(report.value, cutFloor ?? D.precision, cutFloor !== undefined) };
 }
 
 /**
@@ -448,14 +582,34 @@ function confirmDust(report: ExactReport, root: Node, env: Record<string, C | Z>
   if (!which) return report;
   const part = report.value[which];
   let again: Decimal;
+  const td = PROF ? performance.now() : 0;
   try {
     again = atPrecision((report.digits ?? D.precision) + 24, root, env, budget).value[which];
-  } catch {
+  } catch (err) {
+    if (isTimeout(err)) throw err;
     return report;
+  } finally {
+    prof("confirmDust atPrecision", td);
   }
   if (again.isFinite() && part.sub(again).abs().lte(part.abs().mul("1e-6"))) return report;
   const cleared = part.isNeg() ? new D(-0) : ZERO;
   return { ...report, value: which === "re" ? { re: cleared, im: report.value.im } : { re: report.value.re, im: cleared } };
+}
+
+/**
+ * v1.1 (overnight Finding 3): a vanished result raised to k + 48 digits is good to about
+ * 48 significant digits, not to the working 120. (exp(10^(−130)) − 1)·10^130 came back as
+ * 1.000…0001 with a noise digit at the 49th place. Keep 40.
+ */
+const TRUST_DIGITS = 40;
+function trustDigits(report: ExactReport): ExactReport {
+  const round = (part: Decimal) => (part.isFinite() && !part.isZero() ? part.toSignificantDigits(TRUST_DIGITS) : part);
+  return { ...report, value: { re: round(report.value.re), im: round(report.value.im) } };
+}
+
+/** v1.1 (E6): the cooperative deadline ends the whole job; no catch may turn it into a value. */
+function isTimeout(err: unknown): boolean {
+  return err instanceof EmlLimitError && err.message === EXACT_TIMED_OUT;
 }
 
 function certifyZero(report: ExactReport): ExactReport {
@@ -524,10 +678,14 @@ function settleResidue(
     const next = Math.min(PRECISION_CAP, Math.max(digits + step, raised));
     if (next <= digits) return certifyZero(current);
     let again: ExactReport;
+    const ts = PROF ? performance.now() : 0;
     try {
       again = atPrecision(next, root, env, budget);
-    } catch {
+    } catch (err) {
+      if (isTimeout(err)) throw err;
       return certifyZero(current);
+    } finally {
+      prof("settleResidue atPrecision", ts);
     }
     const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
     if (!changed) return current;
@@ -555,7 +713,122 @@ function literalSpan(root: Node): number {
   return span;
 }
 
+/**
+ * A huge integer kept beside a non-integer is a mul by a leaf labelled `beside:`.
+ * That mul is not the sum: exact evaluation would certify the bare integer.
+ * The leaf sits next to the root, so this does not walk the power.
+ */
+function hidesBeside(root: Node): boolean {
+  const stack: { n: Node; depth: number }[] = [{ n: root, depth: 0 }];
+  let steps = 0;
+  while (stack.length && steps < 64) {
+    const frame = stack.pop();
+    if (!frame) break;
+    steps += 1;
+    const node = frame.n;
+    if (node.type === "input") {
+      if (node.label.startsWith("beside:")) return true;
+      continue;
+    }
+    if (node.type === "eml" && frame.depth < 8) {
+      stack.push({ n: node.a, depth: frame.depth + 1 }, { n: node.b, depth: frame.depth + 1 });
+    }
+  }
+  return false;
+}
+
+/**
+ * v1.1 prototype: absorbed-term policy. One decision, no loop: a gap that fits
+ * under the cap is re-run once at gap + 48 digits; a gap past the cap (the
+ * #431 tower's ~1.66M decades) is marked not certified at once.
+ */
+/** lossGap (or absorbed gap) of the last pass-0 first evaluation, for E3's cancelledZero. */
+let firstPassGap = 0;
+
 export function exactReport(
+  root: Node,
+  env: Record<string, C | Z> = {},
+  budget: EvalBudget = {},
+  pass = 0,
+): ExactReport {
+  if (pass !== 0) return exactReportAbsorb(root, env, budget, pass);
+  firstPassGap = 0;
+  const out = exactReportAbsorb(root, env, budget, pass);
+  // v1.1 (item 6): beside a possible infinity only "undefined" (NaN) is a result.
+  if (!out.unverified && unverifiedKind(root) === 1 && !(out.value.re.isNaN() && out.value.im.isNaN())) {
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+  }
+  if (!out.unverified && vanished(out.value) && firstPassGap > 0) return { ...out, cancelledZero: true };
+  return out;
+}
+
+function exactReportAbsorb(
+  root: Node,
+  env: Record<string, C | Z>,
+  budget: EvalBudget,
+  pass: number,
+): ExactReport {
+  const t0 = PROF ? performance.now() : 0;
+  const report = exactReportCore(root, env, budget, pass);
+  if (PROF && pass === 0) prof("exactReport pass0 core (incl. all escalation)", t0);
+  if (pass !== 0 || report.unverified) return report;
+  const gap = report.absorbedGap;
+  if (gap === undefined || !Number.isFinite(gap) || gap <= 0) return report;
+  // Only a result that reads as exact makes a claim the lost term can break:
+  // an integer or zero in each component (−1 for #431 and #5884). 1×10^300 for
+  // 10^300 + 1 is already a 12-digit rounding and is left alone (no retry cost).
+  // A component that is exactly 0 is also a claim: the K33 −iπ word's real part.
+  if (!looksExact(report.value) && !report.value.re.isZero() && !report.value.im.isZero()) return report;
+  const digits = report.digits ?? D.precision;
+  // Suite-time cut (v1.1 profile): a gap at the precision edge (≤ digits + 16) is rounding dust
+  // in 96 of 96 suite retries. digits + 24 already moves dust by 24 decades and fits any real
+  // term up to 10^(−(digits+16)), so it decides the same thing for less work than gap + 48.
+  const edge = gap <= digits + 16;
+  const need = edge ? digits + 24 : gap + 48;
+  // At most ONE re-run per result (Ben, v1.1): atPrecision re-enters with pass 2, which returns
+  // before this block, so the retry can never retry again.
+  if (need <= PRECISION_CAP && need > digits && process.env?.EML_ABSORB_RETRY !== "0") {
+    let again: ExactReport;
+    const tr = PROF ? performance.now() : 0;
+    try {
+      again = atPrecision(need, root, env, budget);
+    } catch (err) {
+      if (isTimeout(err)) throw err;
+      again = report;
+    }
+    prof("absorb retry (one atPrecision)", tr);
+    if (PROF) {
+      const seenBefore = profRoots.has(root);
+      profRoots.add(root);
+      prof(`retry root ${seenBefore ? "repeat" : "first"}${Object.keys(env).length ? " env" : ""}`, tr);
+      prof(`retry gap-digits ${gap - digits <= 16 ? "<=16" : gap - digits <= 100 ? "17..100" : ">100"}`, tr);
+    }
+    const left = again.absorbedGap;
+    // Rounding dust is absorbed at about 10^(−digits) and moves when the digits rise
+    // (cos π: 10^(−120), then 10^(−168)). A real lost term stays at its decade.
+    const movedExp = again.absorbedExp !== undefined && report.absorbedExp !== undefined && Math.abs(again.absorbedExp - report.absorbedExp) > 8;
+    const resolved = again !== report && (left === undefined || !Number.isFinite(left) || left < need - 2 || movedExp);
+    // First-pass gap at the precision edge that moves with the digits: rounding dust.
+    if (again !== report && movedExp && edge) {
+      if (PROF) prof("retry outcome: dust (moved)", performance.now());
+      return again;
+    }
+    if (PROF) prof(`retry outcome: ${resolved ? (looksExact(again.value) ? "resolved, still integer → nc" : "resolved, new value") : "unresolved → nc"}`, performance.now());
+    // Resolved and no longer exact-looking: the raised value is the answer.
+    if (resolved && !looksExact(again.value)) return again;
+    // Resolved but still rounds to an integer (1 + 10^(−200)): say so instead of printing a bare 1.
+    if (resolved) return { ...again, notCertified: { reason: "absorbed", termDecade: report.absorbedExp ?? Number.NEGATIVE_INFINITY, gap } };
+  }
+  if (PROF) prof("absorb flag without retry", performance.now());
+  return { ...report, notCertified: { reason: "absorbed", termDecade: report.absorbedExp ?? Number.NEGATIVE_INFINITY, gap } };
+}
+
+function looksExact(v: Z): boolean {
+  const part = (d: Decimal) => d.isZero() || (d.isFinite() && exactInteger(d));
+  return part(v.re) && part(v.im);
+}
+
+function exactReportCore(
   root: Node,
   env: Record<string, C | Z> = {},
   budget: EvalBudget = {},
@@ -567,6 +840,24 @@ export function exactReport(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
+  if (unverifiedKind(root) === 2 || hidesBeside(root)) {
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+  }
+  // The integer is the value. A later retry would rebuild the circuit and round off its units.
+  if (isMarkedExactInt(root)) {
+    const big = provenInteger(root);
+    if (big !== undefined) {
+      const text = big.toString();
+      const width = text.startsWith("-") ? text.length - 1 : text.length;
+      const saved = D.precision;
+      if (width > saved) D.set({ precision: width });
+      try {
+        return { value: z(text, 0), singular: null, touchedLn0: false };
+      } finally {
+        if (width > saved) D.set({ precision: saved });
+      }
+    }
+  }
   lossGap = 0;
   // Every pasted literal is evaluated where its digits fit. Past the 480-digit
   // cap the screen says it could not verify, rather than certifying a rounding.
@@ -589,15 +880,35 @@ export function exactReport(
   }
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
+  firstPassGap = Math.max(lossGap, report.absorbedGap ?? 0);
   if (vanished(report.value)) {
-    if (report.sawLead) return certifyZero(report);
+    if (report.sawLead) {
+      // v1.1: an odd series that kept a term below the working digits (seriesKept) is
+      // exact to the 480-digit cap, so f(x) − x is raised once to see that term. A zero
+      // from the leading-term shortcut (no kept term) still cannot be verified.
+      const kept = report.seriesKept;
+      if (kept !== undefined && Number.isFinite(kept) && kept + 48 <= PRECISION_CAP && kept + 48 > D.precision) {
+        const again = atPrecision(kept + 48, root, env, budget);
+        if (!vanished(again.value)) return confirmDust(present(trustDigits(again)), root, env, budget);
+      }
+      return certifyZero(report);
+    }
     const gap = lossGap;
     // Any recorded cancellation can hide the term that should have survived.
     // A structural zero such as 1−1 records no gap and stays certified.
     const fromGap = gap > 8 ? gap + 48 : 0;
-    const need = Math.max(demandedTinyDigits(root, env), fromGap);
+    // E1 (v1.1): a press-built circuit has no build-time hints, so demandedTinyDigits is 0
+    // and a 1 + 10^(−130) absorbed at 120 digits used to certify 0. The circuit itself
+    // computed the tiny value: the smallest nonzero magnitude seen in this pass is a hint
+    // that needs no tags and is the same cold or warm.
+    const seenTiny = tiniest < -(D.precision - 24) ? -tiniest + 48 : 0;
+    const hinted = demandedTinyDigits(root, env);
+    const need = Math.max(hinted, fromGap, seenTiny);
     if (need > PRECISION_CAP) return certifyZero(report);
     if (need > D.precision) {
+      const te = PROF ? performance.now() : 0;
+      const cause = Math.max(hinted, fromGap) > D.precision ? "vanished escalation (hint/gap, as pristine)" : "vanished escalation (seenTiny only, E1)";
+      try {
       let digits = Math.min(PRECISION_CAP, need);
       let again = atPrecision(digits, root, env, budget);
       // A snap that still lands on 0 is a deeper cancellation than this precision.
@@ -615,7 +926,10 @@ export function exactReport(
         } else if (lossGap > digits - 16) return certifyZero(again);
       }
       if (expCollapsed && vanished(again.value)) return certifyZero(again);
-      return confirmDust(present(again), root, env, budget);
+      return confirmDust(present(trustDigits(again)), root, env, budget);
+      } finally {
+        prof(cause, te);
+      }
     }
   }
   let settled = report;
@@ -625,6 +939,25 @@ export function exactReport(
   }
   settled = settleResidue(settled, root, env, budget);
   if (settled.unverified) return settled;
+  // Finding 4 (v1.1): a Log argument on the cut side of the negative real axis with a tiny
+  // value in the circuit. The bank is decided by whether that tiny value reaches the Log, so
+  // evaluate once where it fits (the same k + 48 rule), or refuse to certify past the cap.
+  let cutFloor: number | undefined;
+  // Only a tiny *imaginary* part decides the bank: sin(2·10^(−200)) has 10^(−600) series
+  // terms and an EML ln of a negative real in every subtraction, but nothing below the axis.
+  const seenIm = report.tiniestImExp ?? 0;
+  if (report.cutSeen && (settled.digits ?? D.precision) <= D.precision && seenIm < -(D.precision - 24)) {
+    const need = -seenIm + 48;
+    const tc = PROF ? performance.now() : 0;
+    try {
+      if (need > PRECISION_CAP) return certifyZero(settled);
+      settled = atPrecision(need, root, env, budget, true);
+      if (settled.unverified) return settled;
+      cutFloor = need;
+    } finally {
+      prof("cut-side escalation (Finding 4)", tc);
+    }
+  }
   // ln(−2 − 10^(−p) i) collapses onto the cut once p passes the working
   // precision, and the composed log then certifies +π. The point is still
   // below the axis. Raise precision until the known power is visible, or
@@ -639,7 +972,7 @@ export function exactReport(
     }
   }
   if (expCollapsed && vanished(settled.value)) return certifyZero(settled);
-  return confirmDust(present(settled), root, env, budget);
+  return confirmDust(present(settled, cutFloor), root, env, budget);
 }
 
 function exactReportOnce(
@@ -658,7 +991,12 @@ function exactReportOnce(
   let sawLead = false;
   tiniest = 0;
   expCollapsed = false;
+  tiniestIm = 0;
+  cutSeen = false;
   let steps = 0;
+  // v1.1 (E6): one progress call per pass; a deadline already past stops before the pass.
+  budget.onProgress?.({ digits: D.precision });
+  if (deadline && performance.now() > deadline) throw new EmlLimitError(EXACT_TIMED_OUT);
   let cache = pureCache.get(D.precision);
   if (!cache) {
     cache = new WeakMap();
@@ -668,7 +1006,7 @@ function exactReportOnce(
   while (stack.length) {
     if ((++steps & 31) === 0) {
       if (steps > maxNodes) throw new EmlLimitError("This circuit is too large for exact mode.");
-      if (deadline && performance.now() > deadline) throw new EmlLimitError("Exact evaluation timed out.");
+      if (deadline && performance.now() > deadline) throw new EmlLimitError(EXACT_TIMED_OUT);
     }
     const frame = stack.pop();
     if (!frame) break;
@@ -676,6 +1014,61 @@ function exactReportOnce(
     if (!n) throw new EmlError("Could not evaluate this circuit.");
     if (isSeriesShortcut(n)) sawLead = true;
     if (memo.has(n)) continue;
+    if (isMarkedExactInt(n) && n.type !== "input") {
+      const big = provenInteger(n);
+      if (big !== undefined) {
+        const value = z(big.toString(), 0);
+        memo.set(n, value);
+        noteSeen(value);
+        why.set(n, null);
+        logged.set(n, false);
+        continue;
+      }
+    }
+
+    // v1.1: an odd series node is its polynomial in x. Evaluate x, then the polynomial,
+    // instead of the lifted circuit (seconds at 333 digits, and its far terms came out wrong).
+    const poly = oddSeriesOf(n);
+    if (poly) {
+      const x = memo.get(poly.arg);
+      if (!x) {
+        stack.push({ n, seen: false });
+        stack.push({ n: poly.arg, seen: false });
+        continue;
+      }
+      if (x.im.isZero() && x.re.isFinite()) {
+        const x2 = x.re.times(x.re);
+        let acc = x.re;
+        let power = x.re;
+        // A term below the working precision of x is absorbed, as in a gate (noteAbsorb).
+        let gap = Number.NEGATIVE_INFINITY;
+        let lostExp = Number.POSITIVE_INFINITY;
+        for (const [num, den, sign] of poly.coeffs) {
+          power = power.times(x2);
+          const term = power.times(num).div(den);
+          const before = acc;
+          acc = sign < 0 ? acc.minus(term) : acc.plus(term);
+          if (!term.isZero() && acc.eq(before) && !before.isZero()) {
+            gap = Math.max(gap, before.e - term.e);
+            lostExp = Math.min(lostExp, term.e);
+          }
+        }
+        const value: Z = { re: acc, im: ZERO };
+        memo.set(n, value);
+        noteSeen(value);
+        why.set(n, why.get(poly.arg) ?? null);
+        logged.set(n, logged.get(poly.arg) ?? false);
+        const argWork = work.get(poly.arg);
+        const ownWork: Work = { ...(argWork ?? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }) };
+        // Not an absorbed term (ab): the series is exact to the cap, so a nonzero result
+        // stands. `kept` only lets a vanished f(x) − x raise once to see the term.
+        ownWork.lead = true;
+        if (Number.isFinite(gap)) ownWork.kept = Math.max(ownWork.kept ?? Number.NEGATIVE_INFINITY, gap);
+        void lostExp;
+        work.set(n, ownWork);
+        continue;
+      }
+    }
 
     if (n.type === "one") {
       memo.set(n, Z1);
@@ -685,6 +1078,17 @@ function exactReportOnce(
       continue;
     }
     if (n.type === "input") {
+      if (isMarkedExactInt(n)) {
+        const big = provenInteger(n);
+        if (big !== undefined) {
+          const value = z(big.toString(), 0);
+          memo.set(n, value);
+          noteSeen(value);
+          why.set(n, null);
+          logged.set(n, false);
+          continue;
+        }
+      }
       const literal = exactLiteralOf(n);
       const leaf = literal !== undefined ? z(literal) : z(n.value.re, n.value.im);
       memo.set(n, leaf);
@@ -711,6 +1115,12 @@ function exactReportOnce(
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
+      // Replay what the skipped subtree told the pass (Finding 1: repeat compute → 0).
+      if (hit.work.loss !== undefined && hit.work.loss > lossGap) lossGap = hit.work.loss;
+      if (hit.work.tiny !== undefined && hit.work.tiny < tiniest) tiniest = hit.work.tiny;
+      if (hit.work.tinyIm !== undefined && hit.work.tinyIm < tiniestIm) tiniestIm = hit.work.tinyIm;
+      if (hit.work.lead) sawLead = true;
+      if (hit.work.cut) cutSeen = true;
       why.set(n, hit.why);
       logged.set(n, hit.logged);
       work.set(n, hit.work);
@@ -735,19 +1145,39 @@ function exactReportOnce(
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
     const collapsedBefore = expCollapsed;
+    emlAbsorbGap = Number.NEGATIVE_INFINITY;
+    emlAbsorbExp = Number.POSITIVE_INFINITY;
+    nodeLoss = 0;
+    nodeCut = false;
     const value = exactEml(a, b);
     const collapsedHere = expCollapsed && !collapsedBefore;
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
       : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
+    // Sticky: an absorbed term anywhere below stays with every ancestor, shells included.
+    own.ab = emlAbsorbGap;
+    own.abE = emlAbsorbExp;
     const left = work.get(n.a);
     const right = work.get(n.b);
     const nodeWork: Work = {
       all: Math.max(own.all, left?.all ?? Number.NEGATIVE_INFINITY, right?.all ?? Number.NEGATIVE_INFINITY),
+      ab: Math.max(own.ab ?? Number.NEGATIVE_INFINITY, left?.ab ?? Number.NEGATIVE_INFINITY, right?.ab ?? Number.NEGATIVE_INFINITY),
+      abE: Math.min(own.abE ?? Number.POSITIVE_INFINITY, left?.abE ?? Number.POSITIVE_INFINITY, right?.abE ?? Number.POSITIVE_INFINITY),
       re: Math.max(own.re, left?.re ?? Number.NEGATIVE_INFINITY, right?.re ?? Number.NEGATIVE_INFINITY),
       im: Math.max(own.im, left?.im ?? Number.NEGATIVE_INFINITY, right?.im ?? Number.NEGATIVE_INFINITY),
+      loss: Math.max(nodeLoss, left?.loss ?? 0, right?.loss ?? 0),
+      tiny: Math.min(partExp(value), left?.tiny ?? leafTiny(n.a), right?.tiny ?? leafTiny(n.b)),
+      tinyIm: Math.min(imExp(value), left?.tinyIm ?? leafTinyIm(n.a), right?.tinyIm ?? leafTinyIm(n.b)),
+      kept: Math.max(left?.kept ?? Number.NEGATIVE_INFINITY, right?.kept ?? Number.NEGATIVE_INFINITY),
+      lead: isSeriesShortcut(n) || left?.lead === true || right?.lead === true,
+      cut: nodeCut || left?.cut === true || right?.cut === true,
     };
+    // A series shortcut drops its higher terms on purpose; its own note covers them.
+    if (isSeriesShortcut(n)) {
+      nodeWork.ab = Number.NEGATIVE_INFINITY;
+      nodeWork.abE = Number.POSITIVE_INFINITY;
+    }
     work.set(n, nodeWork);
     const nan = value.re.isNaN() || value.im.isNaN();
     let singular: string | null = null;
@@ -766,9 +1196,11 @@ function exactReportOnce(
   const out = memo.get(root);
   if (!out) throw new EmlError("Could not evaluate this circuit.");
   let singular = why.get(root) ?? null;
+  // Finding 5: a cached subtree is not in memo, so look there too, or a repeat compute loses
+  // "near a pole" / "argument too large to reduce".
   const flag = precisionMessage(root, (n) => {
-    const z = memo.get(n);
-    return z ? exactToFloat(z) : undefined;
+    const v = memo.get(n) ?? cache?.get(n)?.value ?? (n.type === "input" ? z(n.value.re, n.value.im) : n.type === "one" ? Z1 : undefined);
+    return v ? exactToFloat(v) : undefined;
   });
   // A pole is a pole in both engines, including when the gates produced NaN.
   if (flag === SINGULAR_POLE) singular = flag;
@@ -781,8 +1213,14 @@ function exactReportOnce(
     workExp: rootWork?.all,
     workRe: rootWork?.re,
     workIm: rootWork?.im,
+    absorbedGap: rootWork?.ab,
+    absorbedExp: rootWork?.abE,
+    seriesKept: rootWork?.kept,
     digits: D.precision,
     sawLead,
+    cutSeen,
+    tiniestExp: tiniest,
+    tiniestImExp: tiniestIm,
   };
 }
 
@@ -877,7 +1315,8 @@ function formatDec(d: Decimal): string {
   const abs = d.abs();
   if (abs.lt("1e16") && exactInteger(abs)) return sign + abs.toFixed(0);
   if (abs.lt("1e16") && abs.gte(FIXED_FLOOR)) {
-    // Twelve significant digits, as float mode prints, not twelve places after the decimal.
+    // Twelve significant digits, as float mode prints, not twelve decimal places.
+    // 0.0000499999999792 kept 8 digits as 0.00005; 1e-8/7 kept 4.
     const sig = Math.max(0, SHOWN_DIGITS - 1 - abs.e);
     const shown = new D(abs.toFixed(sig));
     const gap = abs.sub(shown).abs();
@@ -908,8 +1347,15 @@ function formatDecImag(d: Decimal): string {
 
 function formatFullInteger(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
-  const digits = d.abs().toFixed(0);
-  return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  const saved = D.precision;
+  const need = Math.max(saved, d.abs().e + 2);
+  if (need > saved) D.set({ precision: need });
+  try {
+    const digits = d.abs().toFixed(0);
+    return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  } finally {
+    if (need > saved) D.set({ precision: saved });
+  }
 }
 
 /**
@@ -919,8 +1365,9 @@ function formatFullInteger(d: Decimal): string {
  * exponent is past the working precision, so it stays in scientific form.
  */
 function exactInteger(d: Decimal): boolean {
-  if (!d.isFinite() || d.isZero() || d.abs().e >= D.precision) return false;
-  if (d.abs().lt(0.5)) return false;
+  if (!d.isFinite() || d.isZero() || d.abs().lt(0.5)) return false;
+  // A marked integer can be wider than the working precision and still hold its units digit.
+  if (d.abs().e >= D.precision) return d.sd() > d.abs().e && d.isInt();
   const gap = d.sub(d.round()).abs();
   if (gap.eq(0)) return true;
   // The last 24 digits of a 120-digit run are construction dust.
@@ -938,7 +1385,6 @@ function exactInteger(d: Decimal): boolean {
  * is huge. A few ulps of a moderate result still agree. Signed zeros agree.
  */
 export function beyondFloatBound(got: C, exact: C): boolean {
-  const scale = Math.max(Math.abs(got.re), Math.abs(got.im), Math.abs(exact.re), Math.abs(exact.im));
   const part = (left: number, right: number): boolean => {
     if (!Number.isFinite(left) || !Number.isFinite(right)) return !Object.is(left, right);
     if (Object.is(left, right)) return false;
@@ -947,7 +1393,8 @@ export function beyondFloatBound(got: C, exact: C): boolean {
     // component is dust when it sits below the digits on screen.
     if (left === 0 && right === 0) return false;
     if (left === 0) return true;
-    if (right === 0) return Math.abs(left) > 5e-12 * Math.max(scale, Math.abs(left));
+    // v1.1: the same cut tidy() uses, so a component the screen prints is a component the flag sees.
+    if (right === 0) return floatShowsComponent(left, Math.hypot(got.re, got.im));
     const mag = Math.max(Math.abs(left), Math.abs(right));
     return Math.abs(left - right) > 5e-12 * mag;
   };
