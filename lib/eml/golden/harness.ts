@@ -532,6 +532,12 @@ function main() {
   }
   
   console.log(`\n${diffCount} difference(s) found.`);
+  
+  if (diffCount === 0) {
+    console.log("✓ Golden output matches!");
+    process.exit(0);
+  }
+  
   console.log("\nRun with --update to regenerate the golden output.");
   console.log("Note: Every changed line must be explained in the PR description.");
   
