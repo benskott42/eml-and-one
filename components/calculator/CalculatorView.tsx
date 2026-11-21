@@ -43,6 +43,8 @@ export function CalculatorView(props: CalculatorModel) {
       : null;
   const fullDigits = top ? programIndexDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
+  // v1.1 (C3): a new number owns a new copy button, so "Copied" from the last one never sticks.
+  const copyKey = `${top?.watch ?? 0}:${top?.node.id ?? 0}:${fullNumber ?? ""}`;
 
   return (
     <main className="ti-stage">
@@ -80,11 +82,11 @@ export function CalculatorView(props: CalculatorModel) {
             {model.note ? (
               <div className="ti-lcd-note">
                 <span title={fullNumber ?? undefined}>{model.note}</span>
-                {fullNumber ? <CopyNumber text={fullNumber} /> : null}
+                {fullNumber ? <CopyNumber key={copyKey} text={fullNumber} /> : null}
               </div>
             ) : null}
             {model.error ? <p className="ti-lcd-error">{model.error}</p> : null}
-            <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
+            <PressLine key={copyKey} node={top?.node ?? null} />
             {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
         </div>
