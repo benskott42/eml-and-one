@@ -615,7 +615,7 @@ function settleResidue(
     if (which.length === 0) return current;
     const digits = current.digits ?? D.precision;
     const hinted = demandedTinyDigits(root, env);
-    if (digits >= PRECISION_CAP) return unproven(current, current) ? certifyZero(current) : current;
+    if (digits >= PRECISION_CAP) return certifyZero(current);
     // A known magnitude past the cap cannot come back. That only withholds a
     // zero component. A nonzero value that does not move on the next check stays.
     if (hinted > PRECISION_CAP && which.some((name) => current.value[name].isZero())) return certifyZero(current);
@@ -624,7 +624,7 @@ function settleResidue(
     let next = Math.min(PRECISION_CAP, Math.max(digits + step, raised));
     const past = confirmAt(current);
     if (past > next) next = Math.min(PRECISION_CAP, past);
-    if (next <= digits) return unproven(current, current) ? certifyZero(current) : current;
+    if (next <= digits) return certifyZero(current);
     let again: ExactReport;
     try {
       again = atPrecision(next, root, env, budget);
