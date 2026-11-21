@@ -16,7 +16,7 @@ import {
   provenInteger,
 } from "./node";
 import { EXACT_TOO_LARGE } from "./exactBudget";
-import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
+import { decadeOf, exactRatioOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 import { floatShowsComponent } from "./format";
 
@@ -986,6 +986,17 @@ function exactReportOnce(
         logged.set(n, false);
         continue;
       }
+    }
+    // A ratio below the normal float range is the value. The circuit only approximates it,
+    // and that residue must not be reported as an exact result.
+    const ratio = n.type !== "input" ? exactRatioOf(n) : null;
+    if (ratio) {
+      const value = z(new D(ratio.n.toString()).div(ratio.d.toString()), 0);
+      memo.set(n, value);
+      noteSeen(value);
+      why.set(n, null);
+      logged.set(n, false);
+      continue;
     }
 
     // v1.1: an odd series node is its polynomial in x. Evaluate x, then the polynomial,

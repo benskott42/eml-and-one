@@ -1,4 +1,4 @@
-import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
+import { decadeOf, exactRatioOf, inScaledShell, noteExactRatio, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
 
 /** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
 export const WIRE_VERSION = 2;
@@ -25,6 +25,8 @@ export type Wire =
       ki?: WireNum;
       /** v2: a real below float64's normal range as [m, e] = m·10^e, 1 ≤ |m| < 10. Exponent, not value. */
       kx?: [number, number];
+      /** Exact integer ratio n/d for a real below the normal float range. The circuit is not that value. */
+      rq?: [string, string];
       /** Exact integer when the float has already rounded or overflowed. */
       int?: string;
       /** v1.1: an odd series node, [id of x, coefficients]; exact mode evaluates the polynomial. */
@@ -95,6 +97,8 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       const w = wideOf(frame.n);
       if (w) token.kx = [w.m, w.e];
     }
+    const ratio = exactRatioOf(frame.n);
+    if (ratio) token.rq = [ratio.n.toString(), ratio.d.toString()];
     const digits = exactIntDigits(frame.n);
     if (digits !== undefined) token.int = digits;
     const poly = oddSeriesOf(frame.n);
@@ -149,6 +153,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: readWireNum(tok.kr), im: readWireNum(tok.ki) });
       if (tok.kx) noteWide(node, normWide(tok.kx[0], tok.kx[1]));
+      if (tok.rq) noteExactRatio(node, BigInt(tok.rq[0]), BigInt(tok.rq[1]));
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
       if (tok.os && nodes[tok.os[0]]) noteOddSeries(node, nodes[tok.os[0]], tok.os[1]);
       if (tok.unver) markUnverified(node);

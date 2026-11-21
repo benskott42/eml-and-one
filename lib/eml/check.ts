@@ -2986,6 +2986,50 @@ if (inShard("core")) {
   closeTo("exp(1e-433)-1", "1e-433");
   closeTo("exp(10^(-433))-1", "1e-433");
   closeTo("1-exp(1e-433)", "-1e-433");
+  // Literals below the normal float range cancel exactly through divide, multiply, and subtract.
+  // A confident nonzero here is the circuit's rounding residue.
+  closeTo("(1e-400)/2*2-(1e-400)", "0");
+  closeTo("(1e-400)*3/3-(1e-400)", "0");
+  closeTo("1e-400-1e-400", "0");
+  closeTo("(1e-400)/3*3-(1e-400)", "0");
+  closeTo("(2*1e-400)-(1e-400)", "1e-400");
+  closeTo("(1e-400)+(1e-400)", "2e-400");
+  const tinyExact: Array<[string, string]> = [
+    ["(1e-400)/2*2-(1e-400)", "0"],
+    ["(1e-400)*3/3-(1e-400)", "0"],
+    ["1e-400-1e-400", "0"],
+    ["(1e-400)/3*3-(1e-400)", "0"],
+    ["(2*1e-400)-(1e-400)", "1e-400"],
+    ["(1e-400)+(1e-400)", "2e-400"],
+    ["(1e-400)/2", "5e-401"],
+    ["(1e-400)/2*2", "1e-400"],
+  ];
+  for (const [source, want] of tinyExact) {
+    const direct = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    if (direct.unverified || !direct.value.im.isZero() || !direct.value.re.eq(want)) {
+      failed += 1;
+      console.log("FAIL tiny exact ratio", source, direct.unverified ? "unverified" : direct.value.re.toString());
+    }
+  }
+  // Packed circuit in a process that never built it: the ratio has to cross the wire.
+  const tinyJobs = tinyExact.map(([source]) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const tinyFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(tinyJobs));
+  if (tinyFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh tiny ratio", tinyFresh.status, tinyFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(tinyFresh.stdout) as Array<{ source: string; re: string; unverified: boolean }>;
+    rows.forEach((row, index) => {
+      const want = tinyExact[index]?.[1];
+      if (!want || row.unverified || row.re !== want) {
+        failed += 1;
+        console.log("FAIL fresh tiny ratio", row.source, row.unverified ? "unverified" : row.re, want);
+      }
+    });
+  }
   for (const source of ["sin(1e-300)-1e-300"]) unresolved(source);
   const shortcut = seriesShortcutNote(compileExpression("sin(1e-200)", {}));
   if (!shortcut || !shortcut.includes("series shortcut")) {
