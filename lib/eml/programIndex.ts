@@ -45,8 +45,12 @@ function offset(n: number): bigint {
   return total;
 }
 
+const constantCircuitCache = new WeakMap<Node, boolean>();
+
 /** True when every leaf is the constant 1. Variables and typed inputs fail. */
 export function isConstantCircuit(node: Node): boolean {
+  const hit = constantCircuitCache.get(node);
+  if (hit !== undefined) return hit;
   const seen = new Set<number>();
   const stack: Node[] = [node];
   while (stack.length) {
@@ -54,9 +58,13 @@ export function isConstantCircuit(node: Node): boolean {
     if (!n || seen.has(n.id)) continue;
     seen.add(n.id);
     if (n.type === "one") continue;
-    if (n.type !== "eml" || !n.a || !n.b) return false;
+    if (n.type !== "eml" || !n.a || !n.b) {
+      if (Object.isFrozen(node)) constantCircuitCache.set(node, false);
+      return false;
+    }
     stack.push(n.a, n.b);
   }
+  if (Object.isFrozen(node)) constantCircuitCache.set(node, true);
   return true;
 }
 
@@ -117,13 +125,24 @@ export function unrankRpn(index: bigint, maxGates = MAX_RANK_GATES): string {
   return out;
 }
 
+const rankCache = new WeakMap<Node, bigint | null>();
+
 /** Program number, or null for variables, typed inputs, or more than maxGates eml nodes. */
 export function rankProgram(node: Node, maxGates = MAX_RANK_GATES): bigint | null {
+  const useCache = maxGates === MAX_RANK_GATES && Object.isFrozen(node);
+  if (useCache && rankCache.has(node)) {
+    return rankCache.get(node) ?? null;
+  }
   const stats = circuitStats(node);
-  if (stats.treeGates > BigInt(maxGates)) return null;
-  const tokens = rpnTokens(node, 2 * maxGates + 1);
-  if (!tokens || tokens.some((t) => t !== "1" && t !== "E")) return null;
-  return rankRpn(tokens.join(""));
+  let result: bigint | null = null;
+  if (stats.treeGates <= BigInt(maxGates)) {
+    const tokens = rpnTokens(node, 2 * maxGates + 1);
+    if (tokens && !tokens.some((t) => t !== "1" && t !== "E")) {
+      result = rankRpn(tokens.join(""));
+    }
+  }
+  if (useCache) rankCache.set(node, result);
+  return result;
 }
 
 /** Circuit for a program number. E hash-conses, so shared subtrees are shared nodes. */

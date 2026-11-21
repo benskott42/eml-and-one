@@ -565,15 +565,21 @@ function walkShape(root: Node): { tree: bigint; depth: number; dag: number } {
   };
 }
 
+const statsCache = new WeakMap<Node, CircuitStats>();
+
 /** Tree gates, RPN length, DAG gates, and depth. */
 export function circuitStats(root: Node): CircuitStats {
+  const hit = statsCache.get(root);
+  if (hit) return hit;
   const shape = walkShape(root);
-  return {
+  const stats: CircuitStats = Object.freeze({
     treeGates: shape.tree,
     rpnLength: shape.tree * BigInt(2) + BigInt(1),
     dagGates: shape.dag,
     depth: shape.depth,
-  };
+  });
+  if (Object.isFrozen(root)) statsCache.set(root, stats);
+  return stats;
 }
 
 function walkPost<T>(root: Node, visit: (n: Node, a: T | null, b: T | null) => T): T {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -41,7 +41,8 @@ export function CalculatorView(props: CalculatorModel) {
     top && !withholdZeroName({ text: top.text, cancelledZero: top.cancelledZero === true, notCertified: top.notCertified === true })
       ? captionName(top.text, top.value, top.caption)
       : null;
-  const fullDigits = top ? programIndexDigits(top.node) : null;
+  const topNode = top?.node ?? null;
+  const fullDigits = useMemo(() => (topNode ? programIndexDigits(topNode) : null), [topNode]);
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
   // v1.1 (C3): a new number owns a new copy button, so "Copied" from the last one never sticks.
   const copyKey = `${top?.watch ?? 0}:${top?.node.id ?? 0}:${fullNumber ?? ""}`;

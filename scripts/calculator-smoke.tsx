@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { JSDOM } from "jsdom";
 
 // React decides once, at import, whether `input` events are supported. A window
@@ -462,11 +463,429 @@ async function main() {
     console.error("a fast exact job waited behind a slow one", raced, HoldingWorker.made.map((worker) => worker.terminated));
     failed = true;
   }
+  const preemptClear = [...preemptView.document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Clear");
+  if (preemptClear instanceof preemptView.HTMLButtonElement) {
+    await act(async () => {
+      preemptClear.click();
+    });
+  }
   await act(async () => {
     preemptRoot.unmount();
   });
   preemptView.close();
   delete workerGlobal.Worker;
+
+  // --- Perf / isolation / memo / Load-isolation regression probes ---
+  const { circuitStats, onCircuitIsolate } = await import("../lib/eml/node");
+  const { compileExpression } = await import("../lib/eml/parse");
+  const { programIndexDigits, rankProgram } = await import("../lib/eml/programIndex");
+
+  let isolateFlushes = 0;
+  onCircuitIsolate(() => {
+    isolateFlushes += 1;
+  });
+
+  // 1. Key-cost label snapshot (captured from unmodified v1.1 304de9a) and isolate flush counts.
+  const EXPECTED_KEY_COSTS: Record<string, Record<string, string>> = {
+    empty: {
+      "0": "K 7",
+      "2": "K 19",
+      e: "K 3",
+      "π": "K 93",
+      i: "K 57",
+      "−1": "K 15",
+      "½": "K 29",
+      "√2": "K 61",
+      exp: "K 209",
+      ln: "K 213",
+      "√": "K 249",
+      "x²": "K 429",
+      "1/x": "K 223",
+      "±": "K 221",
+      sin: "K 1383",
+      cos: "K 1371",
+      tan: "K 7307",
+      asin: "K 8123",
+      acos: "wide",
+      atan: "K 713",
+      sinh: "K 725",
+      cosh: "K 739",
+      tanh: "K 915",
+      asinh: "K 2019",
+      "σ": "K 257",
+      "+": "K 243",
+      "−": "K 235",
+      "×": "K 241",
+      "÷": "K 241",
+      "xʸ": "K 249",
+      "logₓy": "K 253",
+      avg: "K 287",
+      hypot: "K 791",
+    },
+    pi: {
+      "0": "K 7",
+      "2": "K 19",
+      e: "K 3",
+      "π": "K 93",
+      i: "K 57",
+      "−1": "K 15",
+      "½": "K 29",
+      "√2": "K 61",
+      exp: "K 95",
+      ln: "K 99",
+      "√": "K 135",
+      "x²": "K 201",
+      "1/x": "K 109",
+      "±": "K 107",
+      sin: "K 975",
+      cos: "K 963",
+      tan: "K 5825",
+      asin: "K 5981",
+      acos: "wide",
+      atan: "K 1447",
+      sinh: "K 383",
+      cosh: "K 397",
+      tanh: "K 1047",
+      asinh: "K 1479",
+      "σ": "K 143",
+      "+": "K 129",
+      "−": "K 121",
+      "×": "K 127",
+      "÷": "K 127",
+      "xʸ": "K 135",
+      "logₓy": "K 139",
+      avg: "K 173",
+      hypot: "K 313",
+    },
+    "sin(pi/6)": {
+      "0": "K 7",
+      "2": "K 19",
+      e: "K 3",
+      "π": "K 93",
+      i: "K 57",
+      "−1": "K 15",
+      "½": "K 29",
+      "√2": "K 61",
+      exp: "K 1241",
+      ln: "K 1245",
+      "√": "K 1281",
+      "x²": "K 2493",
+      "1/x": "K 1255",
+      "±": "K 1269",
+      sin: "wide",
+      cos: "wide",
+      tan: "wide",
+      asin: "wide",
+      acos: "wide",
+      atan: "wide",
+      sinh: "wide",
+      cosh: "wide",
+      tanh: "wide",
+      asinh: "wide",
+      "σ": "wide",
+      "+": "K 1457",
+      "−": "K 1415",
+      "×": "K 1273",
+      "÷": "K 1273",
+      "xʸ": "K 1281",
+      "logₓy": "K 1285",
+      avg: "K 1501",
+      hypot: "K 2855",
+    },
+    two_items_exp3: {
+      "0": "K 7",
+      "2": "K 19",
+      e: "K 3",
+      "π": "K 93",
+      i: "K 57",
+      "−1": "K 15",
+      "½": "K 29",
+      "√2": "K 61",
+      exp: "K 3023",
+      ln: "K 3027",
+      "√": "K 3063",
+      "x²": "K 6057",
+      "1/x": "K 3037",
+      "±": "K 3051",
+      sin: "wide",
+      cos: "wide",
+      tan: "wide",
+      asin: "wide",
+      acos: "wide",
+      atan: "wide",
+      sinh: "wide",
+      cosh: "wide",
+      tanh: "wide",
+      asinh: "wide",
+      "σ": "wide",
+      "+": "wide",
+      "−": "wide",
+      "×": "K 4275",
+      "÷": "K 4275",
+      "xʸ": "K 4283",
+      "logₓy": "K 4287",
+      avg: "wide",
+      hypot: "wide",
+    },
+  };
+
+  class SilentWorker {
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    postMessage() {
+      /* background compare in hardware view */
+    }
+    terminate() {
+      /* noop */
+    }
+  }
+  workerGlobal.Worker = SilentWorker as unknown as typeof HoldingWorker;
+
+  const perfDom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const perfView = perfDom.window;
+  globals.window = perfView;
+  globals.self = perfView;
+  globals.document = perfView.document;
+  globals.HTMLElement = perfView.HTMLElement;
+  const perfMount = perfView.document.getElementById("root");
+  if (!perfMount) {
+    console.error("missing perf root");
+    process.exit(1);
+  }
+  const perfRoot = createRoot(perfMount);
+  await act(async () => {
+    perfRoot.render(<EmlCalculator />);
+  });
+
+  const perfButtonByText = (label: string) =>
+    [...perfView.document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
+  const perfClick = async (label: string) => {
+    const btn = perfButtonByText(label);
+    if (!(btn instanceof perfView.HTMLButtonElement)) {
+      console.error(`missing button ${label}`);
+      failed = true;
+      return;
+    }
+    await act(async () => {
+      btn.click();
+    });
+  };
+  const perfSetInput = async (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(perfView.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(input, value);
+      input.dispatchEvent(new perfView.Event("input", { bubbles: true }));
+    });
+  };
+  const readKeyCosts = () => {
+    const out: Record<string, string> = {};
+    for (const group of perfView.document.querySelectorAll(".ti-group")) {
+      for (const cell of group.querySelectorAll(".ti-key")) {
+        const alt = cell.querySelector(".ti-key-alt")?.textContent?.trim() ?? "";
+        const btn = cell.querySelector("button")?.textContent?.trim() ?? "";
+        if (btn) out[btn] = alt;
+      }
+    }
+    return out;
+  };
+  const checkCostsSnapshot = (name: string) => {
+    const got = readKeyCosts();
+    const want = EXPECTED_KEY_COSTS[name];
+    const gotKeys = Object.keys(got).sort();
+    const wantKeys = Object.keys(want).sort();
+    if (gotKeys.length !== wantKeys.length || gotKeys.some((k, i) => k !== wantKeys[i])) {
+      console.error(`key-cost snapshot key mismatch for ${name}`, gotKeys, wantKeys);
+      failed = true;
+      return;
+    }
+    for (const k of wantKeys) {
+      if (got[k] !== want[k]) {
+        console.error(`key-cost label mismatch for ${name}[${k}]: got ${got[k]}, want ${want[k]}`);
+        failed = true;
+      }
+    }
+  };
+
+  await perfClick("Clear");
+  await perfClick("hardware");
+  const perfFields = [...perfView.document.querySelectorAll("input.ti-field")] as HTMLInputElement[];
+  const xField = perfFields[0];
+  const yField = perfFields[1];
+  const perfExpr = perfView.document.getElementById("expr") as HTMLInputElement;
+  await perfSetInput(xField, "0.5");
+  await perfSetInput(yField, "2");
+
+  // Snapshot 1: empty stack
+  checkCostsSnapshot("empty");
+
+  // Empty-stack isolate flush count: warm "2", then 10 x keystrokes across cached scalars give 0 (<= 1/keystroke).
+  await perfSetInput(xField, "2");
+  await perfSetInput(xField, "0.5");
+  const emptyBefore = isolateFlushes;
+  for (let i = 0; i < 10; i += 1) {
+    await perfSetInput(xField, i % 2 === 0 ? "2" : "0.5");
+  }
+  const emptyCachedFlushes = isolateFlushes - emptyBefore;
+  if (emptyCachedFlushes > 10) {
+    console.error("empty-stack cached x keystrokes flushed too many times", emptyCachedFlushes);
+    failed = true;
+  }
+
+  // Empty-stack unseen scalar still preserves per-preview isolation (1 scalar + 17 unary + 8 binary = 26, no const/default/y flushes).
+  const unseenBefore = isolateFlushes;
+  await perfSetInput(xField, "0.75");
+  const unseenFlushes = isolateFlushes - unseenBefore;
+  if (unseenFlushes !== 26) {
+    console.error("empty-stack unseen x preview expected 26 isolated flushes, got", unseenFlushes);
+    failed = true;
+  }
+  await perfSetInput(xField, "0.5");
+
+  // Snapshot 2: pi stack
+  await perfClick("π");
+  checkCostsSnapshot("pi");
+
+  // Snapshot 3: sin(pi/6) stack
+  await perfClick("Clear");
+  await perfSetInput(perfExpr, "sin(pi/6)");
+  await perfClick("Compute");
+  checkCostsSnapshot("sin(pi/6)");
+
+  // 1-item stack isolate flush count: 10 distinct x keystrokes must trigger 0 flushes.
+  const oneItemBefore = isolateFlushes;
+  for (let i = 0; i < 10; i += 1) {
+    await perfSetInput(xField, `0.${60 + i}`);
+  }
+  const oneItemFlushes = isolateFlushes - oneItemBefore;
+  if (oneItemFlushes !== 0) {
+    console.error("1-item stack x keystrokes triggered isolate flushes", oneItemFlushes);
+    failed = true;
+  }
+  await perfSetInput(xField, "0.5");
+
+  // Snapshot 4: two items with exp^3 top
+  await perfSetInput(perfExpr, "exp(exp(exp(sin(0.25))))");
+  await perfClick("Compute");
+  checkCostsSnapshot("two_items_exp3");
+
+  // 2-item stack isolate flush count: 10 distinct x keystrokes must trigger 0 flushes.
+  const twoItemBefore = isolateFlushes;
+  for (let i = 0; i < 10; i += 1) {
+    await perfSetInput(xField, `0.${50 + i}`);
+  }
+  const twoItemFlushes = isolateFlushes - twoItemBefore;
+  if (twoItemFlushes !== 0) {
+    console.error("2-item stack x keystrokes triggered isolate flushes", twoItemFlushes);
+    failed = true;
+  }
+
+  await perfClick("Clear");
+  await act(async () => {
+    perfRoot.unmount();
+  });
+  perfView.close();
+  delete workerGlobal.Worker;
+
+  // 2. Load after compute: compute ln(1+10^(-130)), then Load the 671-press word in exact mode.
+  const e1Words = JSON.parse(readFileSync(new URL("./e1-words-v10.json", import.meta.url), "utf8")) as Record<string, string>;
+  const ln130Word = e1Words["ln(1+10^(-130))"];
+  if (!ln130Word || ln130Word.length !== 671) {
+    console.error("missing 671-press word fixture for ln(1+10^(-130))");
+    failed = true;
+  } else {
+    const loadDom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+      url: "http://localhost/",
+      pretendToBeVisual: true,
+    });
+    const loadView = loadDom.window;
+    globals.window = loadView;
+    globals.self = loadView;
+    globals.document = loadView.document;
+    globals.HTMLElement = loadView.HTMLElement;
+    const loadMount = loadView.document.getElementById("root")!;
+    const loadRoot = createRoot(loadMount);
+    await act(async () => {
+      loadRoot.render(<EmlCalculator />);
+    });
+    const loadBtn = (label: string) =>
+      [...loadView.document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement | undefined;
+    const loadSet = async (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(loadView.HTMLInputElement.prototype, "value")?.set;
+      await act(async () => {
+        setter?.call(el, value);
+        el.dispatchEvent(new loadView.Event("input", { bubbles: true }));
+      });
+    };
+    const loadResult = () => loadView.document.querySelector(".ti-lcd-result")?.textContent ?? "";
+    const waitExactDone = async () => {
+      for (let i = 0; i < 200; i += 1) {
+        const text = loadResult();
+        const note = loadView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
+        if (text && text !== "computing" && text !== "0" && !note.includes("computing")) return text;
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        });
+      }
+      return loadResult();
+    };
+
+    const clearLoad = loadBtn("Clear");
+    const exactLoad = loadBtn("exact");
+    if (clearLoad) await act(async () => { clearLoad.click(); });
+    if (exactLoad && exactLoad.getAttribute("aria-checked") !== "true") {
+      await act(async () => { exactLoad.click(); });
+    }
+    const exprLoad = loadView.document.getElementById("expr") as HTMLInputElement;
+    await loadSet(exprLoad, "ln(1+10^(-130))");
+    await act(async () => { loadBtn("Compute")?.click(); });
+    const computed130 = await waitExactDone();
+    if (computed130 !== "1×10^−130") {
+      console.error("compute ln(1+10^(-130)) did not produce 1×10^−130", computed130);
+      failed = true;
+    }
+
+    const progLoad = loadView.document.querySelector("input[placeholder='#1, 001, or 11E']") as HTMLInputElement;
+    await loadSet(progLoad, ln130Word);
+    const flushesBeforeLoad = isolateFlushes;
+    await act(async () => { loadBtn("Load")?.click(); });
+    const flushesOnLoad = isolateFlushes - flushesBeforeLoad;
+    const loaded130 = await waitExactDone();
+    if (flushesOnLoad < 1) {
+      console.error("Load path did not call isolateCircuit", flushesOnLoad);
+      failed = true;
+    }
+    if (loaded130 !== "1×10^−130") {
+      console.error("Load of 671-press word after compute did not equal fresh-process 1×10^−130", loaded130);
+      failed = true;
+    }
+
+    await act(async () => {
+      loadRoot.unmount();
+    });
+    loadView.close();
+  }
+
+  // 3. Second programIndexDigits on a K~1239 node takes under 0.1 ms, and non-default maxGates is not poisoned.
+  const sinNode = compileExpression("sin(pi/6)", {});
+  if (circuitStats(sinNode).rpnLength !== BigInt(1239)) {
+    console.error("expected sin(pi/6) to be K 1239", circuitStats(sinNode).rpnLength.toString());
+    failed = true;
+  }
+  const firstDigits = programIndexDigits(sinNode);
+  const t0 = performance.now();
+  const secondDigits = programIndexDigits(sinNode);
+  const elapsedMs = performance.now() - t0;
+  if (!firstDigits || secondDigits !== firstDigits || elapsedMs >= 0.1) {
+    console.error("second programIndexDigits was wrong or slow", { ok: Boolean(firstDigits), same: secondDigits === firstDigits, elapsedMs });
+    failed = true;
+  }
+  if (rankProgram(sinNode, 10) !== null || rankProgram(sinNode)?.toString() !== firstDigits) {
+    console.error("rankProgram cache interacted with non-default maxGates");
+    failed = true;
+  }
 
   if (failed) process.exit(1);
   console.log("calculator smoke passed");

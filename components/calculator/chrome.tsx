@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
@@ -41,8 +41,8 @@ export function CopyNumber({ text }: { text: string }) {
 
 export function PressLine({ node }: { node: Node | null }) {
   const [copied, markCopied] = useCopiedReset();
+  const view = useMemo(() => (node ? pressPreviewForNode(node) : null), [node]);
   if (!node) return null;
-  const view = pressPreviewForNode(node);
   if (!view) {
     return <p className="ti-press">Binary applies only to programs of the 1 and EML keys.</p>;
   }
