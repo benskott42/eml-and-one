@@ -171,9 +171,12 @@ export const packUnpackCases = [
  */
 /**
  * Rows from the open exact-zero (#38) and infinity (#39) releases, plus the
- * severity-1 repros. `(1+1e-20*i)-1` is the exact-zero sibling at exact.ts
- * residueParts: its real part is 0, its imaginary part is ~1e-20, and that
- * sibling sits under 10^(work-12). `sqrt(-0)` is the signed-zero wire row.
+ * severity-1 repros. `sin(9e-13+1e-120*i)` is the tripwire for the exact-zero
+ * sibling check in residueParts (exact.ts, the `work - 12` guard). At 120
+ * digits the imaginary part is an exact 0 and the real sibling is ~9e-13,
+ * which is under 10^(work-12) and not under 10^(work-13). The settled text
+ * keeps the 1e-120 imaginary part. Removing that push, or tightening the
+ * guard by one, drops it. `sqrt(-0)` is the signed-zero wire row.
  */
 export const releaseRows = [
   "-5e-801",
@@ -197,7 +200,7 @@ export const releaseRows = [
   "exp(ln(ln(0))*i)",
   "exp(800)-exp(800)",
   "sqrt(-0)",
-  "(1+1e-20*i)-1",
+  "sin(9e-13+1e-120*i)",
 ];
 
 export function getAllCorpus(): string[] {

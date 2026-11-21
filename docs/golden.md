@@ -94,7 +94,9 @@ Current known bugs:
 - **inf-finite**: `inf+1`, `ln(0)-1`, `ln(0)+i`, `(inf*i)/2`, and `ln(ln(0)*i)` are certified wrong infinities. `ln(0)+0` stays `−∞` and is not tagged
 - **jimmy1**: `1e-320*(1+1e-100)-1e-320` (certified residue; the value is 1e-420), `exp(ln(ln(0))*i)`, and `exp(800)-exp(800)` (certified `−∞`; the value is 0)
 
-`-5e-801`, `1e-500`, `exp(-1200)`, `1e-400*(1+1e-100)-1e-400`, `1e-400*pi+1e-400`, `exp(-1000)-exp(-1001)`, and both `−1×10^−450` forms (`1e-400-1e-400*(1+1e-50)` and `(1e-400)*3/3-(1e-400)*(1+1e-50)`) are recorded as they are today. `(1+1e-20*i)-1` exercises the exact-zero sibling check in `residueParts` (`exact.ts`). `sqrt(-0)` is the signed-zero wire row.
+`-5e-801`, `1e-500`, `exp(-1200)`, `1e-400*(1+1e-100)-1e-400`, `1e-400*pi+1e-400`, `exp(-1000)-exp(-1001)`, and both `−1×10^−450` forms (`1e-400-1e-400*(1+1e-50)` and `(1e-400)*3/3-(1e-400)*(1+1e-50)`) are recorded as they are today. `sqrt(-0)` is the signed-zero wire row.
+
+`sin(9e-13+1e-120*i)` is the tripwire for the exact-zero sibling check in `residueParts` (`exact.ts`, `10^(work−12)`). Certified text is `9×10^−13 + 1×10^−120i`. The imaginary part is an exact 0 at 120 digits, and the real sibling (~9×10^−13) sits under that guard and not under `10^(work−13)`. Removing the check, or tightening the guard by one, drops the imaginary part. `sin(1e-18+1e-120*i)` also moves if the check is removed, and does not move for a one-step change of the guard. `(1+1e-20*i)-1` hits the same branch and was removed: its certified text stays `1×10^−20i` either way.
 
 ## How to add test cases
 
