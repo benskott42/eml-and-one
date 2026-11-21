@@ -76,7 +76,39 @@ function seriesChecks(): number {
   return failed;
 }
 
+/** R3: tanh and sigmoid tails. Float mode no longer forms ∞/∞; exact mode keeps its digits. */
+function tailChecks(): number {
+  let failed = exactRows("review tails", [
+    ["tanh(20)", "9.99999999999999991503291489416822045438558191e-1", "0"],
+    ["tanh(2+3*i)", "9.6538587902213312427848026939456068587972965e-1", "-9.88437503832249372031403430350121097961813353e-3"],
+    ["sigmoid(-800)", "3.66787458417768721345549565426079821546963423e-348", "0"],
+    ["sigmoid(-3)", "4.74258731775667808788481517717522013861794324e-2", "0"],
+  ]);
+  const floatRows: Array<[string, number]> = [
+    ["tanh(354)", 1],
+    ["tanh(355)", 1],
+    ["tanh(800)", 1],
+    ["tanh(-800)", -1],
+    ["tanh(1)", Math.tanh(1)],
+    ["tanh(20)", Math.tanh(20)],
+    ["sigmoid(-710)", 0],
+    ["sigmoid(-800)", 0],
+    ["sigmoid(-30)", 1 / (1 + Math.exp(30))],
+    ["sigmoid(800)", 1],
+  ];
+  for (const [source, want] of floatRows) {
+    const report = evaluateReport(compileExpression(source, {}));
+    const got = report.value;
+    const tol = want === 0 ? 1e-300 : 1e-13 * Math.abs(want);
+    if (!(Math.abs(got.re - want) <= tol) || got.im !== 0 || report.overflowed || Math.abs(got.re) > 1) {
+      failed += 1;
+      console.log("FAIL review tails float", source, got.re, got.im, report.overflowed ? "overflowed" : "", "want", want);
+    }
+  }
+  return failed;
+}
+
 /** Called by check.ts after the main blocks. */
 export function runReviewChecks(): number {
-  return seriesChecks();
+  return seriesChecks() + tailChecks();
 }
