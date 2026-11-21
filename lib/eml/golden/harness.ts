@@ -121,9 +121,9 @@ function evaluateExpression(source: string, useCache: boolean): GoldenEntry {
     
     // Press count
     const press = pressPreviewForNode(node);
-    const pressCount = press.truncated 
-      ? `${press.presses.toString()}+` 
-      : press.presses.toString();
+    const pressCount = press 
+      ? (press.truncated ? `${press.presses.toString()}+` : press.presses.toString())
+      : "N/A";
     
     // Round-trip test: packCircuit → unpackCircuit
     let roundTripOk = true;
