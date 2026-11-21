@@ -18,8 +18,9 @@ const D = Decimal.clone({ precision: 90 });
 
 /**
  * The expression compiler, checked on the exact engine.
- * A short recipe is used only where this file's grid has seen a certified value,
- * except the three additions named in UNCERTIFIED_ADD, which print 0 and stay flagged.
+ * A short recipe is used only where this file's grid has seen a certified value.
+ * The three additions in UNCERTIFIED_ADD, and sub(−4, −4), print an unverified 0
+ * from the short word, so the compiler emits the library's certified 0 instead.
  */
 export function runExprChecks(): number {
   let failed = 0;
@@ -103,7 +104,8 @@ export function runExprChecks(): number {
 
   for (let a = -REAL_LIMIT; a <= REAL_LIMIT; a += 1) {
     for (let b = -REAL_LIMIT; b <= REAL_LIMIT; b += 1) {
-      expect(`(${a})+(${b})`, hi(a + b), "0", "add:short", null, uncertifiedAdd(a, b));
+      if (uncertifiedAdd(a, b)) expect(`(${a})+(${b})`, "0", "0", "add:fallback", 7, false);
+      else expect(`(${a})+(${b})`, hi(a + b), "0", "add:short", null, false);
       if (uncertifiedSub(a, b)) expect(`(${a})-(${b})`, "0", "0", "sub:fallback", 7, false);
       else expect(`(${a})-(${b})`, hi(a - b), "0", "sub:short", null, false);
       expect(`(${a})*(${b})`, hi(a * b), "0", "mul:short", null, false);
@@ -161,6 +163,30 @@ export function runExprChecks(): number {
   const guarded = compilePresses("(-4)-(-4)");
   if (guarded.via.includes("sub:short") || !guarded.via.includes("sub:fallback")) {
     fail(`(−4)−(−4) stayed on the short word: ${guarded.via.join(",")}`);
+  }
+
+  for (const [a, b] of UNCERTIFIED_ADD) {
+    const left = compilePresses(String(a)).word;
+    const right = compilePresses(String(b)).word;
+    let word = "";
+    for (const ch of SHORT_PROGRAMS.add ?? "") word += ch === "x" ? left : ch === "y" ? right : ch;
+    const shortReport = exactReport(nodeFromRpn(word.split("")), {}, { maxNodes: 500_000 });
+    if (shortReport.unverified !== true || !exactClose(shortReport.value, "0", "0", 20)) {
+      fail(`short add of ${a} and ${b} should print an unverified 0`);
+    }
+    const compiled = compilePresses(`(${a})+(${b})`);
+    const compiledReport = exactReport(compiled.node, {}, { maxNodes: 200_000 });
+    if (
+      compiled.via.includes("add:short") ||
+      !compiled.via.includes("add:fallback") ||
+      compiled.presses !== 7 ||
+      compiled.presses !== compiled.word.length ||
+      compiledReport.unverified === true ||
+      compiledReport.singular !== null ||
+      !exactClose(compiledReport.value, "0", "0", 40)
+    ) {
+      fail(`(${a})+(${b}) did not take the certified 0: ${compiled.presses} ${compiled.via.join(",")}`);
+    }
   }
 
   const rejects = (source: string, needle: string) => {

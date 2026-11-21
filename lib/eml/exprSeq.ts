@@ -1,5 +1,5 @@
 import { countWord, countWordLength } from "./countWord";
-import { tagValue } from "./lowering";
+import { tagReal, tagValue } from "./lowering";
 import { tAdd, tNeg, tSub } from "./library";
 import { circuitStats, nodeFromRpn, rpnTokens, type Node } from "./node";
 import { SHORT_PROGRAMS } from "./programs";
@@ -23,12 +23,13 @@ import rows from "./integer-table.json";
  * pow +23).
  *
  * - add, 19 keys, extra 17. Both operands integers from −REAL_LIMIT to
- *   REAL_LIMIT. Checked on the words this compiler emits: every pair matches,
- *   and every pair is certified, except add(6, −6), add(8, −8), and
- *   add(−8, 8). Those three print 0 and the exact engine marks them
- *   unverified. The library builder emits that same word, so the compiler
- *   keeps it and does not call the 0 certified. Wrong once Im(x + y) leaves
- *   (−π, π]: add(5, 4i) wraps to 5 − (2π − 4)i.
+ *   REAL_LIMIT. Checked on the words this compiler emits: every pair matches
+ *   and is certified, except add(6, −6), add(8, −8), and add(−8, 8). Those
+ *   three print 0 from the short word and the exact engine marks them
+ *   unverified. tAdd of the same words does too. Subtracting the library
+ *   negation cancels the integer ranges to the certified 0 word (7 presses),
+ *   and that is what the compiler emits. Wrong once Im(x + y) leaves (−π, π]:
+ *   add(5, 4i) wraps to 5 − (2π − 4)i.
  * - sub, 11 keys, extra 9. Both operands integers in that same range.
  *   sub(−4, −4) prints 0 and is not certified; the library builder emits the
  *   certified 0 word (7 presses), and that is what the compiler emits. Every
@@ -70,8 +71,9 @@ export const LITERAL_LIMIT = 60;
 const SPELL_LIMIT = 100_000;
 
 /**
- * Short add prints 0 here and exactReport sets unverified. The library
- * builder does the same, so these pairs stay on the short word.
+ * Short add prints 0 here and exactReport sets unverified. tAdd of the same
+ * words does too. The compiler subtracts the library negation, which cancels
+ * to the certified 0 word.
  */
 export const UNCERTIFIED_ADD: readonly (readonly [number, number])[] = [
   [6, -6],
@@ -309,6 +311,16 @@ function pointOf(g: G): { re: number; im: number } | null {
   return { re: g.re.n, im: g.im.n };
 }
 
+/**
+ * The short add of these integers is an unverified 0. Negating the right
+ * operand with the library and subtracting cancels the two integer ranges
+ * to the certified 0 word, the same fold domainSub uses for n − n.
+ */
+function certifiedAddZero(left: Built, right: Built, value: G): Built {
+  const node = tSub(tagReal(left.node, left.value.re.n), tNeg(tagReal(right.node, right.value.re.n)));
+  return spell(node, value, [...left.via, ...right.via, "add:fallback"]);
+}
+
 function fallbackLinear(op: "add" | "sub" | "minus", parts: Built[], value: G): Built {
   const tagged: Node[] = [];
   for (const part of parts) {
@@ -382,6 +394,12 @@ function lower(ast: Ast): Built {
   if (ast.op === "/" && isZeroG(right.value)) throw new PressCompileError("Division by zero has no press sequence.");
   const value = ast.op === "+" ? gAdd(left.value, right.value) : ast.op === "-" ? gSub(left.value, right.value) : ast.op === "*" ? gMul(left.value, right.value) : gDiv(left.value, right.value);
   const id = ast.op === "+" ? "add" : ast.op === "-" ? "sub" : ast.op === "*" ? "mul" : "div";
+  const uncertifiedAdd =
+    id === "add" &&
+    realInBox(left.value) &&
+    realInBox(right.value) &&
+    UNCERTIFIED_ADD.some(([a, b]) => left.value.re.n === a && right.value.re.n === b);
+  if (uncertifiedAdd) return certifiedAddZero(left, right, value);
   const uncertifiedSub =
     id === "sub" &&
     realInBox(left.value) &&
