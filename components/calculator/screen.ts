@@ -69,7 +69,7 @@ export function programText(node: Node): string | null {
   return summary;
 }
 
-export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
+export function runNode(node: Node, mode: Mode, budget?: { maxNodes?: number }): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
   if (node.type === "one") {
     return { value: { re: 1, im: 0 }, text: "1", singular: null, mode, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, pendingExact: false, notice: null };
   }
@@ -89,10 +89,23 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
     };
   }
   try {
-    const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    const report = evaluateReport(node, {}, { maxNodes: budget?.maxNodes ?? 80_000 });
+    let text = formatC(report.value);
+    // A printed −0 can be a negative real or only a stray imaginary −0.
+    // The real part's own sign decides. 10^(−400) is +0; a negative underflow stays −0.
+    if (report.underflowed) {
+      const re = report.value.re;
+      const im = report.value.im;
+      const reZero = re === 0 || Object.is(re, -0);
+      const imZero = im === 0 || Object.is(im, -0);
+      if (reZero && imZero && (text === "−0" || text === "-0" || text === "0")) {
+        const negative = Object.is(re, -0) || re < 0 || Object.is(1 / re, -Infinity);
+        text = negative ? "−0 ≈" : "0 ≈";
+      }
+    }
     return {
       value: report.value,
-      text: formatC(report.value),
+      text,
       singular: report.singular,
       mode,
       touchedLn0: report.touchedLn0,
@@ -104,6 +117,7 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
     };
   } catch (err) {
     if (!(err instanceof EmlLimitError)) throw err;
+    const reason = /timed out/i.test(err.message) ? "evaluation timed out in float" : "too large to evaluate in float";
     return {
       value: { re: Number.NaN, im: Number.NaN },
       text: "—",
@@ -114,7 +128,7 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
       underflowed: false,
       nearCut: false,
       pendingExact: false,
-      notice: "couldn't verify",
+      notice: reason,
     };
   }
 }
@@ -163,6 +177,11 @@ export function noteFor(item: Entry): string | null {
 
 export function resultError(item: Entry): string | null {
   if (item.pendingExact || item.cancelled) return null;
+  // Float has no value to show. The dash needs a reason beside it, the same
+  // way an exact limit puts its explanation on the error line.
+  if (item.mode === "float" && item.text === "—") {
+    return item.notice || item.singular || "could not evaluate in float";
+  }
   // (10^400+1)/7 is finite in exact arithmetic and only overflows as a float.
   // The printed exact value stays, without a second "left the finite numbers".
   return finiteLossMessage({

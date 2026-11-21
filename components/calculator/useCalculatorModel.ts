@@ -37,6 +37,40 @@ import {
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "./twoButtons";
 import { useExactScheduler } from "./useExactScheduler";
 
+const MAX_WORD_PRESSES = 50_001;
+const WORD_TOO_LONG = "Too long: words are limited to 50,001 presses.";
+const PROGRAM_TOO_LONG = "Too long: program numbers are limited to 50,001 digits.";
+
+function isPressWhitespace(code: number): boolean {
+  return code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32
+    || code === 160 || code === 0xfeff
+    || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
+    || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000;
+}
+
+function leadingHash(source: string): boolean {
+  for (let i = 0; i < source.length; i += 1) {
+    const code = source.charCodeAt(i);
+    if (isPressWhitespace(code)) continue;
+    return code === 35;
+  }
+  return false;
+}
+
+function tooLongMessage(source: string): string {
+  return leadingHash(source) ? PROGRAM_TOO_LONG : WORD_TOO_LONG;
+}
+
+function wordExceedsPressLimit(source: string): boolean {
+  let presses = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    if (isPressWhitespace(source.charCodeAt(i))) continue;
+    presses += 1;
+    if (presses > MAX_WORD_PRESSES) return true;
+  }
+  return false;
+}
+
 type Live = {
   pushNode: (node: Node, caption: string, tapeLabel: string) => void;
   pushOne: () => void;
@@ -60,6 +94,7 @@ export function useCalculatorModel() {
   const [yText, setYText] = useState("2");
   const [expr, setExpr] = useState("sin(pi/6)");
   const [programField, setProgramField] = useState("");
+  const oversizedProgram = useRef(false);
   const [mode, setMode] = useState<Mode>("exact");
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
   const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
@@ -257,6 +292,7 @@ export function useCalculatorModel() {
   }, [mode]);
 
   const commit = useCallback((next: Model) => {
+    setHeldShortcut(null);
     historyRef.current = commitHistory(historyRef.current, next);
     modelRef.current = next;
     setModel(next);
@@ -351,6 +387,7 @@ export function useCalculatorModel() {
         y = { ...entry(readScalar(rawY), `y=${rawY.trim() || "y"}`, modeRef.current), bound: numbers };
         rest = [];
       } else {
+        setHeldShortcut(null);
         const next = { ...current, error: "EML needs two values. Press 1 first." };
         modelRef.current = next;
         setModel(next);
@@ -366,6 +403,7 @@ export function useCalculatorModel() {
         error: resultError(item),
       });
     } catch (err) {
+      setHeldShortcut(null);
       const next = { ...modelRef.current, error: failure(err) };
       modelRef.current = next;
       setModel(next);
@@ -373,6 +411,7 @@ export function useCalculatorModel() {
   }, [commit]);
 
   const fail = useCallback((error: string) => {
+    setHeldShortcut(null);
     const next = { ...modelRef.current, error };
     modelRef.current = next;
     setModel(next);
@@ -463,6 +502,7 @@ export function useCalculatorModel() {
     setExpr(text);
     const current = modelRef.current;
     if (!text) {
+      setHeldShortcut(null);
       setFieldError("Enter an expression.");
       return;
     }
@@ -471,6 +511,7 @@ export function useCalculatorModel() {
       const numbers: Record<string, C> = {};
       const wantsField = /\bx\b/i.test(text) || /\by\b/i.test(text);
       if (wantsField && !freeInputRef.current) {
+        setHeldShortcut(null);
         setFieldError("Turn on free input to use x or y");
         return;
       }
@@ -493,6 +534,7 @@ export function useCalculatorModel() {
         error: resultError(item),
       });
     } catch (err) {
+      setHeldShortcut(null);
       setFieldError(failure(err));
     }
   }, [commit]);
@@ -553,6 +595,7 @@ export function useCalculatorModel() {
   }, []);
 
   const undo = useCallback(() => {
+    setHeldShortcut(null);
     if (recomputeRef.current) {
       queueRef.current.push(() => live.current.undo());
       return;
@@ -609,11 +652,11 @@ export function useCalculatorModel() {
       queueRef.current.push(() => live.current.clearAll());
       return;
     }
-    setExpr("");
     commit(EMPTY);
   }, [commit]);
 
   const showProgram = useCallback((node: Node, caption: string, replace: boolean, notice?: string | null) => {
+    setHeldShortcut(null);
     if (recomputeRef.current) {
       queueRef.current.push(() => live.current.showProgram(node, caption, replace, notice));
       return;
@@ -670,7 +713,24 @@ export function useCalculatorModel() {
     })();
   }, []);
 
+  const setProgramDraft = useCallback((value: string) => {
+    // A paste can be hundreds of thousands of characters. Counting it is cheap;
+    // keeping it in state makes the next render paint the whole string.
+    if (wordExceedsPressLimit(value)) {
+      oversizedProgram.current = true;
+      fail(tooLongMessage(value));
+      return;
+    }
+    oversizedProgram.current = false;
+    setProgramField(value);
+  }, [fail]);
+
   const loadProgramText = useCallback((source: string) => {
+    if (oversizedProgram.current || wordExceedsPressLimit(source)) {
+      oversizedProgram.current = false;
+      fail(tooLongMessage(source));
+      return;
+    }
     try {
       const parsed = parseProgramInput(source);
       if (parsed.kind === "index") {
@@ -685,18 +745,26 @@ export function useCalculatorModel() {
           fail("Turn on free input to use x or y");
           return;
         }
-        const rawX = textRef.current.xText;
-        const rawY = textRef.current.yText;
-        const node = substitute(nodeFromRpn(parsed.word.split("")), { x: readScalar(rawX), y: readScalar(rawY) });
-        showProgram(node, `using x=${rawX.trim() || "x"}, y=${rawY.trim() || "y"}`, false, notice);
+        const bindings: Record<string, Node> = {};
+        const parts: string[] = [];
+        if (parsed.word.includes("x")) {
+          const rawX = textRef.current.xText;
+          bindings.x = readScalar(rawX);
+          parts.push(`x=${rawX.trim() || "x"}`);
+        }
+        if (parsed.word.includes("y")) {
+          const rawY = textRef.current.yText;
+          bindings.y = readScalar(rawY);
+          parts.push(`y=${rawY.trim() || "y"}`);
+        }
+        showProgram(substitute(nodeFromRpn(parsed.word.split("")), bindings), `using ${parts.join(", ")}`, false, notice);
         return;
       }
       const loaded = nodeFromRpn(parsed.word.split(""));
       const caption = parsed.word.length > 80 ? `${parsed.word.length} presses` : parsed.word;
       showProgram(loaded, caption, false, notice);
     } catch (err) {
-      const message = failure(err);
-      fail(message.includes("two values") ? "EML needs two values. Press 1 first." : message);
+      fail(failure(err));
     }
   }, [fail, showProgram]);
 
@@ -751,12 +819,14 @@ export function useCalculatorModel() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target;
+      const inField = target instanceof HTMLElement && Boolean(target.closest("input, textarea"));
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (target instanceof HTMLElement && target.closest("input, textarea")) return;
+      if (inField && event.key !== "Escape") return;
       const key = event.key;
       if (key !== "1" && key !== "e" && key !== "E" && key !== "x" && key !== "y" && key !== "Backspace" && key !== "Escape") return;
-      if (twoButtonsRef.current && (key === "x" || key === "y")) return;
+      if (!inField && twoButtonsRef.current && (key === "x" || key === "y")) return;
       event.preventDefault();
+      if (event.repeat) return;
       const run = () => {
         if (key === "1") pushOne();
         else if (key === "e" || key === "E") applyEml();
@@ -764,17 +834,24 @@ export function useCalculatorModel() {
         else if (key === "y") pushScalar(yText, "y");
         else if (key === "Backspace") undo();
         else if (key === "Escape") {
+          setHeldShortcut(null);
+          setFieldError(null);
+          if (modelRef.current.stack.some((item) => item.pendingExact)) {
+            cancelExact();
+            return;
+          }
+          if (!modelRef.current.error) return;
           const next = { ...modelRef.current, error: null };
           modelRef.current = next;
           setModel(next);
         }
       };
-      if (recomputeRef.current) queueRef.current.push(run);
+      if (key !== "Escape" && recomputeRef.current) queueRef.current.push(run);
       else run();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyEml, pushOne, pushScalar, undo, xText, yText]);
+  }, [applyEml, cancelExact, pushOne, pushScalar, undo, xText, yText]);
 
   return {
     model,
@@ -785,7 +862,7 @@ export function useCalculatorModel() {
     expr,
     setExpr,
     programField,
-    setProgramField,
+    setProgramField: setProgramDraft,
     mode,
     twoButtons,
     heldShortcut,
@@ -811,6 +888,7 @@ export function useCalculatorModel() {
     clearAll,
     loadProgramText,
     stepLoaded,
+    reportError: fail,
   };
 }
 

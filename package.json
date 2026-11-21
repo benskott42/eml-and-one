@@ -9,6 +9,7 @@
     "lint": "eslint --max-warnings=0",
     "eml:check": "tsx lib/eml/check.ts",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
+    "eml:layout": "node scripts/layout-check.mjs",
     "eml:golf": "tsx scripts/eml-golf-slow.ts"
   },
   "dependencies": {

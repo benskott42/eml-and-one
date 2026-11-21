@@ -23,7 +23,11 @@ html.ti-two-buttons .ti-btn-eml {
 }
 
 .ti-stage {
-  min-height: 100dvh;
+  /* svh tracks the visible viewport while the mobile toolbar is open.
+     100vh, and Firefox's 100dvh on the first paint, follow the large
+     viewport and leave the bottom of the page under that toolbar. */
+  min-height: 100vh;
+  min-height: 100svh;
   background:
     radial-gradient(900px 420px at 50% -80px, #59636d, transparent 70%),
     #1c2126;
@@ -104,6 +108,10 @@ html.ti-two-buttons .ti-btn-eml {
     0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
+.ti-face {
+  display: contents;
+}
+
 .ti-lcd {
   --lcd-ink: #1a2214;
   position: relative;
@@ -150,19 +158,70 @@ html.ti-two-buttons .ti-btn-eml {
   line-height: 1.15;
 }
 
+.ti-lcd-stack:focus-visible {
+  outline: 2px solid var(--lcd-ink);
+  outline-offset: -2px;
+}
+
 .ti-lcd-stack p {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+.ti-lcd-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.35rem 0.4rem;
+}
+
+.ti-lcd-copies {
+  display: flex;
+  flex: 1 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-left: auto;
 }
 
 .ti-lcd-result {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   margin: 0.25rem 0 0.15rem;
-  font-size: clamp(1.8rem, 8vw, 2.8rem);
-  line-height: 0.95;
+  /* Wrap on the spaces between a real part, its sign, and an imaginary
+     part. Digits stay together; the screen scrolls if a value is still
+     taller than the cap. */
+  font-size: clamp(1.35rem, 6.5vw, 2.4rem);
+  line-height: 1.05;
   letter-spacing: 0.01em;
-  overflow-wrap: anywhere;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: normal;
+  overflow-wrap: normal;
+  text-overflow: clip;
+}
+
+.ti-lcd-result.has-more::after,
+.ti-lcd.has-more::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  display: block;
+  height: 12px;
+  margin-top: -12px;
+  background: linear-gradient(to bottom, rgba(183, 195, 164, 0), #b7c3a4);
+  pointer-events: none;
+}
+
+.ti-lcd-term {
+  white-space: nowrap;
+}
+
+.ti-lcd-sep {
+  white-space: pre;
 }
 
 .ti-lcd-caption,
@@ -187,6 +246,17 @@ html.ti-two-buttons .ti-btn-eml {
   padding: 0.1rem 0.3rem;
   border: 1px solid var(--lcd-ink);
   font-size: 1.15rem;
+}
+
+.ti-lcd-error-empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 .ti-press {
@@ -330,6 +400,10 @@ html.ti-two-buttons .ti-btn-eml {
   padding: 8px 4px;
   min-height: 44px;
   cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   box-shadow:
     0 4px 0 var(--edge),
     inset 0 1px 0 rgba(255, 255, 255, 0.28);
@@ -371,6 +445,26 @@ html.ti-two-buttons .ti-btn-eml {
 .ti-btn-alpha {
   --edge: #14381f;
   background: #1f6b38;
+}
+
+.ti-compute-slot {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.ti-compute-slot .ti-case-note {
+  margin: 0;
+}
+
+.ti-case-note.is-idle {
+  visibility: hidden;
+}
+
+.ti-btn-cancel:disabled {
+  visibility: hidden;
 }
 
 .ti-device-two .ti-btn-one,
@@ -492,6 +586,12 @@ html.ti-two-buttons .ti-btn-eml {
   min-height: 44px;
   display: flex;
   align-items: center;
+}
+
+.ti-lcd .ti-fold summary,
+.ti-lcd .ti-fold p,
+.ti-lcd .ti-press-meta {
+  color: var(--lcd-ink);
 }
 
 .ti-check-row {
@@ -723,6 +823,35 @@ html.ti-two-buttons .ti-btn-eml {
   }
 }
 
+/* 1280×800 is tall enough for the screen to grow past the keys. Cap the
+   screen and scroll inside it so 1 and EML stay on the first page. */
+@media (min-width: 641px) and (max-height: 900px) {
+  .ti-stage {
+    padding: 12px 16px 16px;
+  }
+
+  .ti-lcd {
+    display: flex;
+    flex-direction: column;
+    max-height: 15rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .ti-lcd-pin {
+    flex: 0 0 auto;
+  }
+
+  .ti-lcd-result {
+    max-height: 7.5rem;
+  }
+
+  .ti-lcd-stack {
+    max-height: 3.4rem;
+    overflow: auto;
+  }
+}
+
 @media (max-width: 640px) {
   .ti-device {
     font-size: 14px;
@@ -735,7 +864,8 @@ html.ti-two-buttons .ti-btn-eml {
 
   .ti-device {
     width: 100%;
-    min-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100svh;
     border-radius: 0;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
   }
@@ -743,6 +873,228 @@ html.ti-two-buttons .ti-btn-eml {
   .ti-manual {
     width: 100%;
     padding: 4px 16px 28px;
+  }
+
+  .ti-lcd {
+    display: flex;
+    flex-direction: column;
+    /* 10.5rem min-height would beat this cap in Firefox, which lets
+       min-height win when the two conflict. Zero it in the same rule. */
+    min-height: 0;
+    max-height: 11rem;
+    /* The screen stays this tall so the keys do not move. A wheel or a
+       swipe scrolls the error, the press line, and Details inside it. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ti-lcd-stack {
+    flex: 0 1 auto;
+    max-height: 2.6rem;
+    min-height: 1.15rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ti-lcd-pin {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+  }
+
+  .ti-lcd-readout {
+    min-height: 0;
+  }
+
+  .ti-lcd-result {
+    max-height: 4rem;
+  }
+
+  .ti-sequence,
+  .ti-lcd > .ti-press,
+  .ti-lcd > .ti-lcd-flag,
+  .ti-lcd > .ti-fold {
+    flex: 0 0 auto;
+  }
+}
+
+/* 320x568 is shorter than the 11rem screen plus the keypad. A lower cap
+   keeps 1 and EML on the first page. 375x667 stays on the 11rem cap. */
+@media (max-width: 400px) {
+  .ti-lcd-result {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 400px) and (max-height: 640px) {
+  html {
+    /* A classic scrollbar narrows the page in Firefox and wraps the result
+       onto a line the capped screen cannot show. */
+    scrollbar-width: none;
+  }
+
+  .ti-device {
+    padding: 10px 12px 12px;
+  }
+
+  .ti-lcd {
+    min-height: 0;
+    /* A two-line value plus the Copy chip needs a little more than 8.25rem.
+       1 and EML still fit on a 568px screen. */
+    max-height: 10.25rem;
+  }
+
+  .ti-lcd-stack {
+    flex: 0 0 auto;
+    min-height: 1.15rem;
+    max-height: 1.15rem;
+    overflow: auto;
+  }
+
+  .ti-lcd-result {
+    max-height: 3.2rem;
+  }
+
+  /* Firefox wraps these one line further than Chromium once a scrollbar
+     appears, and that extra line is what pushes 1 and EML off a 568px screen. */
+  .ti-field {
+    appearance: none;
+    line-height: 1.2;
+    padding: 6px 8px;
+  }
+
+  .ti-modes .ti-btn {
+    font-size: 0.72rem;
+    line-height: 1.05;
+    padding: 6px 3px;
+  }
+
+  .ti-compute-slot .ti-case-note {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+}
+
+/* Installed apps lock to portrait. A browser tab cannot, so a short
+   landscape phone gets a side-by-side screen and keypad instead. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .ti-stage {
+    min-height: 100vh;
+    min-height: 100svh;
+    padding: 6px;
+    background:
+      radial-gradient(900px 420px at 50% -80px, #59636d, transparent 70%),
+      #1c2126;
+  }
+
+  .ti-device {
+    width: min(100%, 980px);
+    min-height: 0;
+    height: calc(100vh - 12px);
+    height: calc(100svh - 12px);
+    max-height: calc(100vh - 12px);
+    max-height: calc(100svh - 12px);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .ti-face {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(14rem, 0.9fr);
+    gap: 8px;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .ti-bezel {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ti-lcd {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ti-lcd-stack {
+    flex: 1 1 auto;
+    max-height: none;
+    min-height: 1.15rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .ti-lcd-pin {
+    flex: 0 0 auto;
+  }
+
+  .ti-pad {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ti-prime {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-top: 0;
+    padding-bottom: 4px;
+    background: #3d454d;
+  }
+
+  .ti-btn-one,
+  .ti-btn-eml,
+  .ti-device-two .ti-btn-one,
+  .ti-device-two .ti-btn-eml {
+    min-height: 2.8rem;
+    font-size: 1.35rem;
+  }
+
+  .ti-form {
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .ti-field {
+    padding: 6px 8px;
+  }
+
+  .ti-text-btn {
+    min-height: 2.4rem;
+    padding: 6px 8px;
+  }
+
+  .ti-modes {
+    margin-top: 6px;
+    gap: 6px;
+    grid-template-columns: 1.1fr 1fr 1fr;
+  }
+
+  .ti-modes .ti-btn {
+    min-height: 2.5rem;
+    padding: 4px 3px;
+    font-size: 0.68rem;
+  }
+
+  .ti-manual {
+    width: min(100%, 980px);
   }
 }
 

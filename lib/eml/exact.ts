@@ -9,9 +9,12 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  isUnverified,
   precisionMessage,
+  provenInteger,
+  trigArg,
 } from "./node";
-import { decadeOf, inScaledShell, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 
 /**
@@ -325,6 +328,22 @@ function vanished(v: Z): boolean {
   return v.re.isZero() && v.im.isZero();
 }
 
+/** True when a past-cap power, or a sum of two underflows, is still in the tree. */
+function lostTinyIn(root: Node): boolean {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    if (isLostTiny(node)) return true;
+    if (node.type === "eml") {
+      stack.push(node.a, node.b);
+    }
+  }
+  return false;
+}
+
 /**
  * Digits needed when a known leaf is too small for the current precision.
  * A large magnitude such as 10^300 is already exact at 120 digits; raising
@@ -525,6 +544,30 @@ function settleResidue(
   return residueParts(current).length === 0 ? current : certifyZero(current);
 }
 
+/**
+ * A huge integer kept beside a non-integer is a mul by a leaf labelled `beside:`.
+ * That mul is not the sum: exact evaluation would certify the bare integer.
+ * The leaf sits next to the root, so this does not walk the power.
+ */
+function hidesBeside(root: Node): boolean {
+  const stack: { n: Node; depth: number }[] = [{ n: root, depth: 0 }];
+  let steps = 0;
+  while (stack.length && steps < 64) {
+    const frame = stack.pop();
+    if (!frame) break;
+    steps += 1;
+    const node = frame.n;
+    if (node.type === "input") {
+      if (node.label.startsWith("beside:")) return true;
+      continue;
+    }
+    if (node.type === "eml" && frame.depth < 8) {
+      stack.push({ n: node.a, depth: frame.depth + 1 }, { n: node.b, depth: frame.depth + 1 });
+    }
+  }
+  return false;
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -537,11 +580,32 @@ export function exactReport(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
+  if (isUnverified(root) || hidesBeside(root)) {
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+  }
+  // The integer is the value. A later retry would rebuild the circuit and round off its units.
+  if (isMarkedExactInt(root)) {
+    const big = provenInteger(root);
+    if (big !== undefined) {
+      const text = big.toString();
+      const width = text.startsWith("-") ? text.length - 1 : text.length;
+      const saved = D.precision;
+      if (width > saved) D.set({ precision: width });
+      try {
+        return { value: z(text, 0), singular: null, touchedLn0: false };
+      } finally {
+        if (width > saved) D.set({ precision: saved });
+      }
+    }
+  }
   lossGap = 0;
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
   if (vanished(report.value)) {
     if (report.sawLead) return certifyZero(report);
+    // 0 − 10^(−500) and ln(1 − 10^(−500)) have no decade to recover. The zero
+    // is the cap, not a proof. A direct −10^(−500) is not zero and stays.
+    if (lostTinyIn(root)) return certifyZero(report);
     const gap = lossGap;
     // Any recorded cancellation can hide the term that should have survived.
     // A structural zero such as 1−1 records no gap and stays certified.
@@ -624,6 +688,17 @@ function exactReportOnce(
     if (!n) throw new EmlError("Could not evaluate this circuit.");
     if (isSeriesShortcut(n)) sawLead = true;
     if (memo.has(n)) continue;
+    if (isMarkedExactInt(n) && n.type !== "input") {
+      const big = provenInteger(n);
+      if (big !== undefined) {
+        const value = z(big.toString(), 0);
+        memo.set(n, value);
+        noteSeen(value);
+        why.set(n, null);
+        logged.set(n, false);
+        continue;
+      }
+    }
 
     if (n.type === "one") {
       memo.set(n, Z1);
@@ -633,6 +708,17 @@ function exactReportOnce(
       continue;
     }
     if (n.type === "input") {
+      if (isMarkedExactInt(n)) {
+        const big = provenInteger(n);
+        if (big !== undefined) {
+          const value = z(big.toString(), 0);
+          memo.set(n, value);
+          noteSeen(value);
+          why.set(n, null);
+          logged.set(n, false);
+          continue;
+        }
+      }
       const leaf = z(n.value.re, n.value.im);
       memo.set(n, leaf);
       noteSeen(leaf);
@@ -654,7 +740,11 @@ function exactReportOnce(
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
-    const hit = NOCACHE ? undefined : cache.get(n);
+    // A sin, cos, or tan node can be an intermediate of another function and
+    // already be cached. The cache entry is the exp formula. Recompute so an
+    // infinite argument stays undefined instead of that cached infinity.
+    const angle = trigArg(n);
+    const hit = NOCACHE || angle ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -681,7 +771,13 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
-    const value = exactEml(a, b);
+    // sin, cos, and tan of ±∞ are undefined. The note travels with the packed circuit.
+    // The exp formula otherwise returns an infinity.
+    // The argument may sit under a cached intermediate, so this walk never
+    // visits it. The earlier evaluation stored it in the pure cache.
+    const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
+    const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
+    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
@@ -851,8 +947,15 @@ function formatDecImag(d: Decimal): string {
 
 function formatFullInteger(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
-  const digits = d.abs().toFixed(0);
-  return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  const saved = D.precision;
+  const need = Math.max(saved, d.abs().e + 2);
+  if (need > saved) D.set({ precision: need });
+  try {
+    const digits = d.abs().toFixed(0);
+    return sign + digits.replace(/(.{20})(?=.)/g, "$1\u200b");
+  } finally {
+    if (need > saved) D.set({ precision: saved });
+  }
 }
 
 /**
@@ -862,8 +965,9 @@ function formatFullInteger(d: Decimal): string {
  * exponent is past the working precision, so it stays in scientific form.
  */
 function exactInteger(d: Decimal): boolean {
-  if (!d.isFinite() || d.isZero() || d.abs().e >= D.precision) return false;
-  if (d.abs().lt(0.5)) return false;
+  if (!d.isFinite() || d.isZero() || d.abs().lt(0.5)) return false;
+  // A marked integer can be wider than the working precision and still hold its units digit.
+  if (d.abs().e >= D.precision) return d.sd() > d.abs().e && d.isInt();
   const gap = d.sub(d.round()).abs();
   if (gap.eq(0)) return true;
   // The last 24 digits of a 120-digit run are construction dust.

@@ -165,12 +165,30 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
   return precisionNotes.get(node);
 }
 
+/** Argument of sin, cos, or tan. tan is stored as a pole note. */
+export function trigArg(node: Node): Node | null {
+  const note = precisionNotes.get(node);
+  if (!note || (note.kind !== "trig" && note.kind !== "pole")) return null;
+  return note.arg;
+}
+
 /**
  * A function the library replaced by a short series. The next term is past
  * the 480-digit cap. A later cancellation that makes the whole result 0 is
  * not a certified zero: the dropped term could have been the answer.
  */
 const seriesShortcuts = new WeakSet<Node>();
+const unverifiedNodes = new WeakSet<Node>();
+
+/** A result that dropped a term. The screen says it could not verify, in either mode. */
+export function markUnverified(node: Node): Node {
+  unverifiedNodes.add(node);
+  return node;
+}
+
+export function isUnverified(node: Node): boolean {
+  return unverifiedNodes.has(node);
+}
 
 export function markSeriesShortcut(node: Node): Node {
   seriesShortcuts.add(node);
@@ -212,6 +230,8 @@ export type EvalReport = {
   underflowed: boolean;
   /** The float result landed on the branch cut, or within a few ulps of it. */
   nearCut: boolean;
+  /** The circuit dropped a term. The number is not a result. */
+  unverified?: boolean;
 };
 
 function zeroC(v: C): boolean {
@@ -243,6 +263,17 @@ export function expUnderflows(input: C): boolean {
 }
 
 export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: EvalBudget = {}): EvalReport {
+  if (isUnverified(root)) {
+    return {
+      value: { re: Number.NaN, im: Number.NaN },
+      singular: null,
+      touchedLn0: false,
+      overflowed: false,
+      underflowed: false,
+      nearCut: false,
+      unverified: true,
+    };
+  }
   const maxNodes = budget.maxNodes ?? DEFAULT_MAX_NODES;
   const deadline = budget.deadline ?? 0;
   const memo = new Map<Node, C>();
@@ -321,8 +352,11 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     const childLog = logged.get(n.a) === true || logged.get(n.b) === true || zeroC(b);
     const childOverflow = overflowed.get(n.a) === true || overflowed.get(n.b) === true;
     const childUnder = underflowed.get(n.a) === true || underflowed.get(n.b) === true;
-    // The value is this gate. Nothing here is replaced from a side table.
-    const value = eml(a, b);
+    // sin, cos, and tan of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    const angle = trigArg(n);
+    const angleValue = angle ? memo.get(angle) : undefined;
+    const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));
+    const value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
     const nan = Number.isNaN(value.re) || Number.isNaN(value.im);
     // Logging 0 at this gate is a real pole. An infinity born from two finite
     // inputs that are not that pole is float overflow, even if some other
@@ -338,7 +372,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       // argument. Real ∞ − ∞ of two poles stays indeterminate.
       const messy = (value: C) => !finiteC(value) && Number.isFinite(value.im) && value.im !== 0 && !Object.is(value.im, -0);
       const childRange = why.get(n.a) === SINGULAR_RANGE || why.get(n.b) === SINGULAR_RANGE;
-      singular = rangeHere || childRange || messy(a) || messy(b) ? SINGULAR_RANGE : SINGULAR_INDET;
+      singular = angleInfinite || !(rangeHere || childRange || messy(a) || messy(b)) ? SINGULAR_INDET : SINGULAR_RANGE;
     }
     // An infinity born from finite inputs is overflow, even if another gate logged 0.
     // ln 0 itself is the label only when this infinity was not that overflow.
