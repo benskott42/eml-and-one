@@ -1676,6 +1676,8 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["cos(inf)", "undefined"],
     ["cos(ln(0))", "undefined"],
     ["sin((inf+1)-1)", "undefined"],
+    ["tan(inf)", "undefined"],
+    ["tan(ln(0))", "undefined"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1686,6 +1688,26 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     if (floatText !== want || exactText !== want || floatText !== exactText) {
       failed += 1;
       console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular);
+    }
+  }
+  // The in-process rows never pack. The screen's exact worker evaluates the packed circuit.
+  const freshAngles = ["sin(inf)", "cos(inf)", "sin(ln(0))", "cos(ln(0))", "tan(inf)", "tan(ln(0))"];
+  const freshJobs = freshAngles.map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const freshAnglesRun = runTsx("scripts/fresh-exact.ts", JSON.stringify(freshJobs));
+  if (freshAnglesRun.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh trig infinity", freshAnglesRun.status, freshAnglesRun.stderr);
+  } else {
+    const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null }>;
+    for (const row of rows) {
+      const text = row.text.replace(/\u200b/g, "");
+      if (text !== "undefined" || row.singular === null) {
+        failed += 1;
+        console.log("FAIL fresh trig infinity", row.source, text, row.singular);
+      }
     }
   }
   if (gap === programNode("0") || gapReport.singular !== SINGULAR_INDET) {

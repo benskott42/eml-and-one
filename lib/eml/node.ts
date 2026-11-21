@@ -165,10 +165,11 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
   return precisionNotes.get(node);
 }
 
-/** Argument of a sin or cos result. tan uses the pole note instead. */
+/** Argument of sin, cos, or tan. tan is stored as a pole note. */
 export function trigArg(node: Node): Node | null {
   const note = precisionNotes.get(node);
-  return note && note.kind === "trig" ? note.arg : null;
+  if (!note || (note.kind !== "trig" && note.kind !== "pole")) return null;
+  return note.arg;
 }
 
 /**
@@ -351,7 +352,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     const childLog = logged.get(n.a) === true || logged.get(n.b) === true || zeroC(b);
     const childOverflow = overflowed.get(n.a) === true || overflowed.get(n.b) === true;
     const childUnder = underflowed.get(n.a) === true || underflowed.get(n.b) === true;
-    // sin and cos of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    // sin, cos, and tan of ±∞ are undefined. The exp formula otherwise returns an infinity.
     const angle = trigArg(n);
     const angleValue = angle ? memo.get(angle) : undefined;
     const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));

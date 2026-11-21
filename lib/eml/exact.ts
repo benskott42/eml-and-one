@@ -740,7 +740,11 @@ function exactReportOnce(
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
-    const hit = NOCACHE ? undefined : cache.get(n);
+    // A sin, cos, or tan node can be an intermediate of another function and
+    // already be cached. The cache entry is the exp formula. Recompute so an
+    // infinite argument stays undefined instead of that cached infinity.
+    const angle = trigArg(n);
+    const hit = NOCACHE || angle ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -767,9 +771,11 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
-    // sin and cos of ±∞ are undefined. The exp formula otherwise returns an infinity.
-    const angle = trigArg(n);
-    const angleValue = angle ? memo.get(angle) : undefined;
+    // sin, cos, and tan of ±∞ are undefined. The note travels with the packed circuit.
+    // The exp formula otherwise returns an infinity.
+    // The argument may sit under a cached intermediate, so this walk never
+    // visits it. The earlier evaluation stored it in the pure cache.
+    const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
     const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
     const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
     const shell = inScaledShell(n);
