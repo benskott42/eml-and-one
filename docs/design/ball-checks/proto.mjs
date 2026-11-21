@@ -1,7 +1,13 @@
 // Prototype of the proposed ball rules (ball-soundness.md §1-§3) on decimal.js 10.6.0.
 // Centre clone D: precision P, default ROUND_HALF_UP. Radius clones: DU (ROUND_UP), DD (ROUND_DOWN), Q digits.
-import Decimal from "/workspace/eao-reviewB/node_modules/decimal.js/decimal.mjs";
+// From a checkout with dependencies installed (`npm ci`):
+//   node docs/design/ball-checks/proto.mjs
+// ref.py is spawned beside this file and needs python3 and mpmath. The series check is separate:
+//   python3 docs/design/ball-checks/series_tails.py
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+const require = createRequire(import.meta.url);
+const Decimal = require("decimal.js");
 const P = Number(process.env.P ?? 300), Q = 20;
 const D = Decimal.clone({ precision: P });
 const DU = Decimal.clone({ precision: Q, rounding: Decimal.ROUND_UP });
