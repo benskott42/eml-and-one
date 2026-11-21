@@ -68,15 +68,19 @@ function signedZeroFrom(part: Decimal): Decimal {
 }
 
 /**
- * cos and sin. An angle within the working tolerance of a multiple of π/2 is
- * that axis, so exp(iπ) is −1 and the composed logarithm takes the upper bank.
- * π − 10^(−12) is far outside this tolerance.
+ * cos and sin. An angle within the working tolerance of a nonzero multiple of
+ * π/2 is that axis, so exp(iπ) is −1 and the composed logarithm takes the upper
+ * bank. π − 10^(−12) is far outside this tolerance. A tiny angle near 0 is not
+ * snapped: sin(6×10^(−120)) is that angle, not 0. An axis snap is not recorded
+ * as a cancellation: π itself carries a 10^(−precision) offset, so exp(iπ) + 1
+ * would retry to the cap and never certify its 0.
  */
 function cosSin(theta: Decimal): { c: Decimal; s: Decimal } {
   const pi = D.acos(-1);
   const half = pi.div(2);
   const steps = theta.div(half).toNearest(1);
-  if (theta.sub(steps.mul(half)).abs().lte(tol())) {
+  const offset = theta.sub(steps.mul(half));
+  if (!steps.isZero() && offset.abs().lte(tol())) {
     const ax = ((steps.toNumber() % 4) + 4) % 4;
     if (ax === 0) return { c: ONE, s: ZERO };
     if (ax === 1) return { c: ZERO, s: ONE };
@@ -195,6 +199,13 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 let lossGap = 0;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
+
+/** Smallest exponent of a nonzero finite component, or 0, the same floor `tiniest` starts from. */
+function exponentFloor(v: Z): number {
+  let low = 0;
+  for (const part of [v.re, v.im]) if (part.isFinite() && !part.isZero() && part.e < low) low = part.e;
+  return low;
+}
 
 function noteSeen(v: Z): void {
   const take = (part: Decimal) => {
@@ -361,7 +372,8 @@ function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): nu
   }
   return best;
 }
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
+/** `loss`, `tiniest` and `lead` are the subtree's share of the pass state, restored on a hit. */
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; lead: boolean };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -443,17 +455,18 @@ function demandedTinyDigits(root: Node, env: Record<string, C | Z>): number {
   return need;
 }
 
-function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport {
+function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, budget: EvalBudget, scrub = true): ExactReport {
   const saved = D.precision;
   D.set({ precision: digits });
   try {
-    const report = exactReport(root, env, budget, 2);
+    const report = exactReport(root, env, budget, scrub ? 2 : 3);
     if (digits <= saved) return report;
     // The retry can carry hundreds of extra digits. The suite compares the
     // working-precision value, so round back once the hidden component is recovered.
     D.set({ precision: saved });
     const round = (part: Decimal) => (part.isFinite() ? new D(part.toSignificantDigits(saved).toString()) : part);
-    return { ...report, digits, value: scrubDust({ re: round(report.value.re), im: round(report.value.im) }) };
+    const value = { re: round(report.value.re), im: round(report.value.im) };
+    return { ...report, digits, value: scrub ? scrubDust(value) : value };
   } finally {
     D.set({ precision: saved });
   }
@@ -521,6 +534,42 @@ function confirmDust(report: ExactReport, root: Node, env: Record<string, C | Z>
   if (again.isFinite() && part.sub(again).abs().lte(part.abs().mul("1e-6"))) return report;
   const cleared = part.isNeg() ? new D(-0) : ZERO;
   return { ...report, value: which === "re" ? { re: cleared, im: report.value.im } : { re: report.value.re, im: cleared } };
+}
+
+/**
+ * One component 0 (or scrubbed) beside a nonzero one, with a known leaf below the
+ * working precision: 10^(−130) + i/2 rounds the real part away inside the gates.
+ * Evaluate where that leaf fits, twice, and keep a part that holds still. The
+ * scrub would clear it again (it is more than 108 decades below its sibling),
+ * so neither pass is scrubbed. A part that moves is dust and the scrubbed value
+ * stands; so does a leaf past 480 digits.
+ */
+function recoverTinyPart(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport | null {
+  // A part the scrub would clear counts as 0 here: exp(6×10^(−120) i) computes the
+  // imaginary part, then the scrub drops it beside the 1.
+  const v = scrubDust(report.value);
+  if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() === v.im.isZero()) return null;
+  const which: "re" | "im" = v.re.isZero() ? "re" : "im";
+  const digits = report.digits ?? D.precision;
+  const hinted = demandedTinyDigits(root, env);
+  if (hinted <= digits) return null;
+  if (hinted > PRECISION_CAP) return null;
+  let first: ExactReport;
+  let second: ExactReport;
+  try {
+    first = atPrecision(hinted, root, env, budget, false);
+    if (first.unverified || first.value[which].isZero()) return null;
+    second = atPrecision(Math.min(PRECISION_CAP, hinted + 24), root, env, budget, false);
+  } catch {
+    return null;
+  }
+  // A part under the noise of the terms that cancelled at that precision is a
+  // rounding residue even when it holds still: sin(−10^(−400)) leaves ~10^(−801) i.
+  const work = which === "re" ? first.workRe : first.workIm;
+  if (work !== undefined && Number.isFinite(work) && first.value[which].abs().lt(residueFloor(work, first.digits ?? hinted))) return null;
+  // A part that moves with the precision is dust, and the scrubbed value stands.
+  if (second.unverified || residueMoved(first.value[which], second.value[which])) return null;
+  return first;
 }
 
 function certifyZero(report: ExactReport): ExactReport {
@@ -705,7 +754,8 @@ export function exactReport(
   }
   lossGap = 0;
   const report = exactReportOnce(root, env, budget);
-  if (pass !== 0) return present(report);
+  // Pass 3 is a raised pass whose caller judges a tiny part itself, so it is not scrubbed.
+  if (pass !== 0) return pass === 3 ? report : present(report);
   if (vanished(report.value)) {
     if (report.sawLead) return certifyZero(report);
     // 0 − 10^(−500) and ln(1 − 10^(−500)) have no decade to recover. The zero
@@ -749,6 +799,8 @@ export function exactReport(
   }
   settled = settleResidue(settled, root, env, budget);
   if (settled.unverified) return settled;
+  const besideTiny = recoverTinyPart(settled, root, env, budget);
+  if (besideTiny) return besideTiny;
   // ln(−2 − 10^(−p) i) collapses onto the cut once p passes the working
   // precision, and the composed log then certifies +π. The point is still
   // below the axis. Raise precision until the known power is visible, or
@@ -765,6 +817,12 @@ export function exactReport(
   return confirmDust(present(settled), root, env, budget);
 }
 
+/** The imaginary part of an exp argument below the noise floor of the cancellation that made it. */
+function angleNoise(v: Z, made: Work | undefined): boolean {
+  if (!made || !Number.isFinite(made.im) || !v.im.isFinite() || v.im.isZero()) return false;
+  return v.im.abs().lt(residueFloor(made.im, D.precision));
+}
+
 function exactReportOnce(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -776,6 +834,10 @@ function exactReportOnce(
   const why = new Map<Node, string | null>();
   const logged = new Map<Node, boolean>();
   const work = new Map<Node, Work>();
+  // Per subtree: largest cancellation, smallest exponent seen, and a series shortcut below.
+  const lossOf = new Map<Node, number>();
+  const tinyOf = new Map<Node, number>();
+  const leadOf = new Map<Node, boolean>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
@@ -861,6 +923,13 @@ function exactReportOnce(
       why.set(n, hit.why);
       logged.set(n, hit.logged);
       work.set(n, hit.work);
+      // exactEml did not run below this node, so take its recorded share of the pass state.
+      if (hit.loss > lossGap) lossGap = hit.loss;
+      if (hit.tiniest < tiniest) tiniest = hit.tiniest;
+      if (hit.lead) sawLead = true;
+      lossOf.set(n, hit.loss);
+      tinyOf.set(n, hit.tiniest);
+      leadOf.set(n, hit.lead);
       continue;
     }
 
@@ -888,7 +957,20 @@ function exactReportOnce(
     // visits it. The earlier evaluation stored it in the pure cache.
     const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
     const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
-    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
+    const outerLoss = lossGap;
+    lossGap = 0;
+    // An angle under the rounding noise of the gates that produced it is that
+    // noise, and turns as 0 (cosSin no longer snaps a tiny angle to the axis).
+    const turn = angleNoise(a, work.get(n.a)) ? { re: a.re, im: ZERO } : a;
+    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b);
+    const ownLoss = lossGap;
+    lossGap = Math.max(outerLoss, ownLoss);
+    const subLoss = Math.max(ownLoss, lossOf.get(n.a) ?? 0, lossOf.get(n.b) ?? 0);
+    const subTiny = Math.min(exponentFloor(value), tinyOf.get(n.a) ?? exponentFloor(a), tinyOf.get(n.b) ?? exponentFloor(b));
+    const subLead = isSeriesShortcut(n) || leadOf.get(n.a) === true || leadOf.get(n.b) === true;
+    lossOf.set(n, subLoss);
+    tinyOf.set(n, subTiny);
+    leadOf.set(n, subLead);
     const ownHits = gateHits;
     const shell = inScaledShell(n);
     // A short lift never reaches 1, so its cancellation is the result's rounding.
@@ -917,7 +999,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork });
+    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, lead: subLead });
   }
 
   const out = memo.get(root);
@@ -1124,7 +1206,6 @@ export function formatExact(v: Z): string {
   if (v.re.isZero() && v.im.isZero()) return v.re.isNeg() || v.im.isNeg() ? "−0" : "0";
   if (v.im.isZero() && exactInteger(v.re)) return formatFullInteger(v.re.round());
   if (v.re.isNaN() || v.im.isNaN()) return "undefined";
-  if (v.re.isZero() && v.im.isZero()) return "0";
   if (v.im.isZero()) return formatDec(v.re);
   if (v.re.isZero()) return formatDecImag(v.im);
   const joiner = v.im.isNeg() ? " − " : " + ";
