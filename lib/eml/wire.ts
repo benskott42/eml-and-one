@@ -13,6 +13,10 @@ export type Wire =
       b: number;
       pole?: number;
       trig?: number;
+      /** asinh argument, or the two terms of an add whose range is unknown. */
+      asinh?: number;
+      addL?: number;
+      addR?: number;
       lift?: 1;
       dec?: number;
       lead?: 1;
@@ -91,6 +95,11 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     const token: Wire = { i, k: "E", a, b };
     if (note?.kind === "pole") token.pole = idOf.get(note.arg);
     else if (note?.kind === "trig") token.trig = idOf.get(note.arg);
+    else if (note?.kind === "asinh") token.asinh = idOf.get(note.arg);
+    else if (note?.kind === "add") {
+      token.addL = idOf.get(note.left);
+      token.addR = idOf.get(note.right);
+    }
     if (isTwoScaled(frame.n)) token.lift = 1;
     if (inScaledShell(frame.n)) token.shell = 1;
     if (isSeriesShortcut(frame.n)) token.lead = 1;
@@ -130,6 +139,10 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       nodes[tok.i] = node;
       if (tok.pole !== undefined && nodes[tok.pole]) notePrecision(node, { kind: "pole", arg: nodes[tok.pole] });
       else if (tok.trig !== undefined && nodes[tok.trig]) notePrecision(node, { kind: "trig", arg: nodes[tok.trig] });
+      else if (tok.asinh !== undefined && nodes[tok.asinh]) notePrecision(node, { kind: "asinh", arg: nodes[tok.asinh] });
+      else if (tok.addL !== undefined && tok.addR !== undefined && nodes[tok.addL] && nodes[tok.addR]) {
+        notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
+      }
       if (tok.lift) markTwoScaled(node);
       if (tok.shell) noteScaledShell(node);
       if (tok.lead) markSeriesShortcut(node);
