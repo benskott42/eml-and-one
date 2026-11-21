@@ -639,7 +639,8 @@ function tMulBuild(a: Node, b: Node): Node {
   if (wa && wb) return attachTinyProduct(noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e)), a, b, "mul");
   if (exactZero(a) && negativeFactor(b) && !isWideTiny(a)) return negativeZero();
   if (exactZero(b) && negativeFactor(a) && !isWideTiny(b)) return negativeZero();
-  return attachTinyProduct(tagPi(rawMul(a, b), piMul(a, b)), a, b, "mul");
+  const product = tagPi(rawMul(a, b), piMul(a, b));
+  return attachTinyProduct(product, a, b, "mul");
 }
 
 function naiveIndeterminate(pole: Node): Node {
@@ -730,11 +731,13 @@ function tPowBuild(a: Node, b: Node): Node {
       const L = vb.re * Math.log10(va.re);
       const e = exact10 ? vb.re : Math.floor(L);
       noteWide(node, normWide(exact10 ? 1 : 10 ** (L - e), e));
-      // An integer power is an exact ratio. 10^(−400) is 1/10^400, not the float 0.
-      if (Number.isInteger(va.re) && Number.isInteger(vb.re) && vb.re < 0 && Math.abs(va.re) <= Number.MAX_SAFE_INTEGER) {
-        const exp = -vb.re;
-        const est = Math.ceil(exp * Math.log10(Math.abs(va.re))) + 1;
-        if (exp <= 100_000 && est <= 8192) noteExactRatio(node, BigInt(1), BigInt(Math.trunc(Math.abs(va.re))) ** BigInt(exp));
+      // An integer power proved by the bigint range, not by a float that rounded to an integer.
+      // 10^(−400) is 1/10^400, not the float 0.
+      if (ia !== undefined && ib !== undefined && ia > BigInt(0) && ib < BigInt(0)) {
+        const exp = -ib;
+        const expN = Number(exp);
+        const est = expN * ia.toString().length;
+        if (expN <= 100_000 && est <= 8192) noteExactRatio(node, BigInt(1), ia ** exp);
       }
     }
   }

@@ -1,8 +1,8 @@
 import { decadeOf, exactRatioOf, inScaledShell, noteExactRatio, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
-
-/** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
-export const WIRE_VERSION = 2;
 import { E, ONE, V, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+
+/** Bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. v3 carries rq. */
+export const WIRE_VERSION = 3;
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =

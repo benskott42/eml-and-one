@@ -3310,6 +3310,83 @@ if (inShard("core")) {
       }
     });
   }
+  // Nearby values below the float range must not cancel, and a sum that does
+  // not cancel stays certified. A lift that never reaches 1 is not that value.
+  const nearTiny: Array<[string, string]> = [
+    ["1e-400-1e-400*(1+1e-50)", "-1e-450"],
+    ["(1e-400)*3/3-(1e-400)*(1+1e-50)", "-1e-450"],
+    ["1e-400*(1+1e-100)-1e-400", "1e-500"],
+    ["1e-400*pi+1e-400", "4.14159265359e-400"],
+    ["1e-400*pi-1e-400", "2.14159265359e-400"],
+    ["2e-400-1e-400*pi", "-1.14159265359e-400"],
+    ["1e-400+1e-200*1e-200", "2e-400"],
+    ["(1e-200)^2+1e-401", "1.1e-400"],
+    ["1e-400+exp(-1000)", "1e-400"],
+    ["exp(-1000)-exp(-1001)", "3.20861797491e-435"],
+  ];
+  const relOff = (got: Decimal, want: string) => {
+    const goal = exactParts(want).re;
+    return goal.isZero() ? !got.isZero() : got.sub(goal).abs().div(goal.abs()).gt("1e-9");
+  };
+  for (const [source, want] of nearTiny) {
+    closeTo(source, want);
+    const floated = evaluateReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    if (floated.unverified) {
+      failed += 1;
+      console.log("FAIL float unverified", source);
+    }
+  }
+  const keptExp = workerReport("1e-400+exp(-1000)");
+  const expTerm = keptExp.value.re.sub(exactParts("1e-400").re);
+  if (keptExp.unverified || expTerm.lt("1e-436") || expTerm.gt("1e-434")) {
+    failed += 1;
+    console.log("FAIL 1e-400+exp(-1000) dropped the exponential", keptExp.unverified ? "unverified" : keptExp.value.re.toString());
+  }
+  // These are exactly 0. The circuit cannot prove it, so the residue must not be certified.
+  const cancelledTiny = [
+    "1e-400*1.5/1.5-1e-400",
+    "1e-400/0.5/2-1e-400",
+    "exp(ln(1e-400))-1e-400",
+    "(exp(ln(10)))^(-400)-1e-400",
+    "(1e-400)*(1+i)/(1+i)-1e-400",
+    "1e-400*(2^0.5)^2-2e-400",
+  ];
+  const provedZero = (re: Decimal, im: Decimal, unverified: boolean) => unverified || (re.isZero() && im.isZero());
+  for (const source of cancelledTiny) {
+    const report = workerReport(source);
+    if (!provedZero(report.value.re, report.value.im, report.unverified === true)) {
+      failed += 1;
+      console.log("FAIL certified residue", source, formatExact(report.value));
+    }
+  }
+  const liftJobs = [
+    ...nearTiny.map(([source]) => source),
+    ...cancelledTiny,
+  ].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const liftFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(liftJobs));
+  if (liftFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh lift", liftFresh.status, liftFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(liftFresh.stdout) as Array<{ source: string; re: string; text: string; unverified: boolean }>;
+    rows.forEach((row, index) => {
+      const want = nearTiny[index]?.[1];
+      if (index < nearTiny.length) {
+        if (!want || row.unverified || relOff(exactParts(row.re).re, want)) {
+          failed += 1;
+          console.log("FAIL fresh tiny value", row.source, row.unverified ? "unverified" : row.re, want);
+        }
+        return;
+      }
+      if (!row.unverified && row.text !== "0") {
+        failed += 1;
+        console.log("FAIL fresh certified residue", row.source, row.text);
+      }
+    });
+  }
   for (const source of ["sin(1e-300)-1e-300"]) unresolved(source);
   const shortcut = seriesShortcutNote(compileExpression("sin(1e-200)", {}));
   if (!shortcut || !shortcut.includes("series shortcut")) {

@@ -952,9 +952,6 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   }
   const proved = tinyRationalNode(a, b, "sub");
   if (proved) return proved;
-  // Both operands sit below the normal float range and neither ratio proves the
-  // difference. The lifted circuit's nonzero residue is rounding, not a value.
-  if (!inTinyRational && isWideTiny(a) && isWideTiny(b)) return unverifiedResult();
   return rememberSub(buildSub(a, b, kFrom), a, b);
 }
 
@@ -1346,7 +1343,6 @@ function domainAddBuild(a: Node, b: Node): Node {
   if (carried) return carried;
   const proved = tinyRationalNode(a, b, "add");
   if (proved) return proved;
-  if (!inTinyRational && isWideTiny(a) && isWideTiny(b)) return unverifiedResult();
   // Adding a non-integer to an integer past the float range must stay +∞.
   // Building the sum rotates through ln 0 and comes out negative.
   // A finite non-integer beside an integer past the float range is not dropped.
@@ -1411,7 +1407,8 @@ function domainNegBuild(b: Node): Node {
     return node;
   }
   if (ratio) return noteExactRatio(rawMul(oneNeg(), b), -ratio.n, ratio.d);
-  if (rangeOf(b).int === BigInt(0)) return negativeZero();
+  const n = rangeOf(b).int;
+  if (n === BigInt(0)) return negativeZero();
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();
