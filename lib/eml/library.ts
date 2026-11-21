@@ -33,7 +33,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -543,6 +543,23 @@ function factorQuarter(node: Node): number | null {
   return null;
 }
 
+/**
+ * A finite factor whose angle is not a quarter turn. 1+i is one.
+ * An unknown range is not this: the product word still has to run.
+ */
+function offAxis(node: Node): boolean {
+  if (factorQuarter(node) !== null) return false;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im)) return v.re !== 0 && v.im !== 0;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return false;
+  const ends = [range.re.lo, range.re.hi, range.im.lo, range.im.hi];
+  if (!ends.every((end) => Number.isFinite(end))) return false;
+  const reOff = range.re.hi < 0 || range.re.lo > 0;
+  const imOff = range.im.hi < 0 || range.im.lo > 0;
+  return reOff && imOff;
+}
+
 export function tMul(a: Node, b: Node): Node {
   // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
   if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
@@ -556,13 +573,17 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
-  // Carry the angle. The product word would keep only a real infinity.
+  // Carry the angle. Two infinities add their quarter turns. A factor off an
+  // axis has no quarter turn, and the product word would still certify a real ∞.
   const dirA = directionOf(a);
   const dirB = directionOf(b);
-  const quarterA = !dirB ? factorQuarter(b) : null;
-  const quarterB = !dirA ? factorQuarter(a) : null;
-  if (dirA && quarterA !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterA);
-  if (dirB && quarterB !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterB);
+  if (dirA && dirB) return rememberDirection(dirA.magnitude, dirA.quarter + dirB.quarter);
+  if (dirA && offAxis(b)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  if (dirB && offAxis(a)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  const quarterA = dirA ? null : factorQuarter(a);
+  const quarterB = dirB ? null : factorQuarter(b);
+  if (dirA && quarterB !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterB);
+  if (dirB && quarterA !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterA);
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
