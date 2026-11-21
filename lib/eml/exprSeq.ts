@@ -2,7 +2,7 @@ import { countWord, countWordLength } from "./countWord";
 import { EXACT_MAX_NODES, EXACT_TOO_LARGE } from "./exactBudget";
 import { tagValue } from "./lowering";
 import { tAdd, tNeg, tSub } from "./library";
-import { circuitStats, EmlLimitError, nodeFromRpn, rpnTokens, type Node } from "./node";
+import { circuitStats, nodeFromRpn, rpnTokens, type Node } from "./node";
 import { SHORT_PROGRAMS } from "./programs";
 import rows from "./integer-table.json";
 
@@ -266,7 +266,7 @@ function integerWord(n: number): { word: string; how: string } {
 function spell(node: Node, value: G, via: string[]): Built {
   const length = circuitStats(node).rpnLength;
   if (length > BigInt(EXACT_MAX_NODES)) {
-    throw new EmlLimitError(EXACT_TOO_LARGE);
+    throw new PressCompileError(EXACT_TOO_LARGE);
   }
   const tokens = rpnTokens(node, Number(length));
   if (!tokens || tokens.some((token) => token !== "1" && token !== "E")) {
@@ -540,5 +540,11 @@ export function compilePresses(source: string): PressSequence {
   const text = normalize(source).trim();
   if (!text) throw new PressCompileError("Enter an expression.");
   const built = lower(parse(text));
+  return { node: built.node, word: built.word, presses: built.word.length, via: built.via };
+}
+
+/** The press-budget check on a circuit that is already a node. */
+export function compilePressNode(node: Node): PressSequence {
+  const built = spell(node, realG(0), []);
   return { node: built.node, word: built.word, presses: built.word.length, via: built.via };
 }

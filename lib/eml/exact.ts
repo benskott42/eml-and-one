@@ -15,6 +15,7 @@ import {
   precisionMessage,
   provenInteger,
 } from "./node";
+import { EXACT_TOO_LARGE } from "./exactBudget";
 import { decadeOf, inScaledShell, oddSeriesOf, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 import { floatShowsComponent } from "./format";
@@ -966,7 +967,7 @@ function exactReportOnce(
 
   while (stack.length) {
     if ((++steps & 31) === 0) {
-      if (steps > maxNodes) throw new EmlLimitError("This circuit is too large for exact mode.");
+      if (steps > maxNodes) throw new EmlLimitError(EXACT_TOO_LARGE);
       if (deadline && performance.now() > deadline) throw new EmlLimitError(EXACT_TIMED_OUT);
     }
     const frame = stack.pop();
