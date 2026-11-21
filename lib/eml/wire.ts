@@ -5,7 +5,7 @@ import { E, ONE, V, input, isSeriesShortcut, isUnverified, markSeriesShortcut, m
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1 }
+  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; nfr?: -1 | 1; nfi?: -1 | 1 }
   | {
       i: number;
       k: "E";
@@ -54,7 +54,21 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       if (frame.n.type === "one") tokens.push({ i, k: "1" });
       else if (frame.n.type === "var") tokens.push({ i, k: "v", n: frame.n.name });
       else if (frame.n.type === "input") {
-        const token: Wire = { i, k: "in", re: frame.n.value.re, im: frame.n.value.im, label: frame.n.label };
+        // JSON drops Infinity, which is how the fresh worker receives a circuit.
+        // PostMessage keeps it, and nfr/nfi say the same thing either way.
+        const re = frame.n.value.re;
+        const im = frame.n.value.im;
+        const token: Wire = {
+          i,
+          k: "in",
+          re: Number.isFinite(re) ? re : 0,
+          im: Number.isFinite(im) ? im : 0,
+          label: frame.n.label,
+        };
+        if (re === Infinity) token.nfr = 1;
+        else if (re === -Infinity) token.nfr = -1;
+        if (im === Infinity) token.nfi = 1;
+        else if (im === -Infinity) token.nfi = -1;
         const digits = exactIntDigits(frame.n);
         if (digits !== undefined) token.int = digits;
         if (isUnverified(frame.n)) token.unver = 1;
@@ -102,7 +116,9 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
     if (tok.k === "1") nodes[tok.i] = ONE;
     else if (tok.k === "v") nodes[tok.i] = V(tok.n);
     else if (tok.k === "in") {
-      const node = input({ re: tok.re, im: tok.im }, tok.label);
+      const re = tok.nfr === 1 ? Infinity : tok.nfr === -1 ? -Infinity : tok.re;
+      const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : tok.im;
+      const node = input({ re, im }, tok.label);
       if (tok.unver) markUnverified(node);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
     }
