@@ -25,7 +25,6 @@ import {
   chypot,
 } from "./complex";
 import {
-  tAdd,
   tAvg,
   tDiv,
   tE,
@@ -38,8 +37,9 @@ import {
   tPi,
   tPow,
   tSqrt,
-  tSub,
   literalNode,
+  userAdd,
+  userSub,
   unaryBuilders,
 } from "./library";
 import { formatC, isUsable } from "./format";
@@ -329,7 +329,7 @@ function balanced(op: "+" | "*", nodes: Node[]): Node {
   const mid = Math.floor(nodes.length / 2);
   const left = balanced(op, nodes.slice(0, mid));
   const right = balanced(op, nodes.slice(mid));
-  return op === "+" ? tAdd(left, right) : tMul(left, right);
+  return op === "+" ? userAdd(left, right) : tMul(left, right);
 }
 
 /** True when a sum contains the negation of another sum or difference. Iterative: a sum of many terms is a deep spine. */
@@ -356,7 +356,7 @@ function foldAst(ast: Ast): Node {
     const parts = ast.args.map(foldAst);
     const first = parts[0];
     if (!first) throw new EmlError("The expression ended early.");
-    return parts.slice(1).reduce((sum, part) => tAdd(sum, part), first);
+    return parts.slice(1).reduce((sum, part) => userAdd(sum, part), first);
   }
   if (ast.k === "+" || ast.k === "*") {
     const flat: Ast[] = [];
@@ -380,7 +380,7 @@ function foldAst(ast: Ast): Node {
   if (ast.k === "call") return applyNode(ast.name, ast.args.map(foldAst));
   const left = foldAst(ast.args[0]);
   const right = foldAst(ast.args[1]);
-  if (ast.name === "-") return tSub(left, right);
+  if (ast.name === "-") return userSub(left, right);
   if (ast.name === "/") return tDiv(left, right);
   return tPow(left, right);
 }
