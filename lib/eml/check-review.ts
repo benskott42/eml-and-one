@@ -108,7 +108,27 @@ function tailChecks(): number {
   return failed;
 }
 
+/** R4: an integer power is an exact integer in exact mode, every digit. */
+function powChecks(): number {
+  let failed = 0;
+  const rows: Array<[string, bigint]> = [
+    ["2^10000", BigInt(2) ** BigInt(10000)],
+    ["3^300", BigInt(3) ** BigInt(300)],
+    ["(-7)^201", BigInt(-7) ** BigInt(201)],
+    ["2^10000/2^9999", BigInt(2)],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const text = formatExact(report.value).replace(/\u200b/g, "").replace("−", "-");
+    if (report.unverified || text !== want.toString()) {
+      failed += 1;
+      console.log("FAIL review exact power", source, report.unverified ? "unverified" : text.slice(0, 40), `len ${text.length}`, "want len", want.toString().length);
+    }
+  }
+  return failed;
+}
+
 /** Called by check.ts after the main blocks. */
 export function runReviewChecks(): number {
-  return seriesChecks() + tailChecks();
+  return seriesChecks() + tailChecks() + powChecks();
 }

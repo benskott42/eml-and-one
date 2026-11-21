@@ -22,6 +22,7 @@ import {
   isNonfiniteNode,
   knownValue,
   markInfiniteSource,
+  markExactInt,
   markMaybeInfinite,
   noteDecade,
   noteTinyReal,
@@ -698,6 +699,9 @@ function intRatioDecade(a: bigint, b: bigint): number {
   return below ? d - 1 : d;
 }
 
+/** Integer powers up to this many digits are exact integers in exact mode (2^10000 has 3011). */
+const INT_POW_DIGITS = 20_000;
+
 export function tPow(a: Node, b: Node): Node {
   // v1.1 (#11 review C): x^1 is x for a marked x (ln(0)^1 was +∞).
   if (mayBeInfinite(a) && isOneNode(b)) return a;
@@ -713,7 +717,12 @@ function tPowBuild(a: Node, b: Node): Node {
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
-    return tagInteger(node, ia ** ib);
+    // Review R4: mark the integer so exact mode reads it, as lowering does for huge sums.
+    // A tag alone left 2^10000 as a 120-digit decimal, shown as 1.995063116881×10^3010.
+    // Past INT_POW_DIGITS the power keeps the tag and the rounded value.
+    const value = ia ** ib;
+    const digits = (value < BigInt(0) ? -value : value).toString().length;
+    return digits <= INT_POW_DIGITS ? markExactInt(node, value) : tagInteger(node, value);
   }
   const va = knownValue(a);
   const vb = knownValue(b);
