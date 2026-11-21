@@ -1,4 +1,5 @@
 import { type C } from "@/lib/eml/complex";
+import { EXACT_MAX_NODES } from "@/lib/eml/exactBudget";
 import { exactScreen, finiteLossMessage, underflowDisclosure, FLOAT_DIFFERS } from "@/lib/eml/history";
 import { floatText, scalarNode, seriesShortcutNote } from "@/lib/eml/library";
 import { EmlError, EmlLimitError, SINGULAR_LN0, type Node, circuitStats, describe, evaluateReport, isPure, rpnTokens } from "@/lib/eml/node";
@@ -95,7 +96,7 @@ export function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | 
     };
   }
   try {
-    const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    const report = evaluateReport(node, {}, { maxNodes: EXACT_MAX_NODES });
     // #11 b1d54b9: a circuit that dropped a term is not a float result either.
     if (report.unverified) {
       return {

@@ -3759,6 +3759,77 @@ if (inShard("core")) {
 }
 
 if (inShard("core")) {
+  // The absorbed-term retry used to run for every exact-0 component. It now runs only
+  // when a lost term can change a certified claim. Displayed values, the 40 trusted
+  // digits, and the certification flags stay those of the old retry (EML_ABSORB_ALWAYS).
+  // Digits past that trust floor may differ when the old retry was rounding dust.
+  type AbsorbCase = { src: string; word?: string; src2?: string; env?: Record<string, [number, number]> };
+  const absorbCases = JSON.parse(readFileSync(path.join(repoRoot, "scripts/overnight-cases.json"), "utf8")) as AbsorbCase[];
+  const sig40 = (part: Decimal) => (!part.isFinite() || part.isZero() ? part.toString() : part.toSignificantDigits(40).toString());
+  const absorbSnap = (report: ReturnType<typeof exactReport>) => {
+    const lost = report.notCertified;
+    return [
+      formatExact(report.value),
+      report.singular ?? "",
+      report.unverified === true,
+      report.cancelledZero === true,
+      report.touchedLn0 === true,
+      report.cutSeen === true,
+      lost ? `${lost.reason}:${lost.gap}:${lost.termDecade}` : "",
+      sig40(report.value.re),
+      sig40(report.value.im),
+    ].join("|");
+  };
+  const absorbParity = (label: string, node: Node, env: Record<string, { re: number; im: number }> = {}) => {
+    process.env.EML_ABSORB_ALWAYS = "1";
+    let before: ReturnType<typeof exactReport>;
+    try {
+      before = exactReport(node, env);
+    } catch (err) {
+      failed += 1;
+      console.log("FAIL absorb parity", label, err instanceof Error ? err.message : err);
+      return;
+    } finally {
+      delete process.env.EML_ABSORB_ALWAYS;
+    }
+    let after: ReturnType<typeof exactReport>;
+    try {
+      after = exactReport(node, env);
+    } catch (err) {
+      failed += 1;
+      console.log("FAIL absorb parity", label, err instanceof Error ? err.message : err);
+      return;
+    }
+    if (absorbSnap(before) !== absorbSnap(after)) {
+      failed += 1;
+      console.log("FAIL absorb parity", label, absorbSnap(before), absorbSnap(after));
+    }
+  };
+  for (const item of absorbCases) {
+    const env: Record<string, { re: number; im: number }> = {};
+    for (const [name, pair] of Object.entries(item.env ?? {})) env[name] = { re: pair[0], im: pair[1] };
+    const node = item.word
+      ? nodeFromRpn(item.word.split(""))
+      : compileExpression(item.src2 ?? item.src, Object.fromEntries(Object.keys(env).map((name) => [name, V(name)])));
+    absorbParity(item.word ? `word ${item.src}` : item.src, node, env);
+  }
+  for (const src of [
+    "1+10^(-130)",
+    "(1+10^(-130))-1",
+    "ln(1+10^(-130))",
+    "(1+1/0)-1/0",
+    "(1/0)-(1/0)",
+    "(10^400+pi)-10^400",
+    "1+10^(-200)",
+    "1+10^(-136)",
+    "cos(pi)",
+  ]) {
+    absorbParity(src, compileExpression(src, {}));
+  }
+  absorbParity("K33 −iπ word", nodeFromCompact("11111EE1E1111E1E1EEEE1EE11E1E1EEE"));
+}
+
+if (inShard("core")) {
   // bigfixer hotfix-2 (PR #11 head fa5f9af), ported verbatim.
   // Marked infinities. mpmath dps 50: ln(0) is -inf and 0/0 raises ZeroDivisionError.
   // tan(pi/2) there is the finite -1.9788349012695708716820519525808990497221781173111e+51,
@@ -4119,6 +4190,27 @@ if (inShard("core")) {
         console.log("fresh", row.source, wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
       }
     }
+  }
+}
+
+if (inShard("core")) {
+  // Pre-existing on v1.1, and still true on this branch. The value is
+  // −10^(−124) + (10^10 / 3) i. Exact mode drops the real part and shows
+  // 3333333333.33i with no not-certified flag. Known-failing: the suite stays
+  // green while that part is missing. When the real part is kept, this fails
+  // so the skip can be removed. See RESUME.md. No GitHub issue.
+  const droppedReal = "(i*(1+10^(-124))-i)*i+i*10^10/3";
+  const dropped = exactReport(compileExpression(droppedReal, {}));
+  const imagOk = dropped.value.im.mul(3).div("1e10").minus(1).abs().lt("1e-9");
+  const realKept = dropped.value.re.plus("1e-124").abs().div("1e-124").lt("1e-6");
+  if (dropped.value.re.isZero() && imagOk && dropped.unverified !== true && !dropped.notCertified) {
+    console.log("KNOWN FAIL dropped real −10^(−124)", droppedReal, formatExact(dropped.value));
+  } else if (realKept && imagOk) {
+    failed += 1;
+    console.log("FAIL known-failing real part is now kept; remove the skip", droppedReal, formatExact(dropped.value));
+  } else {
+    failed += 1;
+    console.log("FAIL known-failing case changed shape", droppedReal, formatExact(dropped.value), dropped.notCertified ?? null, dropped.unverified ?? false);
   }
 }
 

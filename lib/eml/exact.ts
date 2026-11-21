@@ -760,9 +760,19 @@ function exactReportAbsorb(
   // Only a result that reads as exact makes a claim the lost term can break:
   // an integer or zero in each component (−1 for #431 and #5884). 1×10^300 for
   // 10^300 + 1 is already a 12-digit rounding and is left alone (no retry cost).
-  // A component that is exactly 0 is also a claim: the K33 −iπ word's real part.
+  // A component that is exactly 0 is not, by itself, such a claim: a real result's
+  // imaginary part is 0, and the K33 −iπ residue is already resolved before this
+  // point (both components nonzero). EML_ABSORB_ALWAYS=1 keeps the old exact-0 retry
+  // so the parity test can compare against it.
   if (!looksExact(report.value) && !report.value.re.isZero() && !report.value.im.isZero()) return report;
   const digits = report.digits ?? D.precision;
+  if (
+    !looksExact(report.value) &&
+    process.env?.EML_ABSORB_ALWAYS !== "1" &&
+    !absorbRetryCanChangeClaim(report, gap, digits)
+  ) {
+    return report;
+  }
   // Suite-time cut (v1.1 profile): a gap at the precision edge (≤ digits + 16) is rounding dust
   // in 96 of 96 suite retries. digits + 24 already moves dust by 24 decades and fits any real
   // term up to 10^(−(digits+16)), so it decides the same thing for less work than gap + 48.
@@ -804,6 +814,34 @@ function exactReportAbsorb(
   }
   if (PROF) prof("absorb flag without retry", performance.now());
   return { ...report, notCertified: { reason: "absorbed", termDecade: report.absorbedExp ?? Number.NEGATIVE_INFINITY, gap } };
+}
+
+/**
+ * Whether the one absorbed-term re-run can change a certified value or a
+ * not-certified flag. An exact-0 component is not enough: a real result has one.
+ *
+ * Retry when a term was actually swamped past what this result already claims:
+ * the gap is past the precision edge, the lost decade falls inside the 40-digit
+ * trust window, a zero component sits beside a huge sibling, or a certified
+ * component still stores digits the lost term can reach. A singular value is not
+ * a certified number; edge dust there cannot change its flag. Anything this
+ * cannot place is retried.
+ */
+function absorbRetryCanChangeClaim(report: ExactReport, gap: number, digits: number): boolean {
+  if (gap > digits + 16) return true;
+  if (hiddenComponent(report.value)) return true;
+  const term = report.absorbedExp;
+  if (term === undefined || !Number.isFinite(term)) return true;
+  const depth = (part: Decimal): number => {
+    if (!part.isFinite() || part.isZero()) return Number.POSITIVE_INFINITY;
+    return part.e - term;
+  };
+  const nearest = Math.min(depth(report.value.re), depth(report.value.im));
+  // arcsin(−10^(−130)) is a 120-digit residue the retry cleans to the exact power.
+  if (nearest < TRUST_DIGITS + 8) return true;
+  if (report.singular || report.unverified) return false;
+  const belowStored = (part: Decimal) => !part.isFinite() || part.isZero() || part.e - term > part.precision() + 2;
+  return !belowStored(report.value.re) || !belowStored(report.value.im);
 }
 
 function looksExact(v: Z): boolean {

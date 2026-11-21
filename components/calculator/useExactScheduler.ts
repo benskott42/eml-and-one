@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { type C } from "@/lib/eml/complex";
+import { EXACT_MAX_NODES } from "@/lib/eml/exactBudget";
 import { beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "@/lib/eml/exact";
 import { compareVerdict, exactProgressNote, exactScreen, exactShownText, fillNotice, type History } from "@/lib/eml/history";
 import { type Node } from "@/lib/eml/node";
@@ -170,7 +171,7 @@ export function useExactScheduler(input: {
   useEffect(() => {
     const deliver = (request: number, node: Node, bound: Record<string, C>) => {
       try {
-        const report = exactReport(node, bound, { maxNodes: 80_000 });
+        const report = exactReport(node, bound, { maxNodes: EXACT_MAX_NODES });
         const exact = exactToFloat(report.value);
         finishExact(request, {
           text: formatExact(report.value),
