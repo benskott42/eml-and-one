@@ -11,7 +11,8 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { acceptsConstantProgram, acceptsConstantValue, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { acceptsConstantProgram, acceptsConstantValue, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { DiskGrid, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
 import {
   applyBinaryNode,
   applyUnaryNode,
@@ -835,6 +836,238 @@ for (const id of ["e", "0", "-1"]) {
   if (solo.find((item) => item.id === id)?.k !== split.find((item) => item.id === id)?.k) {
     failed += 1;
     console.log("FAIL worker merge", id, solo, split);
+  }
+}
+if (inShard("core")) {
+  const libm = libmCertification();
+  if (!libm.ok || libm.checked < 200 || libm.worst > 1) {
+    failed += 1;
+    console.log("FAIL libm self-test", libm);
+  }
+  const axis = logDisk(pointDisk(-1, 0));
+  const overY = expDisk(pointDisk(0, 2 ** 20));
+  const overX = expDisk(pointDisk(700));
+  const underX = expDisk(pointDisk(-700));
+  if (axis.ok || overY.ok || overX.ok || underX.ok) {
+    failed += 1;
+    console.log("FAIL interval guard", axis.ok, overY.ok, overX.ok, underX.ok);
+  }
+  const wide = pointDisk(1, 0, 1);
+  if (wide.ok) {
+    failed += 1;
+    console.log("FAIL wide disk was certified", wide);
+  }
+  if (!disksDisjoint(pointDisk(0, 0, 1e-8), pointDisk(1, 0, 1e-8)) || disksDisjoint(pointDisk(0, 0, 0.2), pointDisk(0.1, 0, 0.2))) {
+    failed += 1;
+    console.log("FAIL disk separation");
+  }
+  const grid = new DiskGrid();
+  const home = pointDisk(0.5, 0, 1e-8);
+  const neighbour = pointDisk(0.51, 0, 1e-8);
+  const far = pointDisk(1.5, 0, 1e-8);
+  grid.add(1, home);
+  grid.add(2, neighbour);
+  grid.add(3, far);
+  const seen = new Set(grid.nearby(home));
+  if (!seen.has(1) || !seen.has(2) || seen.has(3)) {
+    failed += 1;
+    console.log("FAIL disk grid", [...seen]);
+  }
+
+  const High = DecimalValue.clone({ precision: 60 });
+  const decOf = (n: number) => {
+    if (!Number.isFinite(n)) return new High(n);
+    const view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, n, false);
+    const hi = view.getUint32(0, false);
+    const lo = view.getUint32(4, false);
+    const sign = hi >>> 31 ? -1 : 1;
+    const exp = (hi >>> 20) & 0x7ff;
+    const frac = new High(hi & 0xfffff).mul(new High(2).pow(32)).add(lo);
+    if (exp === 0) {
+      if (frac.isZero()) return sign < 0 ? new High(0).neg() : new High(0);
+      const mag = frac.mul(new High(2).pow(-1074));
+      return sign < 0 ? mag.neg() : mag;
+    }
+    const mant = frac.add(new High(2).pow(52));
+    const mag = mant.mul(new High(2).pow(exp - 1075));
+    return sign < 0 ? mag.neg() : mag;
+  };
+  const contains = (disk: { re: number; im: number; r: number; ok: boolean }, re: InstanceType<typeof High>, im: InstanceType<typeof High>) => {
+    if (!disk.ok) return false;
+    const dist = re.sub(disk.re).pow(2).add(im.sub(disk.im).pow(2)).sqrt();
+    return dist.lte(disk.r);
+  };
+  const trueExp = (x: InstanceType<typeof High>, y: InstanceType<typeof High>) => {
+    const mag = x.exp();
+    return { re: mag.mul(y.cos()), im: mag.mul(y.sin()) };
+  };
+  const trueLog = (x: InstanceType<typeof High>, y: InstanceType<typeof High>) => {
+    const rho = x.pow(2).add(y.pow(2)).sqrt();
+    return { re: rho.ln(), im: High.atan2(y, x) };
+  };
+  let rng = 0x5eed;
+  const rand = () => {
+    rng = (rng + 0x6d2b79f5) | 0;
+    let t = Math.imul(rng ^ (rng >>> 15), 1 | rng);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const span = (lo: number, hi: number) => lo + (hi - lo) * rand();
+  let checked = 0;
+  let missed = 0;
+  const sampleN = 2000;
+  for (let n = 0; n < sampleN; n += 1) {
+    const band = n % 4;
+    let x = 0;
+    let y = 0;
+    let radius = 0;
+    if (band === 0) {
+      x = span(-3, 3);
+      y = span(-3, 3);
+      radius = rand() < 0.5 ? 0 : 10 ** span(-14, -8);
+    } else if (band === 1) {
+      x = span(-4, -0.05);
+      y = (rand() < 0.5 ? -1 : 1) * 10 ** span(-10, -7);
+      radius = 10 ** span(-14, -9);
+    } else if (band === 2) {
+      x = span(-2, 2);
+      y = (rand() < 0.5 ? -1 : 1) * (2 ** 20 - span(1, 5000));
+      radius = rand() < 0.7 ? 0 : 1e-6;
+    } else {
+      x = (rand() < 0.5 ? -1 : 1) * (700 - span(0, 3));
+      y = span(-1, 1);
+      radius = 0;
+    }
+    const input = pointDisk(x, y, radius);
+    const expOut = expDisk(input);
+    const logOut = logDisk(input);
+    const shift = radius === 0 ? 0 : radius * 0.3;
+    const px = decOf(x).add(shift);
+    const py = decOf(y).add(shift * 0.5);
+    if (expOut.ok) {
+      checked += 1;
+      const value = trueExp(px, py);
+      if (!contains(expOut, value.re, value.im)) missed += 1;
+    }
+    if (logOut.ok) {
+      checked += 1;
+      const value = trueLog(px, py);
+      if (!contains(logOut, value.re, value.im)) missed += 1;
+    }
+    const other = pointDisk(span(-1, 2), span(-1, 1), 0);
+    const both = emlDisk(input, other);
+    if (both.ok && other.ok && input.ok) {
+      checked += 1;
+      const left = trueExp(px, py);
+      const right = trueLog(decOf(other.re), decOf(other.im));
+      if (!contains(both, left.re.sub(right.re), left.im.sub(right.im))) missed += 1;
+    }
+  }
+  if (missed !== 0 || checked < 500) {
+    failed += 1;
+    console.log("FAIL interval containment", missed, "of", checked);
+  }
+
+  const traced = searchConstants(13, { sound: true, trace: true });
+  const evalRpn = (rpn: string) => {
+    const stack: { re: InstanceType<typeof High>; im: InstanceType<typeof High> }[] = [];
+    for (const token of rpn) {
+      if (token === "1") {
+        stack.push({ re: new High(1), im: new High(0) });
+        continue;
+      }
+      const right = stack.pop();
+      const left = stack.pop();
+      if (!left || !right) return null;
+      const mag = left.re.exp();
+      const er = mag.mul(left.im.cos());
+      const ei = mag.mul(left.im.sin());
+      const rho = right.re.pow(2).add(right.im.pow(2)).sqrt();
+      stack.push({ re: er.sub(rho.ln()), im: ei.sub(High.atan2(right.im, right.re)) });
+    }
+    return stack.length === 1 ? stack[0] : null;
+  };
+  let poolMiss = 0;
+  let poolChecked = 0;
+  const conclusive = (traced.classes ?? []).filter((item) => item.diskOk);
+  for (const item of conclusive) {
+    const value = evalRpn(item.rpn);
+    if (!value) continue;
+    poolChecked += 1;
+    if (!contains({ re: item.diskRe, im: item.diskIm, r: item.diskR, ok: true }, value.re, value.im)) poolMiss += 1;
+  }
+  const pairN = Math.min(200, conclusive.length * conclusive.length);
+  for (let n = 0; n < pairN; n += 1) {
+    const left = conclusive[Math.floor(rand() * conclusive.length)];
+    const right = conclusive[Math.floor(rand() * conclusive.length)];
+    if (!left || !right) continue;
+    const a = evalRpn(left.rpn);
+    const b = evalRpn(right.rpn);
+    if (!a || !b) continue;
+    const disk = emlDisk(
+      { re: left.diskRe, im: left.diskIm, r: left.diskR, ok: true },
+      { re: right.diskRe, im: right.diskIm, r: right.diskR, ok: true },
+    );
+    if (!disk.ok) continue;
+    const mag = a.re.exp();
+    const er = mag.mul(a.im.cos());
+    const ei = mag.mul(a.im.sin());
+    const rho = b.re.pow(2).add(b.im.pow(2)).sqrt();
+    poolChecked += 1;
+    if (!contains(disk, er.sub(rho.ln()), ei.sub(High.atan2(b.im, b.re)))) poolMiss += 1;
+  }
+  if (poolMiss !== 0 || poolChecked < 50) {
+    failed += 1;
+    console.log("FAIL pool disk containment", poolMiss, "of", poolChecked);
+  }
+
+  const fixture = JSON.parse(readFileSync(path.join(repoRoot, "lib/eml/golf-v11-fixture.json"), "utf8")) as {
+    runs: { maxK: number; pool: number; rejected: number; levels: { k: number; added: number }[]; hits: { id: string; k: number; rpn: string; singular: boolean; usesLn0: boolean; branch: string; domain: string }[] }[];
+  };
+  for (const want of fixture.runs) {
+    const got = searchConstants(want.maxK);
+    const sameHits = JSON.stringify(got.hits) === JSON.stringify(want.hits);
+    const sameLevels = JSON.stringify(got.levels) === JSON.stringify(want.levels);
+    if (got.pool !== want.pool || got.rejected !== want.rejected || !sameHits || !sameLevels) {
+      failed += 1;
+      console.log("FAIL v1.1 parity", want.maxK, got.pool, want.pool, got.rejected, want.rejected, sameHits, sameLevels);
+    }
+  }
+
+  const plain = searchConstants(21);
+  const sound = searchConstants(21, { sound: true });
+  if (JSON.stringify(plain.hits) !== JSON.stringify(sound.hits)) {
+    failed += 1;
+    console.log("FAIL sound hits", sound.hits, plain.hits);
+  }
+  if (!sound.sound?.upperBound || !sound.sound.certification) {
+    failed += 1;
+    console.log("FAIL sound report", sound.sound);
+  }
+  if ((sound.sound?.confirmations ?? 0) + (sound.sound?.rejections ?? 0) !== sound.sound?.exactChecks) {
+    failed += 1;
+    console.log("FAIL sound exact tally", sound.sound);
+  }
+  const keptA = "111E1E1EE11EE";
+  const keptB = "111E1E11EEE11EE";
+  const nodeA = nodeFromRpn(keptA.split(""));
+  const nodeB = nodeFromRpn(keptB.split(""));
+  const floatA = evaluate(nodeA);
+  const floatB = evaluate(nodeB);
+  const keyA = floatDedupKey(floatA.re, floatA.im).join(",");
+  const keyB = floatDedupKey(floatB.re, floatB.im).join(",");
+  const exactA = exactValueAt(nodeA, 80);
+  const exactB = exactValueAt(nodeB, 80);
+  if (keyA !== keyB || (exactA.re.eq(exactB.re) && exactA.im.eq(exactB.im))) {
+    failed += 1;
+    console.log("FAIL crafted key collision", keyA, keyB, exactA.re.toString(), exactB.re.toString());
+  }
+  const soundSmall = searchConstants(15, { sound: true, trace: true });
+  const rpns = new Set((soundSmall.classes ?? []).map((item) => item.rpn));
+  if (!rpns.has(keptA) || !rpns.has(keptB)) {
+    failed += 1;
+    console.log("FAIL sound dropped a distinct shared-key pair", rpns.has(keptA), rpns.has(keptB));
   }
 }
 const fingerA = functionFingerprint(tAdd(X, Y), (point) => ({ x: point, y: { re: 0.3, im: -0.2 } }));
