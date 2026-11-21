@@ -510,6 +510,11 @@ function residueMoved(before: Decimal, after: Decimal): boolean {
  * Re-evaluate a residue with more digits. A part that stays put is real, the
  * same way dust is kept. A part that moves is not certified at this precision:
  * raise it, up to 480 digits, or leave the result unverified.
+ * Two readings that agree only after dropping hundreds of decades below every
+ * magnitude already seen are rounding left by a cancellation the working
+ * precision cannot finish. exp(ln(10^(−400))) − 10^(−400) is one. A real
+ * difference, such as 10^(−400)·(1 + 10^(−100)) − 10^(−400), stays close to
+ * that magnitude and is kept.
  */
 function settleResidue(
   report: ExactReport,
@@ -518,6 +523,15 @@ function settleResidue(
   budget: EvalBudget,
 ): ExactReport {
   let current = report;
+  // Largest magnitude this settlement has seen. A later reading that falls
+  // far below it, and is still under the cancellation floor, is rounding.
+  let anchorRe = Number.NEGATIVE_INFINITY;
+  let anchorIm = Number.NEGATIVE_INFINITY;
+  const noteAnchor = (v: Z) => {
+    if (v.re.isFinite() && !v.re.isZero()) anchorRe = Math.max(anchorRe, v.re.e);
+    if (v.im.isFinite() && !v.im.isZero()) anchorIm = Math.max(anchorIm, v.im.e);
+  };
+  noteAnchor(report.value);
   for (let hop = 0; hop < 8; hop += 1) {
     const which = residueParts(current);
     if (which.length === 0) return current;
@@ -537,8 +551,26 @@ function settleResidue(
     } catch {
       return certifyZero(current);
     }
+    noteAnchor(again.value);
     const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
-    if (!changed) return current;
+    if (!changed) {
+      const still = residueParts(again);
+      // A real difference stays within a couple of hundred decades of the
+      // magnitude already seen. A full cancellation does not: the two readings
+      // agree hundreds of decades lower, and that agreement is rounding.
+      const collapsed = (name: "re" | "im", anchor: number) => {
+        const part = again.value[name];
+        return still.includes(name) && part.isFinite() && !part.isZero() && part.e < anchor - 200;
+      };
+      const live = (["re", "im"] as const).filter((name) => {
+        const part = again.value[name];
+        return part.isFinite() && !part.isZero();
+      });
+      if (live.length > 0 && live.every((name) => collapsed(name, name === "re" ? anchorRe : anchorIm))) {
+        return certifyZero(again);
+      }
+      return current;
+    }
     current = again;
   }
   return residueParts(current).length === 0 ? current : certifyZero(current);
@@ -629,7 +661,12 @@ export function exactReport(
           if (vanished(again.value)) return certifyZero(again);
         } else if (lossGap > digits - 16) return certifyZero(again);
       }
-      return confirmDust(present(again), root, env, budget);
+      // A nonzero that shows up under the cancelled terms is still rounding
+      // until a second reading shows it stayed near the magnitude already seen.
+      const nonzeroResidue = residueParts(again).some((name) => !again.value[name].isZero());
+      const revealed = nonzeroResidue ? settleResidue(again, root, env, budget) : again;
+      if (revealed.unverified) return revealed;
+      return confirmDust(present(revealed), root, env, budget);
     }
   }
   let settled = report;
