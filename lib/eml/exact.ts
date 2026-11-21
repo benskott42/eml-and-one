@@ -377,7 +377,10 @@ type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss:
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
-const NOCACHE = typeof process !== "undefined" && process.env?.EML_NOCACHE === "1";
+/** EML_NOCACHE=1 skips the cache. Read per pass, so a test can toggle it at runtime. */
+function cacheOff(): boolean {
+  return typeof process !== "undefined" && process.env?.EML_NOCACHE === "1";
+}
 
 function zZero(v: Z): boolean {
   return v.re.isZero() && v.im.isZero();
@@ -843,6 +846,7 @@ function exactReportOnce(
   let sawLead = false;
   tiniest = 0;
   let steps = 0;
+  const nocache = cacheOff();
   let cache = pureCache.get(D.precision);
   if (!cache) {
     cache = new WeakMap();
@@ -916,7 +920,7 @@ function exactReportOnce(
     // already be cached. The cache entry is the exp formula. Recompute so an
     // infinite argument stays undefined instead of that cached infinity.
     const angle = trigArg(n);
-    const hit = NOCACHE || angle ? undefined : cache.get(n);
+    const hit = nocache || angle ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -1005,8 +1009,10 @@ function exactReportOnce(
   const out = memo.get(root);
   if (!out) throw new EmlError("Could not evaluate this circuit.");
   let singular = why.get(root) ?? null;
+  // A noted argument under a cached subtree is not in this pass's memo. Its
+  // value is in the cache; without it a repeat evaluation drops the note.
   const flag = precisionMessage(root, (n) => {
-    const z = memo.get(n);
+    const z = memo.get(n) ?? cache.get(n)?.value;
     return z ? exactToFloat(z) : undefined;
   });
   // A pole is a pole in both engines, including when the gates produced NaN.

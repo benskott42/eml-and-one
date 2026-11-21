@@ -27,7 +27,7 @@ const out = jobs.map((job) => {
   const started = performance.now();
   const node = job.word ? nodeFromRpn(job.word) : unpackCircuit(job.tokens ?? [], job.root ?? 0);
   const report = exactReport(node, job.env ?? {}, { maxNodes: 400_000 });
-  const row: { source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number; again?: string } = {
+  const row: { source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number; again?: string; againSingular?: string | null } = {
     source: job.source,
     text: formatExact(report.value),
     unverified: report.unverified === true,
@@ -37,6 +37,7 @@ const out = jobs.map((job) => {
   if (job.again) {
     const second = exactReport(node, job.env ?? {}, { maxNodes: 400_000 });
     row.again = second.unverified ? "unverified" : formatExact(second.value);
+    row.againSingular = second.singular;
   }
   if (job.re !== undefined) row.close = exactClose(report.value, job.re, job.im ?? "0", job.digits ?? 40);
   return row;

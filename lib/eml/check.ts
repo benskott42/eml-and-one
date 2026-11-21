@@ -3936,6 +3936,55 @@ failed += runPropertyChecks();
   }
 }
 
+{
+  // A repeat evaluation in one process (the exact worker is reused across jobs) must
+  // match an evaluation with the pure cache off: same text, same note, same verdict.
+  const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)"];
+  const warmRows = ["1e100", "1e22", "1e7", "sqrt(1/10^130)", "6*i", "pi/2"];
+  const verdict = (report: ReturnType<typeof exactReport>) =>
+    `${report.unverified ? "unverified" : formatExact(report.value)} [${report.singular ?? ""}]`;
+  const saved = process.env.EML_NOCACHE;
+  process.env.EML_NOCACHE = "1";
+  const cold = repeatRows.map((source) => verdict(exactReport(compileExpression(source, {}))));
+  if (saved === undefined) delete process.env.EML_NOCACHE;
+  else process.env.EML_NOCACHE = saved;
+  for (const source of warmRows) exactReport(compileExpression(source, {}));
+  repeatRows.forEach((source, index) => {
+    const node = compileExpression(source, {});
+    const first = verdict(exactReport(node));
+    const second = verdict(exactReport(node));
+    const packed = packCircuit(node);
+    const trip = verdict(exactReport(unpackCircuit(packed.tokens, packed.root)));
+    if (first !== cold[index] || second !== cold[index] || trip !== cold[index]) {
+      failed += 1;
+      console.log("FAIL repeat evaluation", source, "cold", cold[index], "first", first, "second", second, "round trip", trip);
+    } else {
+      console.log("repeat evaluation", source, cold[index]);
+    }
+  });
+  // The same rows in one shared fresh child after earlier jobs, each evaluated twice.
+  const shared = [...warmRows, ...repeatRows].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root, again: true as const };
+  });
+  const run = runTsx("scripts/fresh-exact.ts", JSON.stringify(shared));
+  if (run.status !== 0) {
+    failed += 1;
+    console.log("FAIL shared child repeat", run.status, run.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(run.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; again?: string; againSingular?: string | null }>;
+    for (const row of rows.slice(warmRows.length)) {
+      const want = cold[repeatRows.indexOf(row.source)];
+      const first = `${row.unverified ? "unverified" : row.text} [${row.singular ?? ""}]`;
+      const second = `${row.again} [${row.againSingular ?? ""}]`;
+      if (first !== want || second !== want) {
+        failed += 1;
+        console.log("FAIL shared child repeat", row.source, "cold", want, "first", first, "second", second);
+      }
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
