@@ -403,6 +403,8 @@ export function tSub(a: Node, b: Node): Node {
 }
 
 export function tNeg(b: Node): Node {
+  const dir = directionOf(b);
+  if (dir) return rememberDirection(dir.magnitude, dir.quarter + 2);
   return tagPi(domainNeg(b), piNeg(b));
 }
 
@@ -495,14 +497,50 @@ function pureImagDirection(node: Node): -1 | 1 | null {
 }
 
 /**
- * exp(+∞ ± iπ/2). The product and square-root words add that angle to a real
- * infinity and then lose it, so ±∞ · i and sqrt(−∞) come out real.
- * Negating −∞ first makes the exponent +∞; the turn is i or −i.
+ * An infinity's angle, in quarter turns. 0 is +∞, 1 is +∞i, 2 is −∞, 3 is −∞i.
+ * The turn is the finite node whose log cancels that angle: exp(+∞ − ln(turn)).
+ * Mul, sqr, and neg add to this count. The product and square words would drop it,
+ * and a product of two turns is only approximately on the axis in float.
  */
-function imaginaryInfinity(sign: -1 | 1, infinity: Node): Node {
-  const positive = realSignedInfinity(infinity) === -1 ? tNeg(infinity) : infinity;
-  const turn = sign > 0 ? tNeg(tI()) : tI();
-  return markInfiniteSource(E(E(positive, turn), ONE));
+const directedInfinity = new WeakMap<Node, { magnitude: Node; quarter: number }>();
+
+function positiveRealInfinity(node: Node): Node {
+  return realSignedInfinity(node) === -1 ? domainNeg(node) : node;
+}
+
+function axisTurn(quarter: number): Node {
+  const q = ((quarter % 4) + 4) % 4;
+  if (q === 0) return ONE;
+  if (q === 1) return tNeg(tI());
+  if (q === 2) return tMinusOne();
+  return tI();
+}
+
+function rememberDirection(magnitude: Node, quarter: number): Node {
+  const positive = positiveRealInfinity(magnitude);
+  const node = markInfiniteSource(E(E(positive, axisTurn(quarter)), ONE));
+  directedInfinity.set(node, { magnitude: positive, quarter });
+  return node;
+}
+
+function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
+  const hit = directedInfinity.get(node);
+  if (hit) return hit;
+  const sign = realSignedInfinity(node);
+  if (sign === 1) return { magnitude: node, quarter: 0 };
+  if (sign === -1) return { magnitude: domainNeg(node), quarter: 2 };
+  return null;
+}
+
+/** Quarter turns to add for a finite factor on one axis. */
+function factorQuarter(node: Node): number | null {
+  const real = realDirection(node);
+  if (real === 1) return 0;
+  if (real === -1) return 2;
+  const imag = pureImagDirection(node);
+  if (imag === 1) return 1;
+  if (imag === -1) return 3;
+  return null;
 }
 
 export function tMul(a: Node, b: Node): Node {
@@ -518,13 +556,13 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
-  // ±∞ · i is an imaginary infinity. The product word keeps only a real infinity.
-  const infA = realSignedInfinity(a);
-  const infB = realSignedInfinity(b);
-  const imagA = pureImagDirection(a);
-  const imagB = pureImagDirection(b);
-  if (infA && imagB) return imaginaryInfinity(infA === imagB ? 1 : -1, a);
-  if (infB && imagA) return imaginaryInfinity(infB === imagA ? 1 : -1, b);
+  // Carry the angle. The product word would keep only a real infinity.
+  const dirA = directionOf(a);
+  const dirB = directionOf(b);
+  const quarterA = !dirB ? factorQuarter(b) : null;
+  const quarterB = !dirA ? factorQuarter(a) : null;
+  if (dirA && quarterA !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterA);
+  if (dirB && quarterB !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterB);
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
@@ -551,6 +589,9 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
+  // A finite numerator over a directed infinity is 0. The quotient word can
+  // leave a signed zero in the opposite direction.
+  if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
   // exp(u)/exp(v) = exp(u − v) when the exponents are integers or small,
   // so exp(800)/exp(799) is e and not ∞/∞. A large complex exponent keeps
   // the quotient: rewriting it overflows.
@@ -563,6 +604,8 @@ export function tDiv(a: Node, b: Node): Node {
 }
 
 export function tPow(a: Node, b: Node): Node {
+  // x^2 is the square. A directed infinity doubles its angle there.
+  if (rangeOf(b).int === BigInt(2) && directionOf(a)) return tSqr(a);
   const node = applyProgram("pow", { x: a, y: b });
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
@@ -591,6 +634,8 @@ export function tPow(a: Node, b: Node): Node {
 }
 
 export function tSqr(t: Node): Node {
+  const dir = directionOf(t);
+  if (dir) return rememberDirection(dir.magnitude, dir.quarter * 2);
   const node = applyProgram("sqr", { x: t });
   const v = knownValue(t);
   if (!v) return node;
@@ -610,8 +655,9 @@ export const tTwoThirds = memo(() => tDiv(tTwo(), tThree()));
 export function tSqrt(t: Node): Node {
   const v = t.type === "input" ? t.value : knownValue(t);
   // sqrt(−∞) is +∞i. The principal value has a non-negative real part, as sqrt(−1) = +i.
-  // The square-root word takes the lower-bank log and drops the angle.
-  if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return imaginaryInfinity(1, t);
+  // sqrt(+∞) stays +∞. The square-root word drops the angle, so the direction is recorded.
+  if (v && imagZero(v) && v.re === Number.POSITIVE_INFINITY) return rememberDirection(t, 0);
+  if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return rememberDirection(t, 1);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
   const node = applyProgram("sqrt", { x: t });
