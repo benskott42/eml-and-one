@@ -1,6 +1,7 @@
 /**
  * The button-press spelling of a program.
- * The 1 key is the bit 1, the EML key is the bit 0, and x or y stay as letters.
+ * The EML key is the bit 1, the 1 key is the bit 0, and x or y stay as letters.
+ * These are the program ID bits without their leading 1.
  */
 import { type Node, circuitStats, rpnTokens } from "./node";
 
@@ -18,8 +19,8 @@ export type PressPreview = {
 
 /** Map one RPN token onto the press alphabet. Anything else is not a button program. */
 export function encodePressToken(token: string): string | null {
-  if (token === "1") return "1";
-  if (token === "E") return "0";
+  if (token === "1") return "0";
+  if (token === "E") return "1";
   if (token === "x" || token === "y") return token;
   return null;
 }

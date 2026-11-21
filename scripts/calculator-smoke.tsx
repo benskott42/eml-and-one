@@ -112,11 +112,11 @@ async function main() {
   };
   await waitResult();
   const built = screenText();
-  if (!resultText().includes("2.718") || !built.includes("110")) {
+  if (!resultText().includes("2.718") || !built.includes("001")) {
     console.error("pressing 1, 1, EML did not build e", built);
     failed = true;
   }
-  if (!built.includes("higher program number is a lower binary value")) {
+  if (!built.includes("higher program number is a higher binary value")) {
     console.error("ordering legend missing after a key press", built);
     failed = true;
   }
@@ -165,7 +165,7 @@ async function main() {
       clear.click();
     });
   }
-  const program = view.document.querySelector("input[placeholder='#110, 110, or 11E']");
+  const program = view.document.querySelector("input[placeholder='#1, 001, or 11E']");
   const setProgram = async (value: string) => {
     if (!(program instanceof view.HTMLInputElement)) {
       console.error("missing program field");

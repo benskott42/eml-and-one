@@ -54,6 +54,8 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
+      - run: npm run program-id:check
+      - run: npm run load-bits:smoke
       - run: npx tsx scripts/count-check.ts
       - run: npm run build
         env:
