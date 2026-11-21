@@ -44,6 +44,8 @@ export function CalculatorView(props: CalculatorModel) {
   const topNode = top?.node ?? null;
   const fullDigits = useMemo(() => (topNode ? programIndexDigits(topNode) : null), [topNode]);
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
+  // v1.1 (C3): a new number owns a new copy button, so "Copied" from the last one never sticks.
+  const copyKey = `${top?.watch ?? 0}:${top?.node.id ?? 0}:${fullNumber ?? ""}`;
 
   return (
     <main className="ti-stage">
@@ -81,11 +83,11 @@ export function CalculatorView(props: CalculatorModel) {
             {model.note ? (
               <div className="ti-lcd-note">
                 <span title={fullNumber ?? undefined}>{model.note}</span>
-                {fullNumber ? <CopyNumber text={fullNumber} /> : null}
+                {fullNumber ? <CopyNumber key={copyKey} text={fullNumber} /> : null}
               </div>
             ) : null}
             {model.error ? <p className="ti-lcd-error">{model.error}</p> : null}
-            <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
+            <PressLine key={copyKey} node={top?.node ?? null} />
             {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
         </div>
@@ -143,7 +145,7 @@ export function CalculatorView(props: CalculatorModel) {
         </div>
         <p className="ti-case-note">
           {mode === "exact"
-            ? "Exact value of this circuit. Cancel stops a long one, and the previous number comes down."
+            ? "Exact value of this circuit. Cancel stops a long one and shows a dash."
             : "Hardware view: the raw 64-bit float value of these gates. A disagreement is flagged, with the exact value beside it."}
         </p>
           {twoButtons ? null : (
@@ -358,6 +360,11 @@ export function CalculatorView(props: CalculatorModel) {
           eml(x, y) = exp(x) − ln(y). With the constant 1, that single operator builds
           arithmetic, roots, logarithms, and the trigonometric functions. The other keys
           are programs written only in those two.
+        </p>
+        <p>
+          The press string under a result reads E = 1, the 1 key = 0. Within one length, a
+          higher program number is a higher binary value. The program ID is these bits with a
+          1 in front.
         </p>
         {twoButtons ? null : <GolfPanel />}
 

@@ -5,8 +5,23 @@ import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 
-export function CopyNumber({ text }: { text: string }) {
+/** v1.1 (C3): "Copied" falls back to the plain label after 2 s, and a pending reset dies with the button. */
+function useCopiedReset(): [boolean, () => void] {
   const [copied, setCopied] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+  }, []);
+  const mark = () => {
+    setCopied(true);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), 2000);
+  };
+  return [copied, mark];
+}
+
+export function CopyNumber({ text }: { text: string }) {
+  const [copied, markCopied] = useCopiedReset();
   return (
     <button
       type="button"
@@ -16,7 +31,7 @@ export function CopyNumber({ text }: { text: string }) {
       onClick={() => {
         const clip = navigator.clipboard;
         if (!clip) return;
-        void clip.writeText(text).then(() => setCopied(true)).catch(() => undefined);
+        void clip.writeText(text).then(() => markCopied()).catch(() => undefined);
       }}
     >
       {copied ? "Copied" : "Copy number"}
@@ -25,7 +40,7 @@ export function CopyNumber({ text }: { text: string }) {
 }
 
 export function PressLine({ node }: { node: Node | null }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedReset();
   const view = useMemo(() => (node ? pressPreviewForNode(node) : null), [node]);
   if (!node) return null;
   if (!view) {
@@ -37,14 +52,13 @@ export function PressLine({ node }: { node: Node | null }) {
         {view.preview} ({view.presses.toString()} presses)
       </p>
       <div className="ti-press-meta">
-        <span>E = 1, the 1 key = 0. Within one length, a higher program number is a higher binary value. The program ID is these bits with a 1 in front.</span>
         {view.usesVariables ? <span>x and y stay in the string</span> : null}
         {view.copyable ? (
           <button
             type="button"
             className="ti-lcd-btn"
             onClick={() => {
-              void navigator.clipboard.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
+              void navigator.clipboard.writeText(view.full).then(() => markCopied()).catch(() => undefined);
             }}
           >
             {copied ? "Copied bits" : "Copy bits"}
