@@ -241,6 +241,141 @@ async function main() {
     console.error("pi's shortened program number is missing", screenText());
     failed = true;
   }
+
+  // C2: each LCD flag is printed once. C3: "Copied" does not survive the next number, and the 2 s timer restores the label.
+  const countLcd = (needle: string) => {
+    const text = screenText();
+    let count = 0;
+    for (let from = 0; from < text.length; ) {
+      const at = text.indexOf(needle, from);
+      if (at < 0) break;
+      count += 1;
+      from = at + needle.length;
+    }
+    return count;
+  };
+  const waitFor = async (ready: () => boolean, tries: number, ms: number) => {
+    for (let i = 0; i < tries; i += 1) {
+      if (ready()) return true;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+    return ready();
+  };
+  const setInput = async (field: Element | null | undefined, value: string, missing: string) => {
+    if (!(field instanceof view.HTMLInputElement)) {
+      console.error(missing);
+      failed = true;
+      return false;
+    }
+    const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(field, value);
+      field.dispatchEvent(new view.Event("input", { bubbles: true }));
+    });
+    return true;
+  };
+  const setExpr = async (value: string) => setInput(view.document.querySelector("#expr"), value, "missing expression field");
+  await clickNamed("Clear");
+  await setExpr("ln(0)");
+  await clickNamed("Compute");
+  const ln0Flag = "uses ln 0 = −∞";
+  const ln0Ready = await waitFor(() => resultText().includes("−∞") && countLcd(ln0Flag) > 0, 120, 50);
+  const ln0Count = countLcd(ln0Flag);
+  if (!ln0Ready || ln0Count !== 1) {
+    console.error("exact ln(0) flag count", ln0Count, resultText(), screenText());
+    failed = true;
+  }
+  await clickNamed("Clear");
+  await clickNamed("hardware");
+  await setExpr("ln(1+10^(-130))");
+  await clickNamed("Compute");
+  const differs = "float differs from exact";
+  const differsReady = await waitFor(() => screenText().includes(differs), 160, 50);
+  const differsCount = countLcd(differs);
+  if (!differsReady || differsCount !== 1) {
+    console.error("hardware ln(1+10^(-130)) flag count", differsCount, screenText());
+    failed = true;
+  }
+  await clickNamed("Clear");
+  const xField = [...view.document.querySelectorAll("label")].find((label) => label.textContent?.trim().startsWith("x"))?.querySelector("input");
+  if (await setInput(xField, "1e-400", "missing x field")) {
+    await clickNamed("push x");
+    const tinyReady = await waitFor(() => screenText().includes(differs), 160, 50);
+    const tinyScreen = screenText();
+    if (!tinyReady || (tinyScreen.includes(differs) && tinyScreen.includes("matches the usual value"))) {
+      console.error("hardware 1e-400 shows both float differs and matches the usual value", tinyScreen);
+      failed = true;
+    }
+  }
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: view.navigator, configurable: true });
+  Object.defineProperty(view.navigator, "clipboard", {
+    value: { writeText: () => Promise.resolve() },
+    configurable: true,
+  });
+  await clickNamed("Clear");
+  await clickNamed("π");
+  const copyPi = buttonByText("Copy number");
+  if (!(copyPi instanceof view.HTMLButtonElement)) {
+    console.error("pi chip did not show Copy number", screenText());
+    failed = true;
+  } else {
+    await act(async () => {
+      copyPi.click();
+      await Promise.resolve();
+    });
+    if (buttonByText("Copied")?.textContent?.trim() !== "Copied") {
+      console.error("Copy number did not flip to Copied", screenText());
+      failed = true;
+    }
+  }
+  await setExpr("e+pi");
+  await clickNamed("Compute");
+  if (!(buttonByText("Copy number") instanceof view.HTMLButtonElement) || buttonByText("Copied")) {
+    console.error("e+pi left Copied on the screen", screenText());
+    failed = true;
+  }
+  await clickNamed("Clear");
+  await click(".ti-btn-one");
+  const copyBits = buttonByText("Copy bits");
+  let capturedReset: (() => void) | null = null;
+  const originalSetTimeout = view.window.setTimeout;
+  view.window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    if (timeout === 2000 && typeof handler === "function") {
+      capturedReset = () => {
+        handler(...args);
+      };
+      return 0;
+    }
+    return originalSetTimeout.call(view.window, handler, timeout, ...(args as never[]));
+  }) as typeof view.window.setTimeout;
+  if (!(copyBits instanceof view.HTMLButtonElement)) {
+    console.error("pressing 1 did not show Copy bits", screenText());
+    failed = true;
+  } else {
+    await act(async () => {
+      copyBits.click();
+      await Promise.resolve();
+    });
+  }
+  view.window.setTimeout = originalSetTimeout;
+  if (buttonByText("Copied bits")?.textContent?.trim() !== "Copied bits" || !capturedReset) {
+    console.error("Copy bits did not flip to Copied bits", buttonByText("Copied bits")?.textContent, screenText());
+    failed = true;
+  } else {
+    await click(".ti-btn-one");
+    await act(async () => {
+      capturedReset?.();
+    });
+    const bitsLabel = buttonByText("Copy bits")?.textContent?.trim() ?? buttonByText("Copied bits")?.textContent?.trim();
+    if (bitsLabel !== "Copy bits") {
+      console.error("Copy bits did not reset after pushing 1 again", bitsLabel, screenText());
+      failed = true;
+    }
+  }
+  if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
   await act(async () => {
     root.unmount();
   });
