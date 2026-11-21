@@ -470,8 +470,39 @@ function realDirection(node: Node): -1 | 0 | 1 | null {
 
 /** −∞ on the real axis, including ln(0). A typed +∞ is not this. */
 function negativeRealInfinity(node: Node): boolean {
+  return realSignedInfinity(node) === -1;
+}
+
+/** A known real ±∞, including a typed infinity and ln(0). */
+function realSignedInfinity(node: Node): -1 | 1 | null {
   const v = node.type === "input" ? node.value : knownValue(node);
-  return !!v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY;
+  if (!v || !imagZero(v)) return null;
+  if (v.re === Infinity) return 1;
+  if (v.re === -Infinity) return -1;
+  return null;
+}
+
+/** Sign of a known finite pure imaginary, or of an interval that stays on one side of 0. */
+function pureImagDirection(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && (v.re === 0 || Object.is(v.re, -0)) && Number.isFinite(v.im) && v.im !== 0) return v.im < 0 ? -1 : 1;
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.re.lo !== 0 || range.re.hi !== 0) return null;
+  if (!Number.isFinite(range.im.lo) || !Number.isFinite(range.im.hi)) return null;
+  if (range.im.hi < 0) return -1;
+  if (range.im.lo > 0) return 1;
+  return null;
+}
+
+/**
+ * exp(+∞ ± iπ/2). The product and square-root words add that angle to a real
+ * infinity and then lose it, so ±∞ · i and sqrt(−∞) come out real.
+ * Negating −∞ first makes the exponent +∞; the turn is i or −i.
+ */
+function imaginaryInfinity(sign: -1 | 1, infinity: Node): Node {
+  const positive = realSignedInfinity(infinity) === -1 ? tNeg(infinity) : infinity;
+  const turn = sign > 0 ? tNeg(tI()) : tI();
+  return markInfiniteSource(E(E(positive, turn), ONE));
 }
 
 export function tMul(a: Node, b: Node): Node {
@@ -487,6 +518,13 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
+  // ±∞ · i is an imaginary infinity. The product word keeps only a real infinity.
+  const infA = realSignedInfinity(a);
+  const infB = realSignedInfinity(b);
+  const imagA = pureImagDirection(a);
+  const imagB = pureImagDirection(b);
+  if (infA && imagB) return imaginaryInfinity(infA === imagB ? 1 : -1, a);
+  if (infB && imagA) return imaginaryInfinity(infB === imagA ? 1 : -1, b);
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
@@ -570,7 +608,10 @@ export const tThree = memo(() => tagReal(programNode("3"), 3));
 export const tTwoThirds = memo(() => tDiv(tTwo(), tThree()));
 
 export function tSqrt(t: Node): Node {
-  const v = knownValue(t);
+  const v = t.type === "input" ? t.value : knownValue(t);
+  // sqrt(−∞) is +∞i. The principal value has a non-negative real part, as sqrt(−1) = +i.
+  // The square-root word takes the lower-bank log and drops the angle.
+  if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return imaginaryInfinity(1, t);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
   const node = applyProgram("sqrt", { x: t });

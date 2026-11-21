@@ -1678,6 +1678,12 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["sin((inf+1)-1)", "undefined"],
     ["tan(inf)", "undefined"],
     ["tan(ln(0))", "undefined"],
+    ["sqrt(ln(0))", "∞i"],
+    ["ln(0)*i", "−∞i"],
+    ["inf*i", "∞i"],
+    ["i*inf", "∞i"],
+    ["i*ln(0)", "−∞i"],
+    ["sqrt(inf)", "∞"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1692,7 +1698,15 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
   // The in-process rows never pack. The screen's exact worker evaluates the packed circuit.
   const freshAngles = ["sin(inf)", "cos(inf)", "sin(ln(0))", "cos(ln(0))", "tan(inf)", "tan(ln(0))"];
-  const freshJobs = freshAngles.map((source) => {
+  const freshDirected = [
+    ["sqrt(ln(0))", "∞i"],
+    ["ln(0)*i", "−∞i"],
+    ["inf*i", "∞i"],
+    ["i*inf", "∞i"],
+    ["i*ln(0)", "−∞i"],
+    ["sqrt(inf)", "∞"],
+  ] as const;
+  const freshJobs = [...freshAngles, ...freshDirected.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
@@ -1702,9 +1716,16 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     console.log("FAIL fresh trig infinity", freshAnglesRun.status, freshAnglesRun.stderr);
   } else {
     const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null }>;
+    const directed = new Map<string, string>(freshDirected.map(([source, want]) => [source, want]));
     for (const row of rows) {
       const text = row.text.replace(/\u200b/g, "");
-      if (text !== "undefined" || row.singular === null) {
+      const want = directed.get(row.source);
+      if (want !== undefined) {
+        if (text !== want) {
+          failed += 1;
+          console.log("FAIL fresh directed infinity", row.source, text, row.singular);
+        }
+      } else if (text !== "undefined" || row.singular === null) {
         failed += 1;
         console.log("FAIL fresh trig infinity", row.source, text, row.singular);
       }
