@@ -440,12 +440,26 @@ export function tAdd(a: Node, b: Node): Node {
  * the sum must be, exact mode says it could not verify. A float NaN stays undefined.
  */
 export function userAdd(a: Node, b: Node): Node {
-  return refuseInfiniteSum(tAdd(a, b), a, b, false);
+  return userSum(a, b, false);
 }
 
 /** The user's a − b. Same refusal as userAdd. */
 export function userSub(a: Node, b: Node): Node {
-  return refuseInfiniteSum(tSub(a, b), a, b, true);
+  return userSum(a, b, true);
+}
+
+/**
+ * Classify, then build. The add circuit is the same node as ln of a zero argument,
+ * and building it overwrites that range. Reading ln(0) afterwards would miss −∞.
+ */
+function userSum(a: Node, b: Node, sub: boolean): Node {
+  const same = a === b;
+  const negation = !sub && isNegationPair(a, b);
+  const left = same || negation ? null : infinityClass(a);
+  const right = same || negation ? null : infinityClass(b);
+  const node = sub ? tSub(a, b) : tAdd(a, b);
+  if (same || negation || !left || !right || (!left.inf && !right.inf)) return node;
+  return refuseInfiniteSum(node, left, right, sub);
 }
 
 export function tInv(b: Node): Node {
@@ -561,7 +575,7 @@ function oddDirection(node: Node): boolean {
 /** A real ±∞, or a directed infinity. A float overflow such as exp(800) is not this. */
 function infinityClass(node: Node): { inf: boolean; sign: -1 | 1 | undefined } {
   const real = realSignedInfinity(node);
-  if (real) return { inf: true, sign: real };
+  if (real !== null) return { inf: true, sign: real };
   const dir = directionOf(node);
   if (dir) {
     const quarter = ((dir.quarter % 4) + 4) % 4;
@@ -592,24 +606,34 @@ function floatIsRealInfinity(value: { re: number; im: number } | null, sign: -1 
   return value.re === sign * Infinity && (value.im === 0 || Object.is(value.im, -0));
 }
 
+function oppositeSign(sign: -1 | 1): -1 | 1 {
+  return sign === 1 ? -1 : 1;
+}
+
 /**
  * ±∞ beside a finite term, when the add or sub word does not already show that
- * real infinity. Identical operands stay on the circuit, so inf − inf stays undefined.
+ * real infinity. Two infinities stay on the circuit when float is NaN, so
+ * inf − inf stays undefined. The operands were classified before the sum was built.
  */
-function refuseInfiniteSum(node: Node, a: Node, b: Node, sub: boolean): Node {
-  if (a === b) return node;
-  if (!sub && isNegationPair(a, b)) return node;
-  const left = infinityClass(a);
-  const right = infinityClass(b);
-  if (!left.inf && !right.inf) return node;
+function refuseInfiniteSum(
+  node: Node,
+  left: { inf: boolean; sign: -1 | 1 | undefined },
+  right: { inf: boolean; sign: -1 | 1 | undefined },
+  sub: boolean,
+): Node {
   const value = floatOf(node);
   const leftSign = left.sign;
   const rightSign = right.sign;
-  if (left.inf && right.inf && leftSign !== undefined && rightSign !== undefined && (sub ? leftSign === rightSign : leftSign !== rightSign)) {
-    return floatIsNaN(value) ? node : markUnverified(node);
-  }
+  const cancel =
+    left.inf &&
+    right.inf &&
+    leftSign !== undefined &&
+    rightSign !== undefined &&
+    (sub ? leftSign === rightSign : leftSign !== rightSign);
+  if (cancel) return floatIsNaN(value) ? node : markUnverified(node);
   if (left.inf !== right.inf) {
-    const sign = left.inf ? leftSign : rightSign === undefined ? undefined : sub ? ((-rightSign) as -1 | 1) : rightSign;
+    const known = left.inf ? leftSign : rightSign;
+    const sign = known === undefined ? undefined : !left.inf && sub ? oppositeSign(known) : known;
     if (sign !== undefined) {
       if (floatIsRealInfinity(value, sign) || floatIsNaN(value)) return node;
       return markUnverified(node);
