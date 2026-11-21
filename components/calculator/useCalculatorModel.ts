@@ -657,6 +657,15 @@ export function useCalculatorModel() {
     }
   }, [fail, showProgram]);
 
+  /** Load a word of 1 and E (from the Program ID panel). Replaces the top when it was a loaded program. */
+  const loadWord = useCallback((word: string, caption: string, replace: boolean) => {
+    try {
+      showProgram(nodeFromRpn(word.split("")), caption, replace);
+    } catch (err) {
+      fail(failure(err));
+    }
+  }, [fail, showProgram]);
+
   const stepLoaded = useCallback((delta: 1 | -1) => {
     if (recomputeRef.current) {
       queueRef.current.push(() => live.current.stepLoaded(delta));
@@ -765,6 +774,7 @@ export function useCalculatorModel() {
     clearAll,
     loadProgramText,
     stepLoaded,
+    loadWord,
   };
 }
 

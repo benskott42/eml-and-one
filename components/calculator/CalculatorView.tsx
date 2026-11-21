@@ -8,6 +8,7 @@ import table from "@/lib/eml/best-known.json";
 import { programIndexDigits } from "@/lib/eml/programIndex";
 import { recordLine } from "@/lib/eml/recordLabel";
 import { CopyNumber, GolfPanel, KeyButton, PressLine } from "./chrome";
+import { ProgramIdPanel } from "./ProgramIdPanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
@@ -27,7 +28,7 @@ export function CalculatorView(props: CalculatorModel) {
     model, xText, setXText, yText, setYText, expr, setExpr, programField, setProgramField,
     mode, twoButtons, heldShortcut, setHeldShortcut, costs, expansions, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
-    compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded,
+    compute, swap, drop, undo, clearAll, loadProgramText, stepLoaded, loadWord,
   } = props;
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
@@ -258,6 +259,8 @@ export function CalculatorView(props: CalculatorModel) {
               </button>
             </div>
           </form>
+
+          <ProgramIdPanel node={top?.node} loadWord={loadWord} />
 
           <div className="ti-group">
             <h2>Constants from 1</h2>
