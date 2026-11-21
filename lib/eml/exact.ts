@@ -14,7 +14,7 @@ import {
   provenInteger,
   trigArg,
 } from "./node";
-import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
 
 /**
@@ -319,6 +319,59 @@ function exactEml(x: Z, y: Z): Z {
   return { re, im };
 }
 
+/**
+ * The gate between a 10^k lift and its drop: decades its add or sub cancelled.
+ * The lift gates are not in the work tally, so this is the only record of it.
+ */
+function liftedGap(x: Z, y: Z, out: Z): number {
+  const a = expZ(x);
+  const b = lnEml(y);
+  let gap = 0;
+  for (const part of ["re", "im"] as const) {
+    const scale = D.max(a[part].abs(), b[part].abs());
+    const diff = out[part];
+    if (!scale.isFinite() || scale.isZero() || !diff.isFinite() || diff.isZero()) continue;
+    gap = Math.max(gap, scale.e - diff.abs().e);
+  }
+  return gap;
+}
+
+/** This gate's lifted cancellation. */
+type GateRisk = { liftGap: number };
+
+/** Pure gates' risk by working precision, for subtrees a cache hit skips. */
+const riskCache = new Map<number, WeakMap<Node, GateRisk>>();
+
+function gateRiskStore(): WeakMap<Node, GateRisk> {
+  let store = riskCache.get(D.precision);
+  if (!store) {
+    store = new WeakMap();
+    riskCache.set(D.precision, store);
+  }
+  return store;
+}
+
+/** The largest lifted cancellation under `root` in this pass. */
+function riskBelow(root: Node, pass: Map<Node, GateRisk>): GateRisk {
+  const store = gateRiskStore();
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  const total: GateRisk = { liftGap: 0 };
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || node.type !== "eml" || seen.has(node)) continue;
+    seen.add(node);
+    const risk = riskOf(node, pass, store);
+    if (risk) total.liftGap = Math.max(total.liftGap, risk.liftGap);
+    stack.push(node.a, node.b);
+  }
+  return total;
+}
+
+function riskOf(node: Node, pass: Map<Node, GateRisk>, store: WeakMap<Node, GateRisk>): GateRisk | undefined {
+  return pass.get(node) ?? (hasVarOf.get(node) === false ? store.get(node) : undefined);
+}
+
 function asZ(value: C | Z): Z {
   if (value.re instanceof Decimal) return value as Z;
   return z(value.re, value.im);
@@ -344,6 +397,8 @@ export type ExactReport = {
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
+  /** Decades cancelled between a 10^k lift and its drop. */
+  liftGap?: number;
 };
 
 type Work = { all: number; re: number; im: number; hits: CancelHit[] };
@@ -800,6 +855,16 @@ export function exactReport(
     const digits = Math.min(PRECISION_CAP, Math.max(Math.max(report.value.re.e, report.value.im.e) + 48, D.precision + 32));
     if (digits > D.precision) settled = atPrecision(digits, root, env, budget);
   }
+  if (settled.unverified) return settled;
+  // A lifted tiny sum keeps (precision − gap) digits, and the work tally does not see it:
+  // 10^(−300)·(1 + 10^(−110)) − 10^(−300) kept 10 digits. Raise until 24 spare digits remain.
+  const liftGap = settled.liftGap ?? 0;
+  if (liftGap > (settled.digits ?? D.precision) - 24) {
+    const need = liftGap + 48;
+    if (need > PRECISION_CAP) return certifyZero(settled);
+    settled = atPrecision(need, root, env, budget);
+    if (settled.unverified) return settled;
+  }
   settled = settleResidue(settled, root, env, budget);
   if (settled.unverified) return settled;
   const besideTiny = recoverTinyPart(settled, root, env, budget);
@@ -845,6 +910,7 @@ function exactReportOnce(
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  const risk = new Map<Node, GateRisk>();
   let steps = 0;
   const nocache = cacheOff();
   let cache = pureCache.get(D.precision);
@@ -1000,6 +1066,12 @@ function exactReportOnce(
     noteSeen(value);
     why.set(n, singular);
     logged.set(n, childLog);
+    const store = gateRiskStore();
+    const gate: GateRisk = {
+      liftGap: isLiftedCombine(n) && !angleInfinite ? liftedGap(a, b, value) : 0,
+    };
+    risk.set(n, gate);
+    if (!(n.a.type === "var" || hasVarOf.get(n.a) === true || n.b.type === "var" || hasVarOf.get(n.b) === true)) store.set(n, gate);
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
@@ -1031,6 +1103,7 @@ function exactReportOnce(
     prodIm: componentProd("im", out.im, hits),
     digits: D.precision,
     sawLead,
+    liftGap: riskBelow(root, risk).liftGap,
   };
 }
 

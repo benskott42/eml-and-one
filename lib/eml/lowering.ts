@@ -1009,11 +1009,36 @@ function tenPow(k: number): Node {
 
 /**
  * Power of ten that lifts `mag` up to about 1. A term a hundred digits below
- * the operands then sits inside the 120-digit circuit. 10^308 is not a finite float.
+ * the operands then sits inside the 120-digit circuit. 10^308 is not a finite float,
+ * so a subnormal operand is lifted in two steps (see liftSteps).
  */
 function liftExponent(mag: number): number {
   if (!(mag > 0) || !Number.isFinite(mag)) return 1;
-  return Math.min(TEN_POW_MAX, Math.max(1, Math.ceil(-Math.log10(mag))));
+  return Math.min(2 * TEN_POW_MAX, Math.max(1, Math.ceil(-Math.log10(mag))));
+}
+
+/**
+ * The lift as powers of ten that are each a finite float. Capping a subnormal's
+ * lift at 10^307 left 1e−320 at 1e−13, where the sub word keeps only about
+ * 10^(−120) absolute: 1e−320·(1 + 1e−100) − 1e−320 kept 7 digits, unseen by the
+ * exact engine because the lift gates are not counted as work.
+ */
+function liftSteps(k: number): number[] {
+  return k <= TEN_POW_MAX ? [k] : [TEN_POW_MAX, k - TEN_POW_MAX];
+}
+
+function liftBy(node: Node, k: number): Node {
+  return liftSteps(k).reduce((acc, step) => rawMul(acc, tenPow(step)), node);
+}
+
+function dropBy(node: Node, k: number): Node {
+  return liftSteps(k).reverse().reduce((acc, step) => rawDiv(acc, tenPow(step)), node);
+}
+
+/** x·10^k in float, in the same steps, so a subnormal's lift does not overflow. */
+function liftedFloat(x: number, k: number): number {
+  if (x === 0) return x;
+  return liftSteps(k).reduce((acc, step) => acc * 10 ** step, x);
 }
 
 /**
@@ -1178,16 +1203,32 @@ function inAddStrip(lo: number, hi: number): boolean {
 function scaledSumInAddStrip(a: Node, b: Node, k: number): boolean {
   const ia = imagSpan(a);
   const ib = imagSpan(b);
-  const scale = 10 ** k;
-  if (!ia || !ib || !Number.isFinite(scale)) return false;
+  if (!ia || !ib) return false;
+  const up = (x: number) => liftedFloat(x, k);
   // The raw add wraps when either scaled imaginary part leaves (−π, π], and when their sum does.
-  if (!inAddStrip(ia.lo * scale, ia.hi * scale) || !inAddStrip(ib.lo * scale, ib.hi * scale)) return false;
-  return inAddStrip((ia.lo + ib.lo) * scale, (ia.hi + ib.hi) * scale);
+  if (!inAddStrip(up(ia.lo), up(ia.hi)) || !inAddStrip(up(ib.lo), up(ib.hi))) return false;
+  return inAddStrip(up(ia.lo + ib.lo), up(ia.hi + ib.hi));
 }
 
 function scaledTiny(a: Node, b: Node, k: number): Node {
-  const scale = tenPow(k);
-  return markTwoScaled(markShell(rawDiv(rawAdd(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
+  const combined = liftedCombine(rawAdd(liftBy(a, k), liftBy(b, k)));
+  return markTwoScaled(markShell(dropBy(combined, k), [a, b]));
+}
+
+/**
+ * The add or sub gate between a lift and its drop. It sits in the scaled shell,
+ * so its cancellation is not in the exact engine's work tally; the engine reads
+ * this mark to size the precision that cancellation needs.
+ */
+const liftedCombines = new WeakSet<Node>();
+
+function liftedCombine(node: Node): Node {
+  liftedCombines.add(node);
+  return node;
+}
+
+export function isLiftedCombine(node: Node): boolean {
+  return liftedCombines.has(node);
 }
 
 /** (a·10^k − b·10^k) / 10^k. The short subtraction loses a difference near 10^(−20). */
@@ -1197,11 +1238,15 @@ function scaledTinySub(a: Node, b: Node): Node | null {
   if (mag === null || !(mag > 0 && mag < TINY_MAG)) return null;
   const k = liftExponent(mag);
   const ib = imagSpan(b);
-  const scaleFactor = 10 ** k;
+  if (!ib) return null;
   // The short sub word is exact for Im y in [−π, π). The lift can push a tiny imaginary past that.
-  if (!ib || !Number.isFinite(scaleFactor) || !(ib.lo * scaleFactor >= -Math.PI && ib.hi * scaleFactor < Math.PI)) return null;
-  const scale = tenPow(k);
-  return markTwoScaled(markShell(rawDiv(naiveSub(rawMul(a, scale), rawMul(b, scale)), scale), [a, b]));
+  // One decade less keeps it inside: |Im y|·10^(k−1) < 1. Without the lift, 5×10^(−200)i − 4×10^(−200)i
+  // took the unscaled rotation, which loses the subtrahend under its 120 digits.
+  const fits = (lift: number) => liftedFloat(ib.lo, lift) >= -Math.PI && liftedFloat(ib.hi, lift) < Math.PI;
+  const lift = fits(k) ? k : k > 1 && fits(k - 1) ? k - 1 : null;
+  if (lift === null) return null;
+  const combined = liftedCombine(naiveSub(liftBy(a, lift), liftBy(b, lift)));
+  return markTwoScaled(markShell(dropBy(combined, lift), [a, b]));
 }
 
 export function domainAdd(a: Node, b: Node): Node {
@@ -1234,8 +1279,11 @@ function domainAddBuild(a: Node, b: Node): Node {
   const cut = nearCut(rangeOf(a)) || nearCut(rangeOf(b));
   if (mag !== null && mag > 0 && mag < TINY_MAG && !cut) {
     const k = liftExponent(mag);
-    // A scaled imaginary sum outside (−π, π] is not the raw add word. rotSub is.
-    node = scaledSumInAddStrip(a, b, k) ? scaledTiny(a, b, k) : domainSub(a, safeNeg(b));
+    // A scaled imaginary sum outside (−π, π] is not the raw add word. One decade less
+    // lift keeps it inside. The rotation fallback negates b with the minus word, which
+    // rounds a b under 10^(−120) to 0: 5×10^(−200)i + 3×10^(−200)i certified 5×10^(−200)i.
+    const lift = scaledSumInAddStrip(a, b, k) ? k : k > 1 && scaledSumInAddStrip(a, b, k - 1) ? k - 1 : null;
+    node = lift !== null ? scaledTiny(a, b, lift) : domainSub(a, safeNeg(b));
   } else if (mag !== null && mag < SHORT_MAG && !cut && (bothReal || axisAligned(a, b))) {
     node = rawAdd(a, b);
   } else if (mag !== null && mag < SHORT_MAG) node = domainSub(a, safeNeg(b));

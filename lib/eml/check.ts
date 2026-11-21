@@ -75,6 +75,7 @@ import { agreementNote, compileExpression, referenceExpression } from "./parse";
 import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
+import { runCertifyChecks } from "./check-certify";
 
 let failed = 0;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -2673,6 +2674,8 @@ function dagTokens(root: Node): RebuildTok[] {
 }
 
 failed += runPropertyChecks();
+// Wrong values that exact mode certified (lib/eml/check-certify.ts).
+failed += runCertifyChecks();
 
 // Inverse-function regressions. Reference values are mpmath 1.3.0 at 30 digits.
 // arcsin: principal value, counter-clockwise continuity on the real cut (as mpmath):
