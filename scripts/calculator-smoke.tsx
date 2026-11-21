@@ -298,6 +298,11 @@ async function main() {
     console.error("hardware ln(1+10^(-130)) flag count", differsCount, screenText());
     failed = true;
   }
+  // N1: with floatDiffers set, the underflow caveat stays on the note.
+  if (!screenText().includes("float underflows")) {
+    console.error("hardware ln(1+10^(-130)) dropped the underflow caveat", screenText());
+    failed = true;
+  }
   await clickNamed("Clear");
   const xField = [...view.document.querySelectorAll("label")].find((label) => label.textContent?.trim().startsWith("x"))?.querySelector("input");
   if (await setInput(xField, "1e-400", "missing x field")) {
