@@ -1,0 +1,13 @@
+[lower] n=2 K=3: words 1, distinct (ref, canon) value pairs 1, ref classes so far 1, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=3 K=5: words 2, distinct (ref, canon) value pairs 2, ref classes so far 3, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=4 K=7: words 5, distinct (ref, canon) value pairs 5, ref classes so far 8, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=5 K=9: words 14, distinct (ref, canon) value pairs 13, ref classes so far 20, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=6 K=11: words 42, distinct (ref, canon) value pairs 37, ref classes so far 53, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=7 K=13: words 132, distinct (ref, canon) value pairs 110, ref classes so far 156, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=8 K=15: words 429, distinct (ref, canon) value pairs 340, ref classes so far 483, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=9 K=17: words 1430, distinct (ref, canon) value pairs 1093, ref classes so far 1548, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=10 K=19: words 4862, distinct (ref, canon) value pairs 3605, ref classes so far 5065, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  0s
+[lower] n=11 K=21: words 16796, distinct (ref, canon) value pairs 12095, ref classes so far 16871, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  1s
+[lower] n=12 K=23: words 58786, distinct (ref, canon) value pairs 41132, ref classes so far 57000, violations so far 0, unresolved/loop word counts {'UNRES': 0, 'LOOP': 0}  5s
+[lower] n=13 K=25: words 208012, distinct (ref, canon) value pairs 141489, ref classes so far 194949, violations so far 0, unresolved/loop word counts {'UNRES': 3, 'LOOP': 0}  19s
+[lower] TOTAL words 290512: ref-equal but key-different: 0

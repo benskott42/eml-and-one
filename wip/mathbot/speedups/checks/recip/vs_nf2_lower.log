@@ -1,0 +1,13 @@
+[lower] K19: NF over-merges listed 6/6: also merged by key 6, not merged 0; NF misses listed 0/0: ref-equal 0, key-equal 0
+[lower] K21: NF over-merges listed 24/24: also merged by key 24, not merged 0; NF misses listed 1/1: ref-equal 1, key-equal 1
+[lower] K23: NF over-merges listed 40/91: also merged by key 37, not merged 3; NF misses listed 12/18: ref-equal 12, key-equal 12
+    NF merges, key does not: 11111EEE1E11EEE 1111111EEE1E11EEEE1EE1E
+         11111EEE1E11EEE  key form: exp(1) + exp(exp(1)) + -exp(exp(1) + -Log(1 + -exp(-1))) + -Log(1 + -exp(exp(exp(1)) + -exp(exp(1) + -Log(1 + -exp(-1)))))
+         1111111EEE1E11EEEE1EE1E  key form: exp(exp(1) + Log(1 + exp(1 + -exp(1)) + -exp(2 + -exp(1)) + -exp(1 + -exp(1) + Log(-Log(1 + -exp(exp(...) + -exp(...))))) + exp(-exp(1) + Log(-Log(1 + -exp(exp(...) + -exp(...))))))) + -exp(exp(1) + -Log(1 + -exp(-1)) + Log(1 + exp(1 + -exp(1)) + -exp(2 + -exp(1)) + -exp(1 + -exp(1) + Log(-Log(1 + -
+    NF merges, key does not: 1111EEE11E11EEE 111111EEE11E11EEEE1EE1E
+         1111EEE11E11EEE  key form: -exp(1) + -exp(exp(1)) + exp(exp(1) + -Log(1 + -exp(-1))) + -Log(1 + -exp(-exp(1)))
+         111111EEE11E11EEEE1EE1E  key form: -exp(exp(1) + Log(1 + exp(1 + -exp(1)) + -exp(2 + -exp(1)) + exp(1 + -exp(1) + Log(-Log(1 + -exp(-exp(...))))) + -exp(-exp(1) + Log(-Log(1 + -exp(-exp(...))))))) + exp(exp(1) + -Log(1 + -exp(-1)) + Log(1 + exp(1 + -exp(1)) + -exp(2 + -exp(1)) + exp(1 + -exp(1) + Log(-Log(1 + -exp(-exp(...))))) + -ex
+    NF merges, key does not: 111E11EEE111EEE 11111E11EEE111EEEE1EE1E
+         111E11EEE111EEE  key form: -1 + -Log(1 + -exp(-1)) + exp(-Log(1 + -exp(-exp(1))))
+         11111E11EEE111EEEE1EE1E  key form: exp(-Log(1 + -exp(-exp(1))) + Log(-Log(1 + -exp(-1)) + exp(-exp(1) + Log(1 + Log(1 + -exp(-1))))))
+[lower] K21 classes: key 16847; union of key with all 24 NF over-merges 16847

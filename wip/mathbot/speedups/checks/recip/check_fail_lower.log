@@ -1,0 +1,68 @@
+sympy did not reach 0 111111E1E1EEE1EEE 11111E1EE111E1E1EEE11EEEE 
+   A = exp(1) + -Log(1*i*pi + exp(1) + Log(1 + -exp(1 + -exp(1)))) 
+   B = exp(1) + -Log(1*i*pi + exp(1) + -Log(1 + exp(1 + -exp(1) + -Log(1 + -exp(1 + -exp(1))))))
+   sympy: not 0: -log(1 + log(-1 + exp(-1 + E)) + I*pi) + log(-log(-1/(E - exp(E))) + I*pi)
+not resolved at 200 digits 11E1E1E111EEE11EE 1111E1E1E111EEE11EEE1EE1E 
+   A = -1 + exp(-1 + exp(exp(exp(exp(1)))) + -Log(1 + -exp(-1))) 
+   B = exp(-1 + exp(exp(exp(exp(1)))) + -Log(1 + -exp(-1))) + -exp(-Log(1 + -exp(-1))) + exp(-1 + -Log(1 + -exp(-1)))
+   16384 bits: overlap True  rad1 inf rad2 inf |v| 1  ok200 False
+   65536 bits: overlap True  rad1 inf rad2 inf |v| 1  ok200 False
+   sympy: exact 0
+sympy did not reach 0 11111EEEE111EEE1E 1111111EEEE111EEEE1EE1E1E 
+   A = exp(-1 + -Log(1 + -exp(-1)) + exp(-1 + exp(1) + -Log(1 + -exp(-1 + Log(1 + Log(1 + -exp(...))))))) 
+   B = exp(exp(-1 + exp(1) + -Log(1 + -exp(-1 + Log(1 + Log(1 + -exp(...)))))) + -exp(Log(1 + Log(1 + -exp(-1))) + -Log(1 + -exp(-1 + Log(1 + Log(1 + -exp(...)))))) + exp(-1 + 2*Log(1 + Log(1 + -exp(-1))) + 
+   sympy: not 0: (-1)**(-E/(E - log(-1 + E)) - 1)*(1 - E)**(-E/(E - log(-1 + E)) - 1)*(-exp(log(-1 + E)**2/(E - log(-1 + E)) + 1 + E/(E - log(-1 + E))) + exp((log(-1 + E)**2 + E)/(E - log(-1 + E))) + (-1)**((1 + E)/(E
+sympy did not reach 0 1111E1E1EEE11EE1E 111111E1E1EEE11EEE1EE1E1E 
+   A = exp(-1 + -exp(-Log(1 + -exp(1 + -exp(1))))) 
+   B = exp(-2*exp(-Log(1 + -exp(1 + -exp(1)))) + exp(1 + -exp(1) + -Log(1 + -exp(1 + -exp(1)))))
+   sympy: exact 0
+not resolved at 200 digits 11E1E111EEE11EE1E 1111E1E111EEE11EEE1EE1E1E 
+   A = exp(-1 + exp(-1 + exp(exp(exp(1))) + -Log(1 + -exp(-1)))) 
+   B = exp(-exp(-Log(1 + -exp(-1))) + exp(-1 + -Log(1 + -exp(-1))) + exp(-1 + exp(exp(exp(1))) + -Log(1 + -exp(-1))))
+   16384 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   65536 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   sympy: timeout 120 s
+sympy did not reach 0 1111EEE111EEE1E1E 111111EEE111EEEE1EE1E1E1E 
+   A = exp(exp(-1 + -Log(1 + -exp(-1)) + exp(-1 + exp(1) + -Log(1 + -exp(-1))))) 
+   B = exp(exp(exp(-1 + exp(1) + -Log(1 + -exp(-1))) + -exp(-Log(1 + -exp(-1)) + Log(1 + Log(1 + -exp(-1)))) + exp(-1 + -Log(1 + -exp(-1)) + Log(1 + Log(1 + -exp(-1))))))
+   sympy: exact 0
+not resolved at 200 digits 11E111EEE11EE1E1E 1111E111EEE11EEE1EE1E1E1E 
+   A = exp(exp(-1 + exp(-1 + exp(exp(1)) + -Log(1 + -exp(-1))))) 
+   B = exp(exp(-exp(-Log(1 + -exp(-1))) + exp(-1 + -Log(1 + -exp(-1))) + exp(-1 + exp(exp(1)) + -Log(1 + -exp(-1)))))
+   16384 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   65536 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   sympy: timeout 120 s
+sympy did not reach 0 11111E11E1E1E1EEE1EEE 111E111E11E1E1E1EEE11EEEE 
+   A = exp(1) + -Log(1*i*pi + exp(exp(1)) + Log(1 + -exp(exp(1) + -exp(exp(1))))) 
+   B = exp(1) + -Log(1*i*pi + exp(exp(1)) + -Log(1 + exp(exp(1) + -exp(exp(1)) + -Log(1 + -exp(exp(1) + -exp(exp(...)))))))
+   sympy: not 0: -log(E + log(-1 + exp(-E + exp(E))) + I*pi) + log(-log(-1/(-exp(exp(E)) + exp(E))) + I*pi)
+sympy did not reach 0 11111E11E1E1E1EEE11EEEE 1111E11E11E1E1E1EEE1EEE 
+   A = exp(1) + -Log(1*i*pi + exp(1) + -Log(1 + exp(exp(1) + -exp(exp(1)) + -Log(1 + -exp(exp(1) + -exp(exp(...))))))) 
+   B = exp(1) + -Log(1*i*pi + exp(1) + Log(1 + -exp(exp(1) + -exp(exp(1)))))
+   sympy: not 0: -log(-exp(E) + E - log(-1/(-exp(exp(E)) + exp(E))) + I*pi) + log(-exp(E) + 2*E + log(-1 + exp(-E + exp(E))) + I*pi)
+sympy did not reach 0 1111E1EE1111E1E1EEE1EEE 111111E1E1EEE111EE1E1EEEE 
+   A = exp(1) + -Log(1 + 1*i*pi + Log(1 + -exp(1 + -exp(1)))) 
+   B = exp(1) + -Log(1 + 1*i*pi + -Log(1 + exp(1 + -exp(1) + -Log(1 + -exp(1 + -exp(1))))))
+   sympy: not 0: -log(-E + log(-1 + exp(-1 + E)) + 2 + I*pi) + log(-E + 1 - log(-1/(E - exp(E))) + I*pi)
+sympy did not reach 0 1111E1EE111E11E1EEE1EEE 11111EE1111E1E1EEE1E1EEEE 
+   A = exp(1) + -Log(1 + Log(1 + -exp(1 + -exp(1)))) 
+   B = exp(1) + -Log(1 + -Log(1 + exp(1 + -exp(1) + -Log(1 + -exp(1 + -exp(1))))))
+   sympy: not 0: log((-E + 1 - log(-1/(E - exp(E))))/(-E + log(-1 + exp(-1 + E)) + 2))
+sympy did not reach 0 111111E11E1E1E1EEE11EEEEE 11111E11E11E1E1E1EEE1EEEE 
+   A = exp(1) + -Log(exp(1) + -Log(1*i*pi + exp(1) + -Log(1 + exp(exp(1) + -exp(exp(1)) + -Log(1 + -exp(exp(...) + -exp(...))))))) 
+   B = exp(1) + -Log(exp(1) + -Log(1*i*pi + exp(1) + Log(1 + -exp(exp(1) + -exp(exp(1))))))
+   sympy: not 0: log(E - log(-exp(E) + 2*E + log(-1 + exp(-E + exp(E))) + I*pi)) - log(E - log(-exp(E) + E - log(-1/(-exp(exp(E)) + exp(E))) + I*pi))
+sympy did not reach 0 11E1111E11E1E1E1EEE11EEEE 11E111E11E11E1E1E1EEE1EEE 
+   A = exp(exp(1)) + -Log(1*i*pi + exp(1) + -Log(1 + exp(exp(1) + -exp(exp(1)) + -Log(1 + -exp(exp(1) + -exp(exp(...))))))) 
+   B = exp(exp(1)) + -Log(1*i*pi + exp(1) + Log(1 + -exp(exp(1) + -exp(exp(1)))))
+   sympy: not 0: -log(-exp(E) + E - log(-1/(-exp(exp(E)) + exp(E))) + I*pi) + log(-exp(E) + 2*E + log(-1 + exp(-E + exp(E))) + I*pi)
+sympy did not reach 0 11111E11E1E1E1EEE11EEEE1E 1111E11E11E1E1E1EEE1EEE1E 
+   A = exp(exp(1) + -Log(1*i*pi + exp(1) + -Log(1 + exp(exp(1) + -exp(exp(1)) + -Log(1 + -exp(exp(...) + -exp(...))))))) 
+   B = exp(exp(1) + -Log(1*i*pi + exp(1) + Log(1 + -exp(exp(1) + -exp(exp(1))))))
+   sympy: not 0: (log(-1/(-exp(exp(E)) + exp(E))) + E + log(-1 + exp(-E + exp(E))))*exp(E)/((-exp(E) + E - log(-1/(-exp(exp(E)) + exp(E))) + I*pi)*(-exp(E) + 2*E + log(-1 + exp(-E + exp(E))) + I*pi))
+not resolved at 200 digits 11E111EEE11E11EE1E1EE1E1E 1111E11EEE1EE111EEE1E1E1E 
+   A = exp(exp(exp(-1 + exp(exp(1)) + -Log(1 + -exp(-1))) + -exp(-1 + exp(exp(1))))) 
+   B = exp(exp(exp(-2 + exp(exp(1)) + -Log(1 + -exp(-1)))))
+   16384 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   65536 bits: overlap True  rad1 inf rad2 inf |v| 0  ok200 False
+   sympy: timeout 120 s

@@ -1,0 +1,28 @@
+config: canon sb=False r5=dominant | C1 sb=False r5=dominant recip=True
+[principal] reference emlcore forward: [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194949]  unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  3.7s
+[principal] forward: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194947]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911, 194616]
+      unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  N-fallbacks 11 key-loops 0  recip=5658 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  11.9s
+[principal] reverse: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194947]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911, 194616]
+      unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  N-fallbacks 11 key-loops 0  recip=5658 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  12.0s
+[principal] random1: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194947]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911, 194616]
+      unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  N-fallbacks 11 key-loops 0  recip=5658 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  13.6s
+[principal] random2: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194947]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911, 194616]
+      unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  N-fallbacks 11 key-loops 0  recip=5658 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  13.6s
+[principal] random3: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000, 194947]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911, 194616]
+      unresolved/loop pairs ['111111E1EEE111E1E1EEE1EEE', '111E1111E1E1E1EE1E11EEEEE', '111E1E1111E1E1EEEE1E11EEE']  N-fallbacks 11 key-loops 0  recip=5658 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  14.4s
+[principal] on W (194949 ref classes): canon classes 194946, key classes 194615
+[principal] canon layer vs reference: ref classes merged by canon = 3 (0 means canon == reference partition on W)
+[principal] reverse: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[principal] random1: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[principal] random2: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[principal] random3: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[principal] canon-equal but key-different (refinement violations): 0
+[principal] criterion 1 on W u Wc (194950 words): ref classes split by key: 1; split by canon layer: 1
+    LOST ref merge: ['111111EEE111EE1E1EE1EEE', '1111111EEE1EE111EEE1E1EEE']
+[principal] words unresolved/looping in ref: []; in canon: []
+[principal] new merge groups vs reference emlcore: 327 (classes merged away 334)

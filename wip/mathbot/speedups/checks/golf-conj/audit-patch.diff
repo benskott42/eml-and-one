@@ -1,0 +1,47 @@
+--- /dev/fd/63	2026-11-20 23:45:36.660560005 -0500
++++ lib/eml/golf.ts	2026-11-20 23:43:29.887545901 -0500
+@@ -1,4 +1,10 @@
+-import { eml } from "./complex";
++import { eml as emlLower, emlPrincipal } from "./complex";
++export let AUDIT_PRINCIPAL = false;
++export let AUDIT_NOWATCH = false;
++export function setAuditNoWatch(v: boolean) { AUDIT_NOWATCH = v; }
++export function setAuditPrincipal(v: boolean) { AUDIT_PRINCIPAL = v; }
++const eml = (x: { re: number; im: number }, y: { re: number; im: number }) => (AUDIT_PRINCIPAL ? emlPrincipal(x, y) : emlLower(x, y));
++export const AUDIT_POOL: { re: Float64Array; im: Float64Array; left: Int32Array; right: Int32Array; count: number } = { re: new Float64Array(0), im: new Float64Array(0), left: new Int32Array(0), right: new Int32Array(0), count: 0 };
+ import { ballVerdict, enclose } from "./enclose";
+ import { type Z, exactClose, exactValueAt, valueMatchesTarget } from "./exact";
+ import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows } from "./node";
+@@ -289,7 +295,7 @@
+     const value = { re: valueRe, im: valueIm };
+     const imagAbs = Math.abs(value.im);
+     const watch =
+-      imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4
++      !AUDIT_NOWATCH && (imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4)
+         ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(value.re, value.im, target))
+         : [];
+     if (watch.length === 0) {
+@@ -389,6 +395,7 @@
+     options.onProgress?.({ k: gates * 2 + 1, pool: count - start });
+   }
+ 
++  AUDIT_POOL.re = re; AUDIT_POOL.im = im; AUDIT_POOL.left = left; AUDIT_POOL.right = right; AUDIT_POOL.count = count;
+   return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
+ }
+ 
+--- /dev/fd/63	2026-11-20 23:45:36.660560005 -0500
++++ lib/eml/complex.ts	2026-11-20 23:42:53.651175333 -0500
+@@ -472,3 +472,13 @@
+   const w = cexp({ re: 2 * z.im, im: -2 * z.re });
+   return cmul({ re: 0, im: -1 }, cdiv(csub(C1, w), cadd(C1, w)));
+ }
++
++/** AUDIT ONLY (mathbot scratch copy, not the app): eml with the principal log. */
++export function emlPrincipal(x: C, y: C): C {
++  const a = cexp(x);
++  const b = clogPrincipal(y);
++  const re = cancelled(a.re - b.re, a.re, b.re);
++  const im = cancelled(a.im - b.im, a.im, b.im);
++  if (Number.isNaN(re) || Number.isNaN(im)) return { re: NaN, im: NaN };
++  return { re, im };
++}

@@ -1,0 +1,27 @@
+config: canon sb=False r5=R6 | C1 sb=False r5=R6 recip=True
+[lower] reference emlcore forward: [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000]  unresolved/loop pairs []  1.1s
+[lower] forward: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57001]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56909]
+      unresolved/loop pairs []  N-fallbacks 2 key-loops 0  recip=1899 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  5.3s
+[lower] reverse: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57001]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56909]
+      unresolved/loop pairs []  N-fallbacks 2 key-loops 0  recip=1899 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  4.5s
+[lower] random1: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57001]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56909]
+      unresolved/loop pairs []  N-fallbacks 2 key-loops 0  recip=1899 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  4.8s
+[lower] random2: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57001]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56909]
+      unresolved/loop pairs []  N-fallbacks 2 key-loops 0  recip=1899 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  4.9s
+[lower] random3: canon raw [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57001]
+      key       [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56909]
+      unresolved/loop pairs []  N-fallbacks 2 key-loops 0  recip=1899 C1 R3blk=0 R5blk=0 C0 R3blk=0 R5blk=0  4.8s
+[lower] on W (57000 ref classes): canon classes 57000, key classes 56909
+[lower] canon layer vs reference: ref classes merged by canon = 0 (0 means canon == reference partition on W)
+[lower] reverse: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[lower] random1: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[lower] random2: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[lower] random3: canon partition == forward: True; key partition == forward: True; counts == forward: True; same unresolved: True
+[lower] canon-equal but key-different (refinement violations): 0
+[lower] criterion 1 on W u Wc (57001 words): ref classes split by key: 0; split by canon layer: 1
+[lower] words unresolved/looping in ref: []; in canon: []
+[lower] new merge groups vs reference emlcore: 90 (classes merged away 91)

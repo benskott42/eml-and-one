@@ -1,0 +1,18 @@
+[lower] forward: raw 57000  quotient 56911  unresolved raw pairs 0  raw-emlcore LOOPS []  N-fallbacks 1  C1 stats recip=1642 R3blk=173 R5blk=12  2.1s
+      cumulative raw   [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000]
+      cumulative quot. [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911]
+[lower] reverse: raw 57000  quotient 56911  unresolved raw pairs 0  raw-emlcore LOOPS []  N-fallbacks 1  C1 stats recip=1642 R3blk=173 R5blk=12  2.5s
+      cumulative raw   [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000]
+      cumulative quot. [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911]
+[lower] random1: raw 57000  quotient 56911  unresolved raw pairs 0  raw-emlcore LOOPS []  N-fallbacks 1  C1 stats recip=1643 R3blk=173 R5blk=12  2.7s
+      cumulative raw   [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000]
+      cumulative quot. [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911]
+[lower] random2: raw 57000  quotient 56911  unresolved raw pairs 0  raw-emlcore LOOPS []  N-fallbacks 1  C1 stats recip=1643 R3blk=173 R5blk=12  2.9s
+      cumulative raw   [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5065, 16871, 57000]
+      cumulative quot. [1, 2, 4, 9, 20, 53, 156, 483, 1548, 5059, 16847, 56911]
+[lower] forward word set: 57000 words; raw classes on it 57000; quotient classes on it 56911
+[lower] reverse: raw partition identical to forward: True;  quotient partition identical: True;  same unresolved raw words: True; same counts: True
+[lower] random1: raw partition identical to forward: True;  quotient partition identical: True;  same unresolved raw words: True; same counts: True
+[lower] random2: raw partition identical to forward: True;  quotient partition identical: True;  same unresolved raw words: True; same counts: True
+[lower] refinement violations (raw-equal words with different quotient class): 0
+[lower] new merge groups: 88 (raw classes merged away: 89)

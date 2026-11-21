@@ -1,0 +1,7 @@
+n=9 K=17: pairs 1122, new 1070, dup-hits 52, nan/invalid 0, unresolved 0; time 0.02s (inside exp_f 0.00s, log_f 0.01s, rest 0.00s); avg atoms/form 1.77; total forms 3202 atoms 981
+n=10 K=19: pairs 3698, new 3532, dup-hits 165, nan/invalid 1, unresolved 0; time 0.05s (inside exp_f 0.01s, log_f 0.03s, rest 0.02s); avg atoms/form 1.83; total forms 10445 atoms 3118
+n=11 K=21: pairs 12376, new 11852, dup-hits 523, nan/invalid 1, unresolved 0; time 0.19s (inside exp_f 0.04s, log_f 0.10s, rest 0.05s); avg atoms/form 1.88; total forms 34642 atoms 10191
+n=12 K=23: pairs 41990, new 40288, dup-hits 1701, nan/invalid 1, unresolved 0; time 0.65s (inside exp_f 0.08s, log_f 0.36s, rest 0.22s); avg atoms/form 1.91; total forms 116412 atoms 33959
+n=13 K=25: pairs 144076, new 138523, dup-hits 5546, nan/invalid 4, unresolved 3; time 2.84s (inside exp_f 0.33s, log_f 1.59s, rest 0.92s); avg atoms/form 1.93; total forms 394320 atoms 114608
+n=12 K=23: pairs 41990, new 40288, dup-hits 1701, nan/invalid 1, unresolved 0; time 0.67s (inside exp_f 0.07s, log_f 0.37s, rest 0.23s); avg atoms/form 1.91; total forms 116412 atoms 33959
+n=13 K=25: pairs 144076, new 138523, dup-hits 5546, nan/invalid 4, unresolved 3; time 2.84s (inside exp_f 0.40s, log_f 1.56s, rest 0.89s); avg atoms/form 1.93; total forms 394320 atoms 114608

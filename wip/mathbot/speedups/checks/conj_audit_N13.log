@@ -1,0 +1,43 @@
+[principal] n=2 K=3: new distinct 1, total 2, atoms 1, unresolved 0
+[principal] n=3 K=5: new distinct 2, total 4, atoms 2, unresolved 0
+[principal] n=4 K=7: new distinct 5, total 9, atoms 6, unresolved 0
+[principal] n=5 K=9: new distinct 12, total 21, atoms 15, unresolved 0
+[principal] n=6 K=11: new distinct 34, total 55, atoms 36, unresolved 0
+[principal] n=7 K=13: new distinct 104, total 159, atoms 104, unresolved 0
+[principal] n=8 K=15: new distinct 329, total 488, atoms 313, unresolved 0
+[principal] n=9 K=17: new distinct 1070, total 1558, atoms 981, unresolved 0
+[principal] n=10 K=19: new distinct 3532, total 5090, atoms 3118, unresolved 0
+[principal] n=11 K=21: new distinct 11852, total 16942, atoms 10191, unresolved 0
+[principal] n=12 K=23: new distinct 40288, total 57230, atoms 33959, unresolved 0
+[principal] n=13 K=25: new distinct 138523, total 195753, atoms 114608, unresolved 3
+[lower] n=2 K=3: new distinct 1, total 2, atoms 1, unresolved 0
+[lower] n=3 K=5: new distinct 2, total 4, atoms 2, unresolved 0
+[lower] n=4 K=7: new distinct 5, total 9, atoms 6, unresolved 0
+[lower] n=5 K=9: new distinct 12, total 21, atoms 15, unresolved 0
+[lower] n=6 K=11: new distinct 34, total 55, atoms 36, unresolved 0
+[lower] n=7 K=13: new distinct 104, total 159, atoms 104, unresolved 0
+[lower] n=8 K=15: new distinct 329, total 488, atoms 313, unresolved 0
+[lower] n=9 K=17: new distinct 1070, total 1558, atoms 981, unresolved 0
+[lower] n=10 K=19: new distinct 3532, total 5090, atoms 3118, unresolved 0
+[lower] n=11 K=21: new distinct 11852, total 16942, atoms 10191, unresolved 0
+[lower] n=12 K=23: new distinct 40288, total 57230, atoms 33959, unresolved 0
+[lower] n=13 K=25: new distinct 138523, total 195753, atoms 114608, unresolved 3
+time principal 3.9s lower 4.0s; unresolved P 3 L 3
+forms P 394320 L 394320; atoms P 114608 L 114608; opaque P 23 L 23
+n=1 K=1: finite new P 1 L 1; phi missing 0; phi(V_P)==V_L True; specials P 0 L 0 same-kinds True -> OK
+n=2 K=3: finite new P 1 L 1; phi missing 0; phi(V_P)==V_L True; specials P 0 L 0 same-kinds True -> OK
+n=3 K=5: finite new P 2 L 2; phi missing 0; phi(V_P)==V_L True; specials P 0 L 0 same-kinds True -> OK
+n=4 K=7: finite new P 5 L 5; phi missing 0; phi(V_P)==V_L True; specials P 0 L 0 same-kinds True -> OK
+n=5 K=9: finite new P 11 L 11; phi missing 0; phi(V_P)==V_L True; specials P 1 L 1 same-kinds True -> OK
+n=6 K=11: finite new P 33 L 33; phi missing 0; phi(V_P)==V_L True; specials P 1 L 1 same-kinds True -> OK
+n=7 K=13: finite new P 103 L 103; phi missing 0; phi(V_P)==V_L True; specials P 1 L 1 same-kinds True -> OK
+n=8 K=15: finite new P 327 L 327; phi missing 0; phi(V_P)==V_L True; specials P 2 L 2 same-kinds True -> OK
+n=9 K=17: finite new P 1065 L 1065; phi missing 0; phi(V_P)==V_L True; specials P 5 L 5 same-kinds True -> OK
+n=10 K=19: finite new P 3517 L 3517; phi missing 0; phi(V_P)==V_L True; specials P 15 L 15 same-kinds True -> OK
+n=11 K=21: finite new P 11806 L 11806; phi missing 0; phi(V_P)==V_L True; specials P 46 L 46 same-kinds True -> OK
+n=12 K=23: finite new P 40129 L 40129; phi missing 0; phi(V_P)==V_L True; specials P 159 L 159 same-kinds True -> OK
+n=13 K=25: finite new P 137949 L 137949; phi missing 0; phi(V_P)==V_L True; specials P 574 L 574 same-kinds True -> OK
+word check: finite 194949, mismatches 0; special mismatches 0
+hash[principal]: forms 394320, distinct (h1,h2) 394320, collisions 0, distinct h1 alone 394320
+hash[lower]: forms 394320, distinct (h1,h2) 394320, collisions 0, distinct h1 alone 394320
+ALL STRUCTURAL CHECKS PASS
