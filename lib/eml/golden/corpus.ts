@@ -65,11 +65,13 @@ export const transcendentalEdgeCases = [
   // cos edge cases
   "cos(1e100)",
   "cos(1e7)",
+  "cos(1e119)",
   "cos(10^(-50))",
   "cos(10^(-200))",
   
   // sin edge cases
   "sin(1e22)",
+  "sin(1e150)",
   "sin(1e-18+1e-120*i)",
   "sin(1e-200)",
   
@@ -185,6 +187,9 @@ export const releaseRows = [
   "1e-500*e/e-1e-500",
   "1e-500",
   "exp(-1200)",
+  "exp(ln(1e-400))-1e-400",
+  "1e-400*1.5/1.5-1e-400",
+  "1e-400/2*2-1e-400",
   "1e-400*(1+1e-100)-1e-400",
   "1e-400*pi+1e-400",
   "exp(-1000)-exp(-1001)",

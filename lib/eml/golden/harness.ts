@@ -13,7 +13,7 @@
  * time so a row cannot warm the next row's cache.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { deserialize, serialize } from "node:v8";
@@ -47,17 +47,27 @@ const BUGS: Record<string, string> = {
   "1-cos(sqrt(1/10^130))": "roundtrip+cache-second: pack/unpack text mismatch, and a repeat eval certifies 0",
   "cos(1e100)": "cache-second: fresh eval is argument too large; the repeat certifies it",
   "sin(1e22)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "cos(1e7)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "tan(1e100)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "tan(1e22)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "cos(1e119)": "repeat-cache: eval2 certifies −0.9849923936; true value is −0.37226",
+  "sin(1e150)": "repeat-cache: eval2 certifies −0",
+  "tan(pi/2)": "pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)",
+  "tan(3*pi/2)": "pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)",
   "6*i+(-6*i)": "roundtrip: pack/unpack text mismatch",
   "1e-100*1.5/1.5-1e-100": "residue-stable: certified nonzero residue of an exact 0",
   "1e-50*1.5/1.5-1e-50": "residue-stable: certified nonzero residue of an exact 0",
-  "inf+1": "inf-finite: certified wrong infinity",
-  "ln(0)-1": "inf-finite: certified wrong infinity",
-  "ln(0)+i": "inf-finite: certified wrong infinity",
-  "(inf*i)/2": "inf-finite: certified wrong infinity",
-  "ln(ln(0)*i)": "inf-finite: certified wrong infinity",
+  "exp(ln(1e-400))-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
+  "1e-400*1.5/1.5-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
+  "1e-400/2*2-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
+  "inf+1": "inf-finite: −∞i, singular:uses ln 0 = −∞",
+  "ln(0)-1": "inf-finite: −∞i, singular:uses ln 0 = −∞",
+  "ln(0)+i": "inf-finite: −∞i, singular:uses ln 0 = −∞",
+  "(inf*i)/2": "inf-finite: ∞, singular:uses ln 0 = −∞",
+  "ln(ln(0)*i)": "inf-finite: ∞, singular:uses ln 0 = −∞",
   "1e-320*(1+1e-100)-1e-320": "jimmy1: certified residue, true value is 1e-420",
-  "exp(ln(ln(0))*i)": "jimmy1: certified wrong infinity",
-  "exp(800)-exp(800)": "jimmy1: certified −∞, true value is 0",
+  "exp(ln(ln(0))*i)": "jimmy1: ∞, singular:uses ln 0 = −∞",
+  "exp(800)-exp(800)": "jimmy1: −∞, singular:passed through a non-finite value, true value is 0",
 };
 
 function entryFrom(source: string, screen: Screen, roundTrip: string, second?: Screen): GoldenEntry {
@@ -93,43 +103,42 @@ function evaluateExpression(source: string): GoldenEntry {
   return entryFrom(source, screen, roundTrip);
 }
 
-function bundleWireChild(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "eml-wire-"));
-  const outfile = path.join(dir, "wire-child.cjs");
-  const built = spawnSync(
-    esbuildBin,
-    [wireChildScript, "--bundle", "--platform=node", "--format=cjs", `--outfile=${outfile}`],
-    { encoding: "utf8" },
-  );
-  if (built.status !== 0) {
-    throw new Error(built.stderr || built.stdout || "esbuild failed");
-  }
-  return outfile;
-}
-
 function evaluateViaWire(sources: string[]): Map<string, GoldenEntry> {
-  const childPath = bundleWireChild();
-  const results = new Map<string, GoldenEntry>();
-  for (const source of sources) {
-    try {
-      const node = compileExpression(source, {});
-      const packed = packCircuit(node);
-      const child = spawnSync(process.execPath, [childPath], {
-        input: serialize({ tokens: packed.tokens, root: packed.root }),
-        timeout: 180_000,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      if (child.status !== 0) {
-        throw new Error(child.stderr.toString().trim() || `wire child exited ${child.status}`);
-      }
-      const body = deserialize(child.stdout) as { first: Screen; second: Screen };
-      results.set(source, entryFrom(source, body.first, "OK", body.second));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`wire ${source}: ${message}`);
+  const dir = mkdtempSync(path.join(tmpdir(), "eml-wire-"));
+  try {
+    const childPath = path.join(dir, "wire-child.cjs");
+    const built = spawnSync(
+      esbuildBin,
+      [wireChildScript, "--bundle", "--platform=node", "--format=cjs", `--outfile=${childPath}`],
+      { encoding: "utf8" },
+    );
+    if (built.status !== 0) {
+      throw new Error(built.stderr || built.stdout || "esbuild failed");
     }
+    const results = new Map<string, GoldenEntry>();
+    for (const source of sources) {
+      try {
+        const node = compileExpression(source, {});
+        const packed = packCircuit(node);
+        const child = spawnSync(process.execPath, [childPath], {
+          input: serialize({ tokens: packed.tokens, root: packed.root }),
+          timeout: 180_000,
+          maxBuffer: 32 * 1024 * 1024,
+        });
+        if (child.status !== 0) {
+          throw new Error(child.stderr.toString().trim() || `wire child exited ${child.status}`);
+        }
+        const body = deserialize(child.stdout) as { first: Screen; second: Screen };
+        results.set(source, entryFrom(source, body.first, "OK", body.second));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`wire ${source}: ${message}`);
+      }
+    }
+    return results;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  return results;
 }
 
 function generateGolden(includeHeavy: boolean, wireMode: boolean): string {
