@@ -356,9 +356,13 @@ jobs:
               const observer = new MutationObserver(() => { generation += 1; count(); });
               observer.observe(result, { subtree: true, characterData: true, childList: true });
               const started = generation;
-              document.querySelector(".ti-btn-one").click();
-              document.querySelector(".ti-btn-one").click();
-              document.querySelector(".ti-btn-eml").click();
+              const press = () => {
+                document.querySelector(".ti-btn-one").click();
+                document.querySelector(".ti-btn-one").click();
+                document.querySelector(".ti-btn-eml").click();
+              };
+              press();
+              let lastPress = Date.now();
               const deadline = Date.now() + 20000;
               let text = "";
               while (Date.now() < deadline) {
@@ -367,6 +371,12 @@ jobs:
                 if (generation > started && text !== "computing" && text === "2.71828182846") {
                   observer.disconnect();
                   return text;
+                }
+                // A click before hydration never reaches the key, and the screen stays 0.
+                // Press again once that is still true. A press that landed has already left 0.
+                if (text === "0" && Date.now() - lastPress > 400) {
+                  press();
+                  lastPress = Date.now();
                 }
                 await new Promise((resolve) => setTimeout(resolve, 40));
               }
