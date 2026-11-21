@@ -10,8 +10,10 @@ import {
   hiddenUnderflow,
   integerQuotient,
   isLostTiny,
+  isNegationPair,
   isNonfiniteNode,
   knownValue,
+  mayBeInfinite,
   markInfiniteSource,
   markMaybeInfinite,
   noteDecade,
@@ -33,7 +35,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -206,6 +208,8 @@ export function tLn(t: Node): Node {
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
   if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
+  // ln of an imaginary infinity is not the real infinity the log word prints.
+  if (oddDirection(t)) return markUnverified(markMaybeInfinite(node, t));
   const inner = plus ?? minus;
   if (inner) {
     const decade = decadeOf(inner);
@@ -430,6 +434,20 @@ export function tAdd(a: Node, b: Node): Node {
   return tagPi(node, piAdd(a, b));
 }
 
+/**
+ * The user's a + b. The add word rotates through ln, so ±∞ beside a finite term
+ * can print a pure imaginary infinity. When that number is not the real infinity
+ * the sum must be, exact mode says it could not verify. A float NaN stays undefined.
+ */
+export function userAdd(a: Node, b: Node): Node {
+  return refuseInfiniteSum(tAdd(a, b), a, b, false);
+}
+
+/** The user's a − b. Same refusal as userAdd. */
+export function userSub(a: Node, b: Node): Node {
+  return refuseInfiniteSum(tSub(a, b), a, b, true);
+}
+
 export function tInv(b: Node): Node {
   return rawDiv(ONE, b);
 }
@@ -532,6 +550,75 @@ function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
   return null;
 }
 
+/** Quarter 1 is +∞i and quarter 3 is −∞i. */
+function oddDirection(node: Node): boolean {
+  const dir = directionOf(node);
+  if (!dir) return false;
+  const quarter = ((dir.quarter % 4) + 4) % 4;
+  return quarter === 1 || quarter === 3;
+}
+
+/** A real ±∞, or a directed infinity. A float overflow such as exp(800) is not this. */
+function infinityClass(node: Node): { inf: boolean; sign: -1 | 1 | undefined } {
+  const real = realSignedInfinity(node);
+  if (real) return { inf: true, sign: real };
+  const dir = directionOf(node);
+  if (dir) {
+    const quarter = ((dir.quarter % 4) + 4) % 4;
+    if (quarter === 0) return { inf: true, sign: 1 };
+    if (quarter === 2) return { inf: true, sign: -1 };
+    return { inf: true, sign: undefined };
+  }
+  if (mayBeInfinite(node)) return { inf: true, sign: undefined };
+  return { inf: false, sign: undefined };
+}
+
+function floatOf(node: Node): { re: number; im: number } | null {
+  try {
+    const report = evaluateReport(node, {}, { maxNodes: 50_000 });
+    if (report.unverified) return null;
+    return report.value;
+  } catch {
+    return null;
+  }
+}
+
+function floatIsNaN(value: { re: number; im: number } | null): boolean {
+  return value !== null && Number.isNaN(value.re) && Number.isNaN(value.im);
+}
+
+function floatIsRealInfinity(value: { re: number; im: number } | null, sign: -1 | 1): boolean {
+  if (!value) return false;
+  return value.re === sign * Infinity && (value.im === 0 || Object.is(value.im, -0));
+}
+
+/**
+ * ±∞ beside a finite term, when the add or sub word does not already show that
+ * real infinity. Identical operands stay on the circuit, so inf − inf stays undefined.
+ */
+function refuseInfiniteSum(node: Node, a: Node, b: Node, sub: boolean): Node {
+  if (a === b) return node;
+  if (!sub && isNegationPair(a, b)) return node;
+  const left = infinityClass(a);
+  const right = infinityClass(b);
+  if (!left.inf && !right.inf) return node;
+  const value = floatOf(node);
+  const leftSign = left.sign;
+  const rightSign = right.sign;
+  if (left.inf && right.inf && leftSign !== undefined && rightSign !== undefined && (sub ? leftSign === rightSign : leftSign !== rightSign)) {
+    return floatIsNaN(value) ? node : markUnverified(node);
+  }
+  if (left.inf !== right.inf) {
+    const sign = left.inf ? leftSign : rightSign === undefined ? undefined : sub ? ((-rightSign) as -1 | 1) : rightSign;
+    if (sign !== undefined) {
+      if (floatIsRealInfinity(value, sign) || floatIsNaN(value)) return node;
+      return markUnverified(node);
+    }
+  }
+  if (floatIsNaN(value)) return node;
+  return markUnverified(node);
+}
+
 /** Quarter turns to add for a finite factor on one axis. */
 function factorQuarter(node: Node): number | null {
   const real = realDirection(node);
@@ -613,6 +700,8 @@ export function tDiv(a: Node, b: Node): Node {
   // A finite numerator over a directed infinity is 0. The quotient word can
   // leave a signed zero in the opposite direction.
   if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
+  // (∞i)/2 is not the real infinity the quotient word prints.
+  if (oddDirection(a) && !directionOf(b) && provenFinite(b)) return markUnverified(rawDiv(a, b));
   // exp(u)/exp(v) = exp(u − v) when the exponents are integers or small,
   // so exp(800)/exp(799) is e and not ∞/∞. A large complex exponent keeps
   // the quotient: rewriting it overflows.
@@ -699,6 +788,8 @@ export function tSqrt(t: Node): Node {
   if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return rememberDirection(t, 1);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
+  // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
+  if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
   const inner = onePlus.get(t);
   if (inner && tinyScale(inner, SERIES_REL) !== null) sqrtArg.set(node, inner);
@@ -1263,8 +1354,8 @@ export const unaryBuilders: Record<string, (t: Node) => Node> = {
 };
 
 export const binaryBuilders: Record<string, (a: Node, b: Node) => Node> = {
-  add: tAdd,
-  sub: tSub,
+  add: userAdd,
+  sub: userSub,
   mul: tMul,
   div: tDiv,
   pow: tPow,
