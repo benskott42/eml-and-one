@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import type { C } from "./complex";
+import { cutTraceActive, noteExactGate, onNegativeCutZ } from "./cut";
 import {
   EmlError,
   EmlLimitError,
@@ -133,8 +134,13 @@ function expZ(v: Z): Z {
  * Lower bank, exact cut only. Imaginary dust is a real point off the axis:
  * −2 + 10^(−300)i is not rewritten as −2.
  */
+let exactTraceNode: object | null = null;
+let loggedCut = false;
+
 function lnEml(v: Z): Z {
   // Log(NaN) is NaN. A non-finite test is true for NaN and must not turn it into +∞.
+  loggedCut = onNegativeCutZ(v);
+  if (exactTraceNode) noteExactGate(exactTraceNode, v);
   if (v.re.isNaN() || v.im.isNaN()) return { re: NAN, im: NAN };
   const negPi = D.acos(-1).neg();
   if (v.re.isZero() && v.im.isZero()) {
@@ -418,6 +424,8 @@ export type ExactReport = {
   digits?: number;
   /** A series shortcut was used. A zero from that shortcut is not certified. */
   sawLead?: boolean;
+  /** Logarithms of a negative real, counted at each log call. A cached subcircuit adds its stored count. */
+  cutHits: number;
   /** A Log argument was on or within dust of the negative real axis (Finding 4). */
   cutSeen?: boolean;
   /** Decade of the smallest nonzero value this pass saw. */
@@ -438,7 +446,7 @@ export type ExactReport = {
  * replay these, or a repeat compute certifies a 0 the first compute escalated away.
  */
 type Work = { all: number; re: number; im: number; ab?: number; abE?: number; kept?: number; loss?: number; tiny?: number; tinyIm?: number; lead?: boolean; cut?: boolean };
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; cutHits: number };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -757,7 +765,7 @@ export function exactReport(
   const out = exactReportAbsorb(root, env, budget, pass);
   // v1.1 (item 6): beside a possible infinity only "undefined" (NaN) is a result.
   if (!out.unverified && unverifiedKind(root) === 1 && !(out.value.re.isNaN() && out.value.im.isNaN())) {
-    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true, cutHits: 0 };
   }
   if (!out.unverified && vanished(out.value) && firstPassGap > 0) return { ...out, cancelledZero: true };
   return out;
@@ -842,7 +850,7 @@ function exactReportCore(
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
   if (unverifiedKind(root) === 2 || hidesBeside(root)) {
-    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
+    return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true, cutHits: 0 };
   }
   // The integer is the value. A later retry would rebuild the circuit and round off its units.
   if (isMarkedExactInt(root)) {
@@ -853,7 +861,7 @@ function exactReportCore(
       const saved = D.precision;
       if (width > saved) D.set({ precision: width });
       try {
-        return { value: z(text, 0), singular: null, touchedLn0: false };
+        return { value: z(text, 0), singular: null, touchedLn0: false, cutHits: 0 };
       } finally {
         if (width > saved) D.set({ precision: saved });
       }
@@ -987,6 +995,7 @@ function exactReportOnce(
   const why = new Map<Node, string | null>();
   const logged = new Map<Node, boolean>();
   const work = new Map<Node, Work>();
+  const cuts = new Map<Node, number>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
@@ -1076,6 +1085,7 @@ function exactReportOnce(
       noteSeen(Z1);
       why.set(n, null);
       logged.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
     if (n.type === "input") {
@@ -1096,6 +1106,7 @@ function exactReportOnce(
       noteSeen(leaf);
       why.set(n, null);
       logged.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
     if (n.type === "var") {
@@ -1109,13 +1120,14 @@ function exactReportOnce(
       noteSeen(boundZ);
       why.set(n, null);
       logged.set(n, false);
+      cuts.set(n, 0);
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
     // A sin, cos, or tan node can already be cached as the exp formula.
     // Recompute so an infinite argument stays undefined instead of that infinity.
     const angle = trigArg(n);
-    const hit = NOCACHE || angle ? undefined : cache.get(n);
+    const hit = NOCACHE || angle || cutTraceActive() ? undefined : cache.get(n);
     if (hit) {
       memo.set(n, hit.value);
       noteSeen(hit.value);
@@ -1128,6 +1140,7 @@ function exactReportOnce(
       why.set(n, hit.why);
       logged.set(n, hit.logged);
       work.set(n, hit.work);
+      cuts.set(n, hit.cutHits);
       continue;
     }
 
@@ -1149,6 +1162,8 @@ function exactReportOnce(
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
     const collapsedBefore = expCollapsed;
+    loggedCut = false;
+    exactTraceNode = n;
     emlAbsorbGap = Number.NEGATIVE_INFINITY;
     emlAbsorbExp = Number.POSITIVE_INFINITY;
     nodeLoss = 0;
@@ -1158,7 +1173,10 @@ function exactReportOnce(
     const angleValue = angle ? (memo.get(angle) ?? cache.get(angle)?.value) : undefined;
     const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
     const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
+    exactTraceNode = null;
     const collapsedHere = expCollapsed && !collapsedBefore;
+    const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (loggedCut ? 1 : 0);
+    cuts.set(n, cutHits);
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
@@ -1198,7 +1216,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB && !collapsedHere) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork });
+    if (!varA && !varB && !collapsedHere) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, cutHits });
   }
 
   const out = memo.get(root);
@@ -1226,6 +1244,7 @@ function exactReportOnce(
     seriesKept: rootWork?.kept,
     digits: D.precision,
     sawLead,
+    cutHits: cuts.get(root) ?? 0,
     cutSeen,
     tiniestExp: tiniest,
     tiniestImExp: tiniestIm,

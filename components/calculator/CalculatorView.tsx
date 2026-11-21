@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
 import table from "@/lib/eml/best-known.json";
 import { programIndexDigits } from "@/lib/eml/programIndex";
+import { recordLine } from "@/lib/eml/recordLabel";
 import { CopyNumber, GolfPanel, KeyButton, PressLine } from "./chrome";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
@@ -46,6 +48,7 @@ export function CalculatorView(props: CalculatorModel) {
             <h1 className="ti-wordmark">EML and One</h1>
             <p className="ti-model">a two-button calculator</p>
           </div>
+          <Link className="ti-home" href="/count">Count to n</Link>
         </div>
 
         <div className="ti-bezel">
@@ -200,6 +203,7 @@ export function CalculatorView(props: CalculatorModel) {
             <label className="ti-label">
               Expression, compiled into EML
               <input
+                id="expr"
                 value={expr}
                 onChange={(event) => setExpr(event.target.value)}
                 className="ti-field"
@@ -367,7 +371,7 @@ export function CalculatorView(props: CalculatorModel) {
           <ul className="ti-fold-list">
             {table.minimality.map((row) => (
               <li key={`${row.value}-${row.k}`}>
-                {row.value}, K {row.k}: {row.label}. {row.note}.
+                {row.value}, K {row.k}: {recordLine(row)}
               </li>
             ))}
           </ul>

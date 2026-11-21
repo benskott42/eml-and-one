@@ -27,6 +27,8 @@ export type Entry = {
   exactBeside?: string;
   notice?: string | null;
   watch?: number;
+  cutHits?: number;
+  underflowedExact?: boolean;
   /** v1.1 (E3): exact reached 0 through a recorded cancellation. */
   cancelledZero?: boolean;
   /** v1.1 (E3): the engine's sticky absorbed-term flag. */
