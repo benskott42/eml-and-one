@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { rpnTokens, type Node } from "@/lib/eml/node";
-import { isConstantCircuit } from "@/lib/eml/programIndex";
+import { isConstantCircuit, rankProgram } from "@/lib/eml/programIndex";
 import { MAX_ID_KEYS, idBits, indexOf, isValidWord, jump, nextValid, prevValid, programAt, wordToId, idToWord } from "@/lib/eml/programId";
 
 /** Long numbers are shown as head…tail with their full length; Copy gives every digit. */
@@ -23,7 +23,7 @@ function currentOf(node: Node | undefined): Current {
   if (!tokens) return { kind: "none", reason: `This word is longer than ${MAX_ID_KEYS} keys, so its ID is not shown.` };
   const word = tokens.join("");
   if (!isValidWord(word)) return { kind: "none", reason: "This value is not a single program." };
-  return { kind: "word", word, bits: idBits(word), id: wordToId(word), index: indexOf(word) };
+  return { kind: "word", word, bits: idBits(word), id: wordToId(word), index: rankProgram(node) ?? indexOf(word) };
 }
 
 function copy(text: string): void {
