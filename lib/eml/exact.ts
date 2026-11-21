@@ -12,6 +12,7 @@ import {
   isUnverified,
   precisionMessage,
   provenInteger,
+  trigArg,
 } from "./node";
 import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
 import { isSeriesShortcut } from "./node";
@@ -766,7 +767,11 @@ function exactReportOnce(
     emlWork = Number.NEGATIVE_INFINITY;
     emlWorkRe = Number.NEGATIVE_INFINITY;
     emlWorkIm = Number.NEGATIVE_INFINITY;
-    const value = exactEml(a, b);
+    // sin and cos of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    const angle = trigArg(n);
+    const angleValue = angle ? memo.get(angle) : undefined;
+    const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
+    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(a, b);
     const shell = inScaledShell(n);
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }

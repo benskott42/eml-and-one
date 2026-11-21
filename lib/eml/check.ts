@@ -1665,6 +1665,29 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   const gap = compileExpression("inf-inf", {});
   const gapReport = evaluateReport(gap);
   const gapExact = exactReport(gap, {}, { maxNodes: 20_000 });
+  const extended = [
+    ["ln(0)*2", "−∞"],
+    ["ln(0)*(-2)", "∞"],
+    ["(-2)*ln(0)", "∞"],
+    ["2*ln(0)", "−∞"],
+    ["ln(0)*0", "undefined"],
+    ["sin(inf)", "undefined"],
+    ["sin(ln(0))", "undefined"],
+    ["cos(inf)", "undefined"],
+    ["cos(ln(0))", "undefined"],
+    ["sin((inf+1)-1)", "undefined"],
+  ] as const;
+  for (const [source, want] of extended) {
+    const node = compileExpression(source, {});
+    const hw = evaluateReport(node, {}, { maxNodes: 200_000 });
+    const ex = exactReport(node, {}, { maxNodes: 200_000 });
+    const floatText = formatC(hw.value);
+    const exactText = formatExact(ex.value).replace(/\u200b/g, "");
+    if (floatText !== want || exactText !== want || floatText !== exactText) {
+      failed += 1;
+      console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular);
+    }
+  }
   if (gap === programNode("0") || gapReport.singular !== SINGULAR_INDET) {
     failed += 1;
     console.log("FAIL inf-inf", gapReport, gap === programNode("0"));

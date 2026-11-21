@@ -452,6 +452,28 @@ function nonFiniteFactor(node: Node): boolean {
   return v !== null && (!Number.isFinite(v.re) || !Number.isFinite(v.im));
 }
 
+/** Sign of a known real, or of a real interval that stays off zero. −0 counts as 0. */
+function realDirection(node: Node): -1 | 0 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && !Number.isNaN(v.re)) {
+    if (v.re === 0) return 0;
+    return v.re < 0 ? -1 : 1;
+  }
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return null;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return null;
+  if (range.re.hi < 0) return -1;
+  if (range.re.lo > 0) return 1;
+  if (range.re.lo === 0 && range.re.hi === 0) return 0;
+  return null;
+}
+
+/** −∞ on the real axis, including ln(0). A typed +∞ is not this. */
+function negativeRealInfinity(node: Node): boolean {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  return !!v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY;
+}
+
 export function tMul(a: Node, b: Node): Node {
   // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
   if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
@@ -465,7 +487,13 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
-  return tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
+  const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
+  // The product word keeps only the cosine of the right-hand factor when the
+  // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
+  // product of the two signs. An infinity on the right already has that sign.
+  const direction = realDirection(b);
+  if (negativeRealInfinity(a) && direction !== null && direction !== 0) return tNeg(product);
+  return product;
 }
 
 function naiveIndeterminate(pole: Node): Node {

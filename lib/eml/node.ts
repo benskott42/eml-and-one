@@ -165,6 +165,12 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
   return precisionNotes.get(node);
 }
 
+/** Argument of a sin or cos result. tan uses the pole note instead. */
+export function trigArg(node: Node): Node | null {
+  const note = precisionNotes.get(node);
+  return note && note.kind === "trig" ? note.arg : null;
+}
+
 /**
  * A function the library replaced by a short series. The next term is past
  * the 480-digit cap. A later cancellation that makes the whole result 0 is
@@ -345,8 +351,11 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
     const childLog = logged.get(n.a) === true || logged.get(n.b) === true || zeroC(b);
     const childOverflow = overflowed.get(n.a) === true || overflowed.get(n.b) === true;
     const childUnder = underflowed.get(n.a) === true || underflowed.get(n.b) === true;
-    // The value is this gate. Nothing here is replaced from a side table.
-    const value = eml(a, b);
+    // sin and cos of ±∞ are undefined. The exp formula otherwise returns an infinity.
+    const angle = trigArg(n);
+    const angleValue = angle ? memo.get(angle) : undefined;
+    const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));
+    const value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
     const nan = Number.isNaN(value.re) || Number.isNaN(value.im);
     // Logging 0 at this gate is a real pole. An infinity born from two finite
     // inputs that are not that pole is float overflow, even if some other
@@ -362,7 +371,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       // argument. Real ∞ − ∞ of two poles stays indeterminate.
       const messy = (value: C) => !finiteC(value) && Number.isFinite(value.im) && value.im !== 0 && !Object.is(value.im, -0);
       const childRange = why.get(n.a) === SINGULAR_RANGE || why.get(n.b) === SINGULAR_RANGE;
-      singular = rangeHere || childRange || messy(a) || messy(b) ? SINGULAR_RANGE : SINGULAR_INDET;
+      singular = angleInfinite || !(rangeHere || childRange || messy(a) || messy(b)) ? SINGULAR_INDET : SINGULAR_RANGE;
     }
     // An infinity born from finite inputs is overflow, even if another gate logged 0.
     // ln 0 itself is the label only when this infinity was not that overflow.
