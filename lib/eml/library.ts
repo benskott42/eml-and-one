@@ -802,6 +802,13 @@ export function tHalfOf(t: Node): Node {
 }
 
 export function tSigmoid(t: Node): Node {
+  // Review R3: for Re t ≤ −1 use e^t/(1 + e^t). In 1/(1 + e^(−t)) the exponential
+  // overflows for t ≤ −710, and the float circuit came out NaN instead of an underflow to 0.
+  const re = rangeOf(t).re;
+  if (re && re.hi <= -1) {
+    const e = tExp(t);
+    return tDiv(e, tAdd(ONE, e));
+  }
   return tInv(tAdd(ONE, tExp(tNeg(t))));
 }
 
@@ -833,6 +840,15 @@ export function tTanh(t: Node): Node {
   if (small) return small;
   const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
   if (series) return series;
+  // Review R3: for Re t ≥ 1 exponentiate −2t, which cannot overflow:
+  // 1 − 2e^(−2t)/(1 + e^(−2t)). The form below is ∞/∞ = NaN in float for t ≥ 355,
+  // and gave 1.000000000000341 at t = 354. Re t ≤ −1 already has e^(2t) → 0.
+  // (1 − e^(−2t))/(1 + e^(−2t)) is the same value but left float dust in Im near t = 354.
+  const re = rangeOf(t).re;
+  if (re && re.lo >= 1) {
+    const em2 = tExp(tNeg(tAdd(t, t)));
+    return tSub(ONE, tMul(tTwo(), tDiv(em2, tAdd(ONE, em2))));
+  }
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
   return tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
