@@ -33,7 +33,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -403,6 +403,8 @@ export function tSub(a: Node, b: Node): Node {
 }
 
 export function tNeg(b: Node): Node {
+  const dir = directionOf(b);
+  if (dir) return rememberDirection(dir.magnitude, dir.quarter + 2);
   return tagPi(domainNeg(b), piNeg(b));
 }
 
@@ -470,8 +472,92 @@ function realDirection(node: Node): -1 | 0 | 1 | null {
 
 /** −∞ on the real axis, including ln(0). A typed +∞ is not this. */
 function negativeRealInfinity(node: Node): boolean {
+  return realSignedInfinity(node) === -1;
+}
+
+/** A known real ±∞, including a typed infinity and ln(0). */
+function realSignedInfinity(node: Node): -1 | 1 | null {
   const v = node.type === "input" ? node.value : knownValue(node);
-  return !!v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY;
+  if (!v || !imagZero(v)) return null;
+  if (v.re === Infinity) return 1;
+  if (v.re === -Infinity) return -1;
+  return null;
+}
+
+/** Sign of a known finite pure imaginary, or of an interval that stays on one side of 0. */
+function pureImagDirection(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && (v.re === 0 || Object.is(v.re, -0)) && Number.isFinite(v.im) && v.im !== 0) return v.im < 0 ? -1 : 1;
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.re.lo !== 0 || range.re.hi !== 0) return null;
+  if (!Number.isFinite(range.im.lo) || !Number.isFinite(range.im.hi)) return null;
+  if (range.im.hi < 0) return -1;
+  if (range.im.lo > 0) return 1;
+  return null;
+}
+
+/**
+ * An infinity's angle, in quarter turns. 0 is +∞, 1 is +∞i, 2 is −∞, 3 is −∞i.
+ * The turn is the finite node whose log cancels that angle: exp(+∞ − ln(turn)).
+ * Mul, sqr, and neg add to this count. The product and square words would drop it,
+ * and a product of two turns is only approximately on the axis in float.
+ */
+const directedInfinity = new WeakMap<Node, { magnitude: Node; quarter: number }>();
+
+function positiveRealInfinity(node: Node): Node {
+  return realSignedInfinity(node) === -1 ? domainNeg(node) : node;
+}
+
+function axisTurn(quarter: number): Node {
+  const q = ((quarter % 4) + 4) % 4;
+  if (q === 0) return ONE;
+  if (q === 1) return tNeg(tI());
+  if (q === 2) return tMinusOne();
+  return tI();
+}
+
+function rememberDirection(magnitude: Node, quarter: number): Node {
+  const positive = positiveRealInfinity(magnitude);
+  const node = markInfiniteSource(E(E(positive, axisTurn(quarter)), ONE));
+  directedInfinity.set(node, { magnitude: positive, quarter });
+  return node;
+}
+
+function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
+  const hit = directedInfinity.get(node);
+  if (hit) return hit;
+  const sign = realSignedInfinity(node);
+  if (sign === 1) return { magnitude: node, quarter: 0 };
+  if (sign === -1) return { magnitude: domainNeg(node), quarter: 2 };
+  return null;
+}
+
+/** Quarter turns to add for a finite factor on one axis. */
+function factorQuarter(node: Node): number | null {
+  const real = realDirection(node);
+  if (real === 1) return 0;
+  if (real === -1) return 2;
+  const imag = pureImagDirection(node);
+  if (imag === 1) return 1;
+  if (imag === -1) return 3;
+  return null;
+}
+
+/**
+ * A finite factor whose angle is not a quarter turn. 1+i is one.
+ * An unknown range is not this: the product word still has to run.
+ */
+function offAxis(node: Node): boolean {
+  if (factorQuarter(node) !== null) return false;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im)) return v.re !== 0 && v.im !== 0;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return false;
+  const ends = [range.re.lo, range.re.hi, range.im.lo, range.im.hi];
+  if (!ends.every((end) => Number.isFinite(end))) return false;
+  const reOff = range.re.hi < 0 || range.re.lo > 0;
+  const imOff = range.im.hi < 0 || range.im.lo > 0;
+  return reOff && imOff;
 }
 
 export function tMul(a: Node, b: Node): Node {
@@ -487,6 +573,17 @@ export function tMul(a: Node, b: Node): Node {
   // so 0·10^(−500) stays a certified 0.
   if (exactZero(a) && provenFinite(b)) return tZero();
   if (exactZero(b) && provenFinite(a)) return tZero();
+  // Carry the angle. Two infinities add their quarter turns. A factor off an
+  // axis has no quarter turn, and the product word would still certify a real ∞.
+  const dirA = directionOf(a);
+  const dirB = directionOf(b);
+  if (dirA && dirB) return rememberDirection(dirA.magnitude, dirA.quarter + dirB.quarter);
+  if (dirA && offAxis(b)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  if (dirB && offAxis(a)) return markUnverified(markInfiniteSource(rawMul(a, b)));
+  const quarterA = dirA ? null : factorQuarter(a);
+  const quarterB = dirB ? null : factorQuarter(b);
+  if (dirA && quarterB !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterB);
+  if (dirB && quarterA !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterA);
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
@@ -513,6 +610,9 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
+  // A finite numerator over a directed infinity is 0. The quotient word can
+  // leave a signed zero in the opposite direction.
+  if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
   // exp(u)/exp(v) = exp(u − v) when the exponents are integers or small,
   // so exp(800)/exp(799) is e and not ∞/∞. A large complex exponent keeps
   // the quotient: rewriting it overflows.
@@ -525,6 +625,8 @@ export function tDiv(a: Node, b: Node): Node {
 }
 
 export function tPow(a: Node, b: Node): Node {
+  // x^2 is the square. A directed infinity doubles its angle there.
+  if (rangeOf(b).int === BigInt(2) && directionOf(a)) return tSqr(a);
   const node = applyProgram("pow", { x: a, y: b });
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
@@ -553,6 +655,8 @@ export function tPow(a: Node, b: Node): Node {
 }
 
 export function tSqr(t: Node): Node {
+  const dir = directionOf(t);
+  if (dir) return rememberDirection(dir.magnitude, dir.quarter * 2);
   const node = applyProgram("sqr", { x: t });
   const v = knownValue(t);
   if (!v) return node;
@@ -570,7 +674,11 @@ export const tThree = memo(() => tagReal(programNode("3"), 3));
 export const tTwoThirds = memo(() => tDiv(tTwo(), tThree()));
 
 export function tSqrt(t: Node): Node {
-  const v = knownValue(t);
+  const v = t.type === "input" ? t.value : knownValue(t);
+  // sqrt(−∞) is +∞i. The principal value has a non-negative real part, as sqrt(−1) = +i.
+  // sqrt(+∞) stays +∞. The square-root word drops the angle, so the direction is recorded.
+  if (v && imagZero(v) && v.re === Number.POSITIVE_INFINITY) return rememberDirection(t, 0);
+  if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return rememberDirection(t, 1);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
   const node = applyProgram("sqrt", { x: t });

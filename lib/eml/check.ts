@@ -1678,6 +1678,24 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["sin((inf+1)-1)", "undefined"],
     ["tan(inf)", "undefined"],
     ["tan(ln(0))", "undefined"],
+    ["sqrt(ln(0))", "∞i"],
+    ["ln(0)*i", "−∞i"],
+    ["inf*i", "∞i"],
+    ["i*inf", "∞i"],
+    ["i*ln(0)", "−∞i"],
+    ["sqrt(inf)", "∞"],
+    ["sqrt(ln(0))^2", "−∞"],
+    ["(-inf)*i", "−∞i"],
+    ["i*(-inf)", "−∞i"],
+    ["-(sqrt(ln(0)))", "−∞i"],
+    ["(inf*i)*i", "−∞"],
+    ["ln(0)*i*i", "∞"],
+    ["sqrt(inf)^2", "∞"],
+    ["1/(inf*i)", "0"],
+    ["(inf*i)*(inf*i)", "−∞"],
+    ["inf*(inf*i)", "∞i"],
+    ["(-inf)*(-inf)", "∞"],
+    ["inf*(1+i)", "unverified"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1685,14 +1703,37 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     const ex = exactReport(node, {}, { maxNodes: 200_000 });
     const floatText = formatC(hw.value);
     const exactText = formatExact(ex.value).replace(/\u200b/g, "");
-    if (floatText !== want || exactText !== want || floatText !== exactText) {
+    const flagged = want === "unverified";
+    const floatOk = flagged ? hw.unverified === true && floatText !== "∞" : floatText === want;
+    const exactOk = flagged ? ex.unverified === true && exactText !== "∞" : exactText === want;
+    if (!floatOk || !exactOk || (!flagged && floatText !== exactText)) {
       failed += 1;
-      console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular);
+      console.log("FAIL extended value", source, floatText, exactText, hw.singular, ex.singular, hw.unverified, ex.unverified);
     }
   }
   // The in-process rows never pack. The screen's exact worker evaluates the packed circuit.
   const freshAngles = ["sin(inf)", "cos(inf)", "sin(ln(0))", "cos(ln(0))", "tan(inf)", "tan(ln(0))"];
-  const freshJobs = freshAngles.map((source) => {
+  const freshDirected = [
+    ["sqrt(ln(0))", "∞i"],
+    ["ln(0)*i", "−∞i"],
+    ["inf*i", "∞i"],
+    ["i*inf", "∞i"],
+    ["i*ln(0)", "−∞i"],
+    ["sqrt(inf)", "∞"],
+    ["sqrt(ln(0))^2", "−∞"],
+    ["(-inf)*i", "−∞i"],
+    ["i*(-inf)", "−∞i"],
+    ["-(sqrt(ln(0)))", "−∞i"],
+    ["(inf*i)*i", "−∞"],
+    ["ln(0)*i*i", "∞"],
+    ["sqrt(inf)^2", "∞"],
+    ["1/(inf*i)", "0"],
+    ["(inf*i)*(inf*i)", "−∞"],
+    ["inf*(inf*i)", "∞i"],
+    ["(-inf)*(-inf)", "∞"],
+    ["inf*(1+i)", "unverified"],
+  ] as const;
+  const freshJobs = [...freshAngles, ...freshDirected.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
@@ -1701,10 +1742,22 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     failed += 1;
     console.log("FAIL fresh trig infinity", freshAnglesRun.status, freshAnglesRun.stderr);
   } else {
-    const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null }>;
+    const rows = JSON.parse(freshAnglesRun.stdout) as Array<{ source: string; text: string; singular: string | null; unverified: boolean }>;
+    const directed = new Map<string, string>(freshDirected.map(([source, want]) => [source, want]));
     for (const row of rows) {
       const text = row.text.replace(/\u200b/g, "");
-      if (text !== "undefined" || row.singular === null) {
+      const want = directed.get(row.source);
+      if (want === "unverified") {
+        if (!row.unverified || text === "∞") {
+          failed += 1;
+          console.log("FAIL fresh directed infinity", row.source, text, row.singular, row.unverified);
+        }
+      } else if (want !== undefined) {
+        if (text !== want || row.unverified) {
+          failed += 1;
+          console.log("FAIL fresh directed infinity", row.source, text, row.singular, row.unverified);
+        }
+      } else if (text !== "undefined" || row.singular === null) {
         failed += 1;
         console.log("FAIL fresh trig infinity", row.source, text, row.singular);
       }
