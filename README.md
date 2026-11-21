@@ -52,7 +52,7 @@ The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K
 
 ## Encoding
 
-The ranking of programs is the classical ranking of binary trees and prefix codes: Łukasiewicz, Ruskey and Hu, and Zaks. The contribution here is applying that ranking to EML programs. Within one length, 1 comes before E, so a higher program number is a lower binary value.
+The ranking of programs is the classical ranking of binary trees and prefix codes: Łukasiewicz, Ruskey and Hu, and Zaks. The contribution here is applying that ranking to EML programs. Within one length, 1 comes before E. Bits are written E = 1 and the 1 key = 0, so a higher program number is a higher binary value. A program ID is those bits with a 1 in front, so 11E is 001 and its ID is 1001 = 9.
 
 ## Prior art
 

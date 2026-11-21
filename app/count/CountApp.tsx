@@ -432,7 +432,7 @@ export function CountApp() {
             <p className="sr-only">The full word, one character per press, is in the copy text below.</p>
             <div className="count-actions">
               <button type="button" className="ti-text-btn" onClick={() => void copyText(choice.word)}>Copy as 1 / E</button>
-              <button type="button" className="ti-text-btn" onClick={() => void copyText(choice.word.replace(/E/g, "0"))}>Copy as bits 1/0</button>
+              <button type="button" className="ti-text-btn" onClick={() => void copyText(choice.word.replace(/[1E]/g, (key) => (key === "E" ? "1" : "0")))}>Copy as bits (E = 1, 1 = 0)</button>
             </div>
             {copyNote ? <p className="count-note" id="copy-status">{copyNote}</p> : null}
             <p className="count-copy" id="copytext">{choice.word}</p>

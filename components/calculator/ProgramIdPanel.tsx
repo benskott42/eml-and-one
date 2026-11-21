@@ -126,8 +126,8 @@ export function ProgramIdPanel({
         </dl>
       ) : null}
       <p className="ti-pid-note">
-        ID bits: a leading 1, then one bit per key in order, E = 1 and the 1 key = 0. Program numbers count only the words
-        that are programs, shortest first, from #0.
+        ID bits: a leading 1, then the same bits as the press line, one per key in order, E = 1 and the 1 key = 0.
+        Program numbers count only the words that are programs, shortest first, from #0.
       </p>
       {current.kind === "word" && (current.bits.length > 56 || current.id.toString().length > 56) ? (
         <div className="ti-form-row">

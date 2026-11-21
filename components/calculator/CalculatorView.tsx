@@ -168,10 +168,10 @@ export function CalculatorView(props: CalculatorModel) {
           )}
 
           <div className="ti-prime">
-            <KeyButton tone="one" secondary="const" onClick={pushOne} title="Push the constant 1. This is one press: 1" ariaLabel="Push the constant 1. This is one press: 1">
+            <KeyButton tone="one" secondary="const" onClick={pushOne} title="Push the constant 1. One press, written 0 in bits" ariaLabel="Push the constant 1. One press, written 0 in bits">
               1
             </KeyButton>
-            <KeyButton tone="eml" secondary="exp − ln" onClick={applyEml} title="The EML key. One press, written 0. exp(x) − ln(y)" ariaLabel="The EML key. One press, written 0. exp(x) − ln(y)">
+            <KeyButton tone="eml" secondary="exp − ln" onClick={applyEml} title="The EML key. One press, written E, or 1 in bits. exp(x) − ln(y)" ariaLabel="The EML key. One press, written E, or 1 in bits. exp(x) − ln(y)">
               EML
             </KeyButton>
           </div>
@@ -237,16 +237,21 @@ export function CalculatorView(props: CalculatorModel) {
             }}
           >
             <label className="ti-label">
-              Program number (#110), presses, or a word of 1 and E
+              Program number (#1), bits (001), or a word of 1 and E
               <input
                 value={programField}
                 onChange={(event) => setProgramField(event.target.value)}
-                placeholder="#110, 110, or 11E"
+                placeholder="#1, 001, or 11E"
+                aria-describedby="load-bits-hint"
                 className="ti-field"
                 spellCheck={false}
                 autoComplete="off"
               />
             </label>
+            <p className="ti-caption" id="load-bits-hint">
+              Bits: E = 1, the 1 key = 0, so 11E is 001. Bits in the old convention (0 = EML) are read only
+              with old: in front, such as old:110.
+            </p>
             <div className="ti-form-row">
               <button type="button" onClick={() => stepLoaded(-1)} className="ti-text-btn">
                 Prev

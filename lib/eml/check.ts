@@ -1414,17 +1414,17 @@ if (inShard("core")) {
     failed += 1;
     console.log("FAIL 31 presses", over);
   }
-  if (encodePresses(["1", "1", "E"]) !== "110" || encodePresses(["1", "x", "E", "y"]) !== "1x0y" || encodePresses(["2"]) !== null) {
+  if (encodePresses(["1", "1", "E"]) !== "001" || encodePresses(["1", "x", "E", "y"]) !== "0x1y" || encodePresses(["2"]) !== null) {
     failed += 1;
     console.log("FAIL press alphabet");
   }
   const emlPress = pressPreviewForNode(E(ONE, ONE));
   const named = pressPreviewForNode(E(V("x"), ONE));
-  if (!emlPress || emlPress.full !== "110" || emlPress.usesVariables) {
+  if (!emlPress || emlPress.full !== "001" || emlPress.usesVariables) {
     failed += 1;
     console.log("FAIL e presses", emlPress);
   }
-  if (!named || named.full !== "x10" || !named.usesVariables) {
+  if (!named || named.full !== "x01" || !named.usesVariables) {
     failed += 1;
     console.log("FAIL variable presses", named);
   }
@@ -1512,7 +1512,7 @@ if (inShard("core")) {
   const copied = pressPreviewForNode(unrankProgram(BigInt(1)));
   const pasted = copied ? parseProgramInput(copied.full) : null;
   const roundTrip = pasted && pasted.kind === "word" ? rankProgram(nodeFromRpn(pasted.word.split(""))) : null;
-  if (!copied || copied.full !== "110" || pasted?.kind !== "word" || pasted.word !== "11E" || roundTrip !== BigInt(1)) {
+  if (!copied || copied.full !== "001" || pasted?.kind !== "word" || pasted.word !== "11E" || roundTrip !== BigInt(1)) {
     failed += 1;
     console.log("FAIL copy paste round trip", copied?.full, pasted, roundTrip?.toString());
   }
@@ -1522,7 +1522,7 @@ if (inShard("core")) {
   const wordE = parseProgramInput("1E1");
   const wordLower = parseProgramInput("1e1");
   const spacedWord = parseProgramInput("1 1 E");
-  const variable = parseProgramInput("x10");
+  const variable = parseProgramInput("x01");
   if (one.kind !== "word" || rankRpn(one.word) !== BigInt(0)) {
     failed += 1;
     console.log("FAIL press 1 is program 0", one);
@@ -1536,8 +1536,8 @@ if (inShard("core")) {
     console.log("FAIL word input", wordE, wordLower, spacedWord);
   }
   const turned = parseProgramInput("E11");
-  const turnedPress = parseProgramInput("011");
-  if (turned.kind !== "word" || turned.word !== "11E" || turned.rotatedFrom !== "E11" || turnedPress.kind !== "word" || turnedPress.word !== "11E" || turnedPress.rotatedFrom !== "011") {
+  const turnedPress = parseProgramInput("100");
+  if (turned.kind !== "word" || turned.word !== "11E" || turned.rotatedFrom !== "E11" || turnedPress.kind !== "word" || turnedPress.word !== "11E" || turnedPress.rotatedFrom !== "100") {
     failed += 1;
     console.log("FAIL rotated word", turned, turnedPress);
   }
