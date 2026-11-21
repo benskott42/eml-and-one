@@ -68,7 +68,9 @@ async function main() {
   await act(async () => { (view.document.querySelector(".ti-btn-eml") as HTMLButtonElement).click(); });
   await waitResult();
   expect("press line for 1 1 EML is 001", pressLine().startsWith("001 (3 presses)"), pressLine());
-  expect("press line legend is E = 1", screenText().includes("E = 1, the 1 key = 0"), screenText());
+  const manualText = view.document.querySelector(".ti-manual")?.textContent ?? "";
+  expect("press line legend is E = 1", manualText.includes("E = 1, the 1 key = 0. Within one length, a higher program number is a higher binary value."), manualText);
+  expect("legend is not on the LCD", !screenText().includes("E = 1, the 1 key = 0"), screenText());
   expect("no old 0 = EML legend left", !screenText().includes("0 = EML"), screenText());
   expect("panel shows ID bits 1·001 and ID 9", (view.document.querySelector(".ti-pid")?.textContent ?? "").includes("1·001"));
   expect("EML key label says 1 in bits", (view.document.querySelector(".ti-btn-eml")?.getAttribute("aria-label") ?? "").includes("1 in bits"));
