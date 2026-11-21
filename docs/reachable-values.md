@@ -17,7 +17,7 @@ Convention used in the project enumerations of November 2026. In brief:
   - Log(+∞ + *i b*) = +∞.
   - Log(−∞ + *i b*) = +∞ ± *i*π, with the sign of *b*. When *b* = 0 exactly, the branch convention decides: +*i*π on the principal cut, −*i*π on the lower cut.
   - Log of a directed infinity at angle *t* is +∞ + *i t*, with *t* reduced into the branch window.
-  - *x* − (±∞ + *i b*) = ∓∞ + *i*(Im *x* − *b*) for finite *x*; exp(+∞ + *i b*) − Log *y* = +∞ + *i*(*b* − Im Log *y*) for finite *y*; +∞ − (−∞) = +∞.
+  - *x* − (±∞ + *i b*) = ∓∞ + *i*(Im *x* − *b*) for finite *x*; +∞ − Log *y* = +∞ − *i*·Im Log *y* for finite *y*; a directed infinity minus a finite value is unchanged; +∞ − (−∞) = +∞.
   - ∞ − ∞ with the same sign, and any directed infinity combined with another infinity, are NaN; those programs are discarded. Zero is unsigned.
 
   A program is counted only if its **final** value is a finite complex number. Programs that pass through −∞ internally and still finish finite are included (for example the length-15 word for −1). Final ±∞ and NaN are not counted. Non-real values are counted.
@@ -100,7 +100,7 @@ A program that uses ordinary IEEE complex floating point (for example C `clog` o
 
 ## Independent reproduction
 
-**Pending.** An independent reproduction has not been recorded yet and will be added here when it is. Until then, the terms for *n* ≥ 6 should be treated as computed upper bounds  rather than as independently reproduced.
+**Pending.** An independent reproduction has not been recorded yet and will be added here when it is. Until then, the terms for *n* ≥ 6 should be treated as computed upper bounds rather than as independently reproduced.
 
 ## Not found in the OEIS
 
