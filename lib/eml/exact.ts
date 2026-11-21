@@ -1145,9 +1145,12 @@ function exactReportOnce(
   let singular = why.get(root) ?? null;
   // A noted argument under a cached subtree is not in this pass's memo. Its
   // value is in the cache; without it a repeat evaluation drops the note.
+  // A marked integer power is read without a cache entry, so under a cached
+  // parent its own integer is the value.
   const flag = precisionMessage(root, (n) => {
-    const z = memo.get(n) ?? cache.get(n)?.value;
-    return z ? exactToFloat(z) : undefined;
+    const big = isMarkedExactInt(n) ? provenInteger(n) : undefined;
+    const v = memo.get(n) ?? cache.get(n)?.value ?? (big !== undefined ? z(big.toString(), 0) : undefined);
+    return v ? exactToFloat(v) : undefined;
   });
   // A pole is a pole in both engines, including when the gates produced NaN.
   if (flag === SINGULAR_POLE) singular = flag;
