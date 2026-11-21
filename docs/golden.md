@@ -11,9 +11,10 @@ For a fixed corpus of expressions, the harness records:
 - **Float-mode display text**: The result shown in float mode
 - **Float flags**: `differs-from-exact`, `underflowed`, `overflowed`, `near-cut`, `unverified`
 - **Press/RPN count**: The button-press length of the compiled program
-- **Pack/unpack round-trip**: Whether `packCircuit` → `unpackCircuit` preserves the exact result
+- **Pack/unpack round-trip**: Whether `packCircuit` → `unpackCircuit` preserves the exact text, the singular flag, and the unverified flag
+- **Second evaluation** (wire file only): the same child evaluates the unpacked node twice. `eval2` is that repeat
 
-The output is deterministic (no timings), sorted, and stored line-by-line for readable diffs.
+The output is deterministic (no timings, no generated timestamp), sorted, and stored line-by-line. The `# rows:` header is the expression count. `.gitattributes` forces LF for the golden files so a Windows checkout does not fail every row.
 
 ## How to run it
 
@@ -26,8 +27,8 @@ npm run eml:golden -- --wire    # Fresh-process wire mode
 
 Compares the current output against the checked-in golden files. Exits with code 0 if they match, code 1 with a readable diff if they differ.
 
-- **In-process mode** (`golden.txt`): Evaluates with same-process `packCircuit` → `unpackCircuit` round-trip
-- **Wire mode** (`golden-wire.txt`): Packs in parent, evaluates in fresh child process (batched for efficiency)
+- **In-process mode** (`golden.txt`): Evaluates here, then round-trips `packCircuit` → `unpackCircuit` in the same process (200k node budget)
+- **Wire mode** (`golden-wire.txt`): Packs here and sends the circuit to a new Node process per row, using `v8.serialize` (signed zero and NaN survive; JSON would not). The child unpacks and reports through `reportUnpacked`, the same path as `exact.worker.ts`, at the worker's 80k node budget. It evaluates that node twice and records both screens. A shared child is not used: an earlier row can raise working precision and make a later `cos(1e100)` or `sin(1e22)` look certified instead of `argument too large to reduce`
 
 ### Regenerate golden output
 
@@ -36,7 +37,7 @@ npm run eml:golden -- --update              # In-process mode
 npm run eml:golden -- --update --wire       # Wire mode
 ```
 
-Evaluates the corpus and writes new golden files. Use this when you've made an intentional behavior change.
+Evaluates the corpus and writes new golden files. Use this when you've made an intentional behavior change. `--update` refuses to run when `CI` is set, so a workflow cannot rewrite the file.
 
 ### Include heavy test cases
 
@@ -75,7 +76,7 @@ Do not merge a PR that changes golden output without documenting every change.
 Lines marked with `# KNOWN-BUG <id>` document current wrong outputs. When you fix one:
 
 1. Run `npm run eml:golden` to see the diff
-2. Update `lib/eml/golden/harness.ts` to remove the bug from the `knownBugs` map
+2. Update the `BUGS` map in `lib/eml/golden/harness.ts`
 3. Run `npm run eml:golden -- --update` to regenerate without the annotation
 4. Document the fix in your PR description
 
@@ -83,17 +84,17 @@ Current known bugs:
 
 - **v1.1-complex-half**: `6.103e-120*i+6.103e-120*i` shows half the sum in exact mode (no flag)
 - **A1-real-drop**: `(i*(1+10^(-124))-i)*i+i*10^10/3` drops its real part
-- **wire-real-drop** (severity-1, owned by bigfixer): Three expressions lose their tiny real part when added to a much larger imaginary part:
-  - `((1+10^(-130))-1)+i/2` → wrongly certified as `0.5i` (missing ~1e-130 real)
-  - `((1+10^(-130))-1)+i*(1+10^(-130))/2` → wrongly certified as `0.5i` (missing ~1e-130 real)
-  - `((1+10^(-136))-1)+i*3/2` → wrongly certified as `1.5i` (missing ~1e-136 real)
-  
-  **Diagnostic**: The bug manifests in ALL three evaluation paths:
-  - (a) Direct evaluation of parsed node: **WRONG** (certified 0.5i / 1.5i)
-  - (b) Same-process pack → unpack → evaluate: **WRONG** (certified 0.5i / 1.5i)
-  - (c) Fresh-process wire (child process): **WRONG** (certified 0.5i / 1.5i)
-  
-  The `((1+10^(-k))-1)` subexpression correctly evaluates to `1×10^-k` in isolation, but when added to `i/2` or `i*3/2`, the tiny real part is dropped during the addition. This is NOT a wire-specific bug - it's in the core addition logic when combining a tiny real with a much larger imaginary component. Both in-process and wire-mode golden files record the wrong output.
+- **wire-real-drop** (severity-1, owned by bigfixer). Direct evaluation, the same-process round trip, and a fresh child all certify these with the real part gone:
+  - `((1+10^(-130))-1)+i/2` and `((1+10^(-130))-1)+i*(1+10^(-130))/2` drop a real part near 1e-130 and show `0.5i`
+  - `((1+10^(-136))-1)+i*3/2` drops a real part near 1e-136 and shows `1.5i`
+- **folded-zero**: `sinh(1e-7)-1e-7` and `artanh(1e-7)-1e-7` are certified `0`
+- **roundtrip**: `6*i+(-6*i)` changes text across pack/unpack. `1-cos(sqrt(1/10^130))` does too, and its second evaluation in the same process is a certified `0` (`roundtrip+cache-second`)
+- **cache-second**: a fresh child reports `argument too large to reduce` for `cos(1e100)` and `sin(1e22)`. The repeat in that same child certifies the number. The first column is the fresh result
+- **residue-stable**: `1e-100*1.5/1.5-1e-100` and `1e-50*1.5/1.5-1e-50` are exact 0 and are certified as a nonzero residue. `1e-500*e/e-1e-500` is unverified, which is an accepted outcome, so it is not tagged
+- **inf-finite**: `inf+1`, `ln(0)-1`, `ln(0)+i`, `(inf*i)/2`, and `ln(ln(0)*i)` are certified wrong infinities. `ln(0)+0` stays `−∞` and is not tagged
+- **jimmy1**: `1e-320*(1+1e-100)-1e-320` (certified residue; the value is 1e-420), `exp(ln(ln(0))*i)`, and `exp(800)-exp(800)` (certified `−∞`; the value is 0)
+
+`-5e-801`, `1e-500`, `exp(-1200)`, `1e-400*(1+1e-100)-1e-400`, `1e-400*pi+1e-400`, `exp(-1000)-exp(-1001)`, and both `−1×10^−450` forms (`1e-400-1e-400*(1+1e-50)` and `(1e-400)*3/3-(1e-400)*(1+1e-50)`) are recorded as they are today. `(1+1e-20*i)-1` exercises the exact-zero sibling check in `residueParts` (`exact.ts`). `sqrt(-0)` is the signed-zero wire row.
 
 ## How to add test cases
 
@@ -108,29 +109,17 @@ Edit `lib/eml/golden/corpus.ts`:
    - `precisionCases`: High-precision or series-shortcut cases
    - `heavyCorpus`: Slow cases (not run in CI)
 
-2. Run `npm run eml:golden -- --update` to regenerate
+2. Run `npm run eml:golden -- --update` and, when the row is wire-sensitive, `npm run eml:golden -- --update --wire`
 
-3. Commit the corpus change and the updated golden output together
+3. Commit the corpus change and both golden files together. Explain every changed line in the PR
 
 ## Corpus
 
-The corpus includes:
+The list lives in `lib/eml/golden/corpus.ts`. `getAllCorpus` drops duplicate expressions, and the comparer rejects a golden file that still has a duplicate key or a line it cannot parse. `npm run eml:golden -- --self-test` checks that editing a row, deleting a row, repeating a key, and writing a garbage line all fail. The expression count is the `# rows:` line in the golden file.
 
-- **Basic**: `1+1`, `pi`, `e`, `i`, arithmetic
-- **Cancellations**: `((1+10^(-k))-1)+i*c` and `(i*(1+10^(-k))-i)*i+i*c` for k ∈ {110,124,126,128,130,132,136} and c ∈ {1/2, 1/3, 3/2, -1/2, 10^10/3}
-- **Transcendental edges**: `ln(1+10^-130)`, `tan(1e100)`, `cos(1e7)`, `sin(1e22)`, `sinh(1e-7)-1e-7`, etc.
-- **Complex edges**: `6.103e-120*i+6.103e-120*i`, `0.00005*i+0.00005*i`
-- **Infinities**: `ln(0)^2`, `(ln(0)*i)^3`
-- **Poles**: `tan(pi/2)`, `1/0`, `ln(0)`
-- **Precision**: `exp(1e-432)-1`, `tan(10^(-5000))`
+## Cache check
 
-Total: 152 expressions (standard corpus, < 2 minutes runtime)
-
-## Cache consistency
-
-The harness also checks COLD vs WARM cache consistency for a sample of expressions. This detects bugs like the v1.1 cache issue with `ln(1+10^-130)` (where loading the 671-press word could show exact 0 depending on cache state).
-
-Known cache issues are logged but do not fail the harness (they're tracked separately for v1.1 fixes).
+`EML_NOCACHE` is read once, when `exact.ts` loads. The harness starts a child with that variable already set and evaluates `1+1`, `sqrt(-0)`, and `1-cos(sqrt(1/10^130))` twice each. With the flag on, the repeat matches the first result. Without it, the repeat of `1-cos(sqrt(1/10^130))` is a certified `0`. A child that did not see the variable fails the run.
 
 ## CI integration
 

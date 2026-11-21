@@ -1,547 +1,238 @@
 #!/usr/bin/env tsx
 /**
- * Golden output parity harness for EML and One.
- * 
- * This script evaluates a fixed corpus of expressions and records:
- * - Exact-mode display text
- * - Certification flags/notes (certified, not-certified, differs-from-float,
- *   singular/precision notes, series-shortcut 'lead' marks)
- * - Float-mode display text
- * - Press/RPN word or press count
- * - packCircuit→unpackCircuit round-trip verification
- * 
- * The output is deterministic (no timings) and stored in a stable,
- * sorted format for readable diffs.
- * 
- * Modes:
- * - Default: in-process evaluation with same-process pack/unpack round-trip
- * - --wire: fresh-process wire mode (pack in parent, unpack+evaluate in child)
+ * Golden output parity harness.
+ *
+ *   npm run eml:golden                 compare in-process golden.txt
+ *   npm run eml:golden -- --wire       compare fresh-process golden-wire.txt
+ *   npm run eml:golden -- --update     rewrite the file for the selected mode
+ *   npm run eml:golden -- --self-test  parser checks only
+ *
+ * --wire packs each expression in this process and evaluates it in its own
+ * child. The child unpacks through the exact worker's path, evaluates twice,
+ * and the second screen is the eval2 column. Children are spawned one at a
+ * time so a row cannot warm the next row's cache.
  */
-
-import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { getAllCorpus, heavyCorpus } from "./corpus";
+import { deserialize, serialize } from "node:v8";
+import { fileURLToPath } from "node:url";
 import { compileExpression } from "../parse";
-import { exactReport, formatExact, exactToFloat } from "../exact";
-import { evaluateReport } from "../node";
-import { packCircuit, unpackCircuit, type Wire } from "../wire";
-import { seriesShortcutNote } from "../library";
-import { pressPreviewForNode } from "../presses";
-import { formatC } from "../format";
+import { packCircuit, unpackCircuit } from "../wire";
+import { getAllCorpus, heavyCorpus } from "./corpus";
+import { compareGolden, formatGolden, type GoldenEntry, type GoldenMode } from "./compare";
+import { screenNode, type Screen } from "./screen";
+import { runGoldenSelfTest } from "./self-test";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const goldenPath = path.join(repoRoot, "lib/eml/golden/golden.txt");
 const goldenWirePath = path.join(repoRoot, "lib/eml/golden/golden-wire.txt");
 const wireChildScript = path.join(repoRoot, "scripts/wire-eval-child.ts");
+const uncachedScript = path.join(repoRoot, "scripts/golden-uncached-child.ts");
 const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
+const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
 
-interface GoldenEntry {
-  source: string;
-  exactText: string;
-  exactNotes: string[];
-  floatText: string;
-  floatNotes: string[];
-  pressCount: string;
-  roundTripOk: boolean;
-  roundTripError?: string;
+/** In-process budget. The wire child uses the worker's 80_000. */
+const IN_PROCESS_BUDGET = 200_000;
+
+const BUGS: Record<string, string> = {
+  "6.103e-120*i+6.103e-120*i": "v1.1-complex-half: exact mode shows half the sum",
+  "(i*(1+10^(-124))-i)*i+i*10^10/3": "A1-real-drop: real part dropped",
+  "((1+10^(-130))-1)+i/2": "wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer",
+  "((1+10^(-130))-1)+i*(1+10^(-130))/2": "wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer",
+  "((1+10^(-136))-1)+i*3/2": "wire-real-drop: real part ~1e-136 dropped; fix owned by bigfixer",
+  "sinh(1e-7)-1e-7": "folded-zero: certified 0",
+  "artanh(1e-7)-1e-7": "folded-zero: certified 0",
+  "1-cos(sqrt(1/10^130))": "roundtrip+cache-second: pack/unpack text mismatch, and a repeat eval certifies 0",
+  "cos(1e100)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "sin(1e22)": "cache-second: fresh eval is argument too large; the repeat certifies it",
+  "6*i+(-6*i)": "roundtrip: pack/unpack text mismatch",
+  "1e-100*1.5/1.5-1e-100": "residue-stable: certified nonzero residue of an exact 0",
+  "1e-50*1.5/1.5-1e-50": "residue-stable: certified nonzero residue of an exact 0",
+  "inf+1": "inf-finite: certified wrong infinity",
+  "ln(0)-1": "inf-finite: certified wrong infinity",
+  "ln(0)+i": "inf-finite: certified wrong infinity",
+  "(inf*i)/2": "inf-finite: certified wrong infinity",
+  "ln(ln(0)*i)": "inf-finite: certified wrong infinity",
+  "1e-320*(1+1e-100)-1e-320": "jimmy1: certified residue, true value is 1e-420",
+  "exp(ln(ln(0))*i)": "jimmy1: certified wrong infinity",
+  "exp(800)-exp(800)": "jimmy1: certified −∞, true value is 0",
+};
+
+function entryFrom(source: string, screen: Screen, roundTrip: string, second?: Screen): GoldenEntry {
+  return {
+    source,
+    exactText: screen.exactText,
+    exactNotes: screen.exactNotes,
+    floatText: screen.floatText,
+    floatNotes: screen.floatNotes,
+    pressCount: screen.pressCount,
+    roundTrip,
+    eval2Text: second?.exactText,
+    eval2Notes: second?.exactNotes,
+    bug: BUGS[source],
+  };
 }
 
-function evaluateExpression(source: string, useCache: boolean): GoldenEntry {
-  // Disable cache if requested
-  const originalCache = process.env.EML_NOCACHE;
-  if (!useCache) {
-    process.env.EML_NOCACHE = "1";
-  }
-  
+function evaluateExpression(source: string): GoldenEntry {
+  const node = compileExpression(source, {});
+  const screen = screenNode(node, IN_PROCESS_BUDGET);
+  let roundTrip = "OK";
   try {
-    const node = compileExpression(source, {});
-    const budget = { maxNodes: 200_000 };
-    
-    // Exact mode evaluation
-    const exactRep = exactReport(node, {}, budget);
-    const exactNotes: string[] = [];
-    
-    let exactText = "";
-    if (exactRep.unverified) {
-      exactText = "—";
-      exactNotes.push("couldn't verify");
-    } else if (exactRep.singular !== null) {
-      exactText = formatExact(exactRep.value).replace(/\u200b/g, "");
-      exactNotes.push(`singular:${exactRep.singular}`);
-    } else {
-      exactText = formatExact(exactRep.value).replace(/\u200b/g, "");
-      exactNotes.push("certified");
-    }
-    
-    if (exactRep.touchedLn0) {
-      exactNotes.push("ln0");
-    }
-    
-    // Check for series shortcut
-    const shortcut = seriesShortcutNote(node);
-    if (shortcut) {
-      exactNotes.push("series-shortcut");
-    }
-    
-    // Float mode evaluation
-    const floatRep = evaluateReport(node, {}, budget);
-    const floatNotes: string[] = [];
-    
-    let floatText = "";
-    if (floatRep.unverified) {
-      floatText = "—";
-      floatNotes.push("unverified");
-    } else {
-      floatText = formatC({ re: floatRep.value.re, im: floatRep.value.im });
-    }
-    
-    if (floatRep.singular !== null) {
-      floatNotes.push(`singular:${floatRep.singular}`);
-    }
-    if (floatRep.touchedLn0) {
-      floatNotes.push("ln0");
-    }
-    if (floatRep.overflowed) {
-      floatNotes.push("overflowed");
-    }
-    if (floatRep.underflowed) {
-      floatNotes.push("underflowed");
-    }
-    if (floatRep.nearCut) {
-      floatNotes.push("near-cut");
-    }
-    
-    // Check if float differs from exact
-    if (!exactRep.unverified && !floatRep.unverified) {
-      const exactFloat = exactToFloat(exactRep.value);
-      const reDiff = Math.abs(exactFloat.re - floatRep.value.re);
-      const imDiff = Math.abs(exactFloat.im - floatRep.value.im);
-      const reScale = Math.max(Math.abs(exactFloat.re), Math.abs(floatRep.value.re), 1e-320);
-      const imScale = Math.max(Math.abs(exactFloat.im), Math.abs(floatRep.value.im), 1e-320);
-      
-      if (reDiff / reScale > 5e-12 || imDiff / imScale > 5e-12) {
-        floatNotes.push("differs-from-exact");
-      }
-    }
-    
-    // Press count
-    const press = pressPreviewForNode(node);
-    const pressCount = press 
-      ? (press.truncated ? `${press.presses.toString()}+` : press.presses.toString())
-      : "N/A";
-    
-    // Round-trip test: packCircuit → unpackCircuit
-    let roundTripOk = true;
-    let roundTripError: string | undefined;
-    
-    try {
-      const packed = packCircuit(node);
-      const unpacked = unpackCircuit(packed.tokens, packed.root);
-      
-      // Evaluate unpacked and compare
-      const unpackedExact = exactReport(unpacked, {}, budget);
-      
-      // Compare results
-      if (exactRep.unverified && !unpackedExact.unverified) {
-        roundTripOk = false;
-        roundTripError = "unverified→verified";
-      } else if (!exactRep.unverified && unpackedExact.unverified) {
-        roundTripOk = false;
-        roundTripError = "verified→unverified";
-      } else if (!exactRep.unverified && !unpackedExact.unverified) {
-        const originalText = formatExact(exactRep.value);
-        const unpackedText = formatExact(unpackedExact.value);
-        if (originalText !== unpackedText) {
-          roundTripOk = false;
-          roundTripError = `text-mismatch`;
-        }
-      }
-    } catch (err) {
-      roundTripOk = false;
-      roundTripError = err instanceof Error ? err.message : String(err);
-    }
-    
-    return {
-      source,
-      exactText,
-      exactNotes,
-      floatText,
-      floatNotes,
-      pressCount,
-      roundTripOk,
-      roundTripError,
-    };
-  } finally {
-    // Restore original cache setting
-    if (originalCache !== undefined) {
-      process.env.EML_NOCACHE = originalCache;
-    } else {
-      delete process.env.EML_NOCACHE;
-    }
+    const packed = packCircuit(node);
+    const again = screenNode(unpackCircuit(packed.tokens, packed.root), IN_PROCESS_BUDGET);
+    const why: string[] = [];
+    if (screen.exactText !== again.exactText) why.push("text-mismatch");
+    if (screen.singular !== again.singular) why.push("singular-mismatch");
+    if (screen.unverified !== again.unverified) why.push("unverified-mismatch");
+    if (why.length) roundTrip = `FAIL:${why.join("+")}`;
+  } catch (err) {
+    roundTrip = `FAIL:${err instanceof Error ? err.message : String(err)}`;
   }
+  return entryFrom(source, screen, roundTrip);
 }
 
-interface WireJob {
-  source: string;
-  tokens: Wire[];
-  root: number;
+function bundleWireChild(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "eml-wire-"));
+  const outfile = path.join(dir, "wire-child.cjs");
+  const built = spawnSync(
+    esbuildBin,
+    [wireChildScript, "--bundle", "--platform=node", "--format=cjs", `--outfile=${outfile}`],
+    { encoding: "utf8" },
+  );
+  if (built.status !== 0) {
+    throw new Error(built.stderr || built.stdout || "esbuild failed");
+  }
+  return outfile;
 }
 
-interface WireResult {
-  source: string;
-  exactText: string;
-  exactNotes: string[];
-  floatText: string;
-  floatNotes: string[];
-  pressCount: string;
-  error?: string;
-}
-
-/**
- * Evaluate expressions via fresh-process wire (packCircuit in parent,
- * unpackCircuit + evaluate in child). Batches expressions for efficiency.
- */
 function evaluateViaWire(sources: string[]): Map<string, GoldenEntry> {
+  const childPath = bundleWireChild();
   const results = new Map<string, GoldenEntry>();
-  
-  // Pack all circuits in parent process
-  const jobs: WireJob[] = [];
   for (const source of sources) {
     try {
       const node = compileExpression(source, {});
       const packed = packCircuit(node);
-      jobs.push({
-        source,
-        tokens: packed.tokens,
-        root: packed.root,
+      const child = spawnSync(process.execPath, [childPath], {
+        input: serialize({ tokens: packed.tokens, root: packed.root }),
+        timeout: 180_000,
+        maxBuffer: 32 * 1024 * 1024,
       });
+      if (child.status !== 0) {
+        throw new Error(child.stderr.toString().trim() || `wire child exited ${child.status}`);
+      }
+      const body = deserialize(child.stdout) as { first: Screen; second: Screen };
+      results.set(source, entryFrom(source, body.first, "OK", body.second));
     } catch (err) {
-      results.set(source, {
-        source,
-        exactText: "ERROR",
-        exactNotes: [err instanceof Error ? err.message : String(err)],
-        floatText: "ERROR",
-        floatNotes: [],
-        pressCount: "?",
-        roundTripOk: false,
-        roundTripError: "pack-error",
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`wire ${source}: ${message}`);
     }
   }
-  
-  if (jobs.length === 0) return results;
-  
-  // Send to child process for evaluation
-  const childResult = spawnSync(
-    process.execPath,
-    [tsxCli, wireChildScript],
-    {
-      input: JSON.stringify(jobs),
-      encoding: "utf8",
-      timeout: 180_000,
-      maxBuffer: 50 * 1024 * 1024,
-    }
-  );
-  
-  if (childResult.status !== 0) {
-    console.error("Wire child process failed:", childResult.stderr);
-    // Mark all as errors
-    for (const job of jobs) {
-      if (!results.has(job.source)) {
-        results.set(job.source, {
-          source: job.source,
-          exactText: "ERROR",
-          exactNotes: ["wire-child-failed"],
-          floatText: "ERROR",
-          floatNotes: [],
-          pressCount: "?",
-          roundTripOk: false,
-          roundTripError: "wire-child-failed",
-        });
-      }
-    }
-    return results;
-  }
-  
-  try {
-    const wireResults: WireResult[] = JSON.parse(childResult.stdout);
-    for (const wr of wireResults) {
-      results.set(wr.source, {
-        source: wr.source,
-        exactText: wr.exactText,
-        exactNotes: wr.exactNotes,
-        floatText: wr.floatText,
-        floatNotes: wr.floatNotes,
-        pressCount: wr.pressCount,
-        roundTripOk: !wr.error,
-        roundTripError: wr.error,
-      });
-    }
-  } catch (err) {
-    console.error("Failed to parse wire results:", err);
-  }
-  
   return results;
-}
-
-function formatGoldenEntry(entry: GoldenEntry, knownBugs: Map<string, string>): string {
-  const parts: string[] = [];
-  
-  parts.push(`expr: ${entry.source}`);
-  parts.push(`exact: ${entry.exactText}`);
-  parts.push(`exact-notes: ${entry.exactNotes.join(",")}`);
-  parts.push(`float: ${entry.floatText}`);
-  parts.push(`float-notes: ${entry.floatNotes.join(",")}`);
-  parts.push(`press: ${entry.pressCount}`);
-  parts.push(`round-trip: ${entry.roundTripOk ? "OK" : `FAIL:${entry.roundTripError}`}`);
-  
-  const bugId = knownBugs.get(entry.source);
-  if (bugId) {
-    let bugNote = `# KNOWN-BUG ${bugId}`;
-    if (bugId === "wire-real-drop") {
-      // Different precision for different expressions
-      if (entry.source.includes("10^(-136)")) {
-        bugNote += ": real part ~1e-136 dropped; fix owned by bigfixer";
-      } else {
-        bugNote += ": real part ~1e-130 dropped; fix owned by bigfixer";
-      }
-    }
-    parts.push(bugNote);
-  }
-  
-  return parts.join(" | ");
-}
-
-function parseGoldenFile(content: string): Map<string, string> {
-  const lines = content.split("\n").filter(line => line.trim() && !line.startsWith("#"));
-  const map = new Map<string, string>();
-  
-  for (const line of lines) {
-    const match = line.match(/^expr: (.+?) \|/);
-    if (match) {
-      map.set(match[1], line);
-    }
-  }
-  
-  return map;
 }
 
 function generateGolden(includeHeavy: boolean, wireMode: boolean): string {
   const corpus = includeHeavy ? [...getAllCorpus(), ...heavyCorpus] : getAllCorpus();
-  
-  // Known bugs (from docs/known-limitations.md and task description)
-  const knownBugs = new Map<string, string>();
-  knownBugs.set("6.103e-120*i+6.103e-120*i", "v1.1-complex-half");
-  knownBugs.set("(i*(1+10^(-124))-i)*i+i*10^10/3", "A1-real-drop");
-  // Wire-mode bugs: real part ~1e-130 dropped over wire (owned by bigfixer)
-  knownBugs.set("((1+10^(-130))-1)+i/2", "wire-real-drop");
-  knownBugs.set("((1+10^(-130))-1)+i*(1+10^(-130))/2", "wire-real-drop");
-  knownBugs.set("((1+10^(-136))-1)+i*3/2", "wire-real-drop");
-  
-  // Evaluate all expressions
-  console.log(`Evaluating ${corpus.length} expressions...`);
+  const mode: GoldenMode = wireMode ? "fresh-process" : "in-process";
+  console.log(`Evaluating ${corpus.length} expressions (${mode})...`);
   const entries: GoldenEntry[] = [];
-  
   if (wireMode) {
-    console.log("Using fresh-process wire mode (batched)...");
-    const wireResults = evaluateViaWire(corpus);
+    const wired = evaluateViaWire(corpus);
     for (const source of corpus) {
-      const entry = wireResults.get(source);
-      if (entry) {
-        entries.push(entry);
-      } else {
-        entries.push({
-          source,
-          exactText: "ERROR",
-          exactNotes: ["missing-wire-result"],
-          floatText: "ERROR",
-          floatNotes: [],
-          pressCount: "?",
-          roundTripOk: false,
-          roundTripError: "missing-wire-result",
-        });
-      }
+      const entry = wired.get(source);
+      if (!entry) throw new Error(`missing wire result for ${source}`);
+      entries.push(entry);
     }
   } else {
-    for (const source of corpus) {
-      try {
-        const entry = evaluateExpression(source, true);
-        entries.push(entry);
-      } catch (err: unknown) {
-        console.error(`Error evaluating ${source}:`, err);
-        entries.push({
-          source,
-          exactText: "ERROR",
-          exactNotes: [err instanceof Error ? err.message : String(err)],
-          floatText: "ERROR",
-          floatNotes: [],
-          pressCount: "?",
-          roundTripOk: false,
-          roundTripError: "evaluation-error",
-        });
-      }
-    }
+    for (const source of corpus) entries.push(evaluateExpression(source));
   }
-  
-  // Sort by source for stable output
   entries.sort((a, b) => a.source.localeCompare(b.source));
-  
-  // Format output
-  const lines: string[] = [];
-  lines.push("# EML and One Golden Output");
-  lines.push(`# Mode: ${wireMode ? "fresh-process wire" : "in-process"}`);
-  lines.push(`# Generated: ${new Date().toISOString()}`);
-  lines.push(`# Corpus size: ${entries.length}`);
-  lines.push("");
-  
+  const seen = new Set<string>();
   for (const entry of entries) {
-    lines.push(formatGoldenEntry(entry, knownBugs));
+    if (seen.has(entry.source)) throw new Error(`duplicate corpus key: ${entry.source}`);
+    seen.add(entry.source);
   }
-  
-  return lines.join("\n") + "\n";
+  return formatGolden(mode, entries);
 }
 
-function checkCacheConsistency(): { ok: boolean; issues: string[] } {
-  console.log("Checking cache consistency (COLD vs WARM)...");
-  const issues: string[] = [];
-  const corpus = getAllCorpus().slice(0, 50); // Sample for cache check
-  
-  // COLD run (with cache disabled)
-  const coldResults = new Map<string, string>();
-  for (const source of corpus) {
-    try {
-      const entry = evaluateExpression(source, false);
-      coldResults.set(source, entry.exactText);
-    } catch {
-      coldResults.set(source, "ERROR");
-    }
+/**
+ * EML_NOCACHE is read when exact.ts loads. A child started with the variable
+ * already set is the check that the flag is real: the cached repeat of
+ * 1-cos(sqrt(1/10^130)) certifies 0, and the uncached repeat must not.
+ */
+function checkUncached(): void {
+  const sources = ["1+1", "sqrt(-0)", "1-cos(sqrt(1/10^130))"];
+  const child = spawnSync(process.execPath, [tsxCli, uncachedScript], {
+    input: JSON.stringify(sources),
+    encoding: "utf8",
+    timeout: 180_000,
+    env: { ...process.env, EML_NOCACHE: "1" },
+  });
+  if (child.status !== 0) {
+    console.error(child.stderr);
+    throw new Error("uncached child failed");
   }
-  
-  // WARM run (with cache enabled, twice)
-  for (let pass = 1; pass <= 2; pass++) {
-    for (const source of corpus) {
-      try {
-        const entry = evaluateExpression(source, true);
-        const cold = coldResults.get(source);
-        
-        if (entry.exactText !== cold) {
-          const issue = `CACHE-MISMATCH [pass${pass}]: ${source} | cold=${cold} warm=${entry.exactText}`;
-          if (!issues.includes(issue)) {
-            issues.push(issue);
-          }
-        }
-      } catch {
-        // Skip errors in warm run
-      }
-    }
+  const body = JSON.parse(child.stdout) as {
+    nocache: string;
+    rows: { source: string; first: string; second: string }[];
+  };
+  if (body.nocache !== "1") {
+    throw new Error("EML_NOCACHE was not set in the child that loads exact.ts");
   }
-  
-  return { ok: issues.length === 0, issues };
+  for (const row of body.rows) {
+    if (row.first !== row.second) {
+      throw new Error(`EML_NOCACHE did not keep ${row.source} stable: ${row.first} then ${row.second}`);
+    }
+    console.log(`uncached ${row.source}: ${row.first}`);
+  }
 }
 
 function main() {
   const args = process.argv.slice(2);
+  runGoldenSelfTest();
+  console.log("self-test passed");
+  if (args.includes("--self-test")) return;
+
   const isUpdate = args.includes("--update");
   const isHeavy = args.includes("--heavy");
   const isWire = args.includes("--wire");
-  
-  const targetPath = isWire ? goldenWirePath : goldenPath;
-  const modeName = isWire ? "wire mode" : "in-process mode";
-  
-  if (isUpdate) {
-    console.log(`Regenerating golden output (${modeName})...`);
-    const content = generateGolden(isHeavy, isWire);
-    writeFileSync(targetPath, content, "utf-8");
-    console.log(`Golden output written to ${targetPath}`);
-    
-    // Also run cache check on update
-    const cacheCheck = checkCacheConsistency();
-    if (!cacheCheck.ok) {
-      console.error("\nCache consistency issues found:");
-      for (const issue of cacheCheck.issues) {
-        console.error(`  KNOWN: ${issue}`);
-      }
-      console.log("\nThese are known issues (v1.1 fixes planned).");
-    } else {
-      console.log("\nCache consistency: OK");
-    }
-    
-    process.exit(0);
-  }
-  
-  // Compare mode
-  console.log(`Comparing against golden output (${modeName})...`);
-  
-  let existingContent: string;
-  try {
-    existingContent = readFileSync(targetPath, "utf-8");
-  } catch {
-    console.error(`Could not read ${targetPath}`);
-    console.error("Run with --update to generate the golden output.");
+  if (isUpdate && process.env.CI) {
+    console.error("refusing --update because CI is set");
     process.exit(1);
   }
-  
-  const newContent = generateGolden(isHeavy, isWire);
-  
-  if (newContent === existingContent) {
-    console.log("✓ Golden output matches!");
-    
-    // Run cache check
-    const cacheCheck = checkCacheConsistency();
-    if (!cacheCheck.ok) {
-      console.log("\nCache consistency issues (KNOWN, v1.1):");
-      for (const issue of cacheCheck.issues) {
-        console.log(`  ${issue}`);
-      }
-    } else {
-      console.log("✓ Cache consistency OK");
-    }
-    
-    process.exit(0);
+
+  const targetPath = isWire ? goldenWirePath : goldenPath;
+  const generated = generateGolden(isHeavy, isWire);
+  if (isUpdate) {
+    writeFileSync(targetPath, generated, "utf8");
+    console.log(`wrote ${targetPath}`);
+    checkUncached();
+    return;
   }
-  
-  // Show diff
-  const existing = parseGoldenFile(existingContent);
-  const current = parseGoldenFile(newContent);
-  
-  let diffCount = 0;
-  
-  // Check for changed expressions
-  for (const [source, newLine] of current.entries()) {
-    const oldLine = existing.get(source);
-    if (!oldLine) {
-      console.log(`+ NEW: ${source}`);
-      console.log(`  ${newLine}`);
-      diffCount++;
-    } else if (oldLine !== newLine) {
-      console.log(`~ CHANGED: ${source}`);
-      console.log(`  - ${oldLine}`);
-      console.log(`  + ${newLine}`);
-      diffCount++;
-    }
+
+  let existing = "";
+  try {
+    existing = readFileSync(targetPath, "utf8");
+  } catch {
+    console.error(`Could not read ${targetPath}`);
+    console.error("Run with --update to generate it.");
+    process.exit(1);
   }
-  
-  // Check for removed expressions
-  for (const source of existing.keys()) {
-    if (!current.has(source)) {
-      console.log(`- REMOVED: ${source}`);
-      diffCount++;
-    }
+  const messages = compareGolden(existing, generated);
+  if (messages.length) {
+    for (const message of messages) console.log(message);
+    console.log(`\n${messages.length} difference(s).`);
+    console.log("Run with --update to regenerate. Every changed line needs a reason in the PR.");
+    process.exit(1);
   }
-  
-  console.log(`\n${diffCount} difference(s) found.`);
-  
-  if (diffCount === 0) {
-    console.log("✓ Golden output matches!");
-    process.exit(0);
-  }
-  
-  console.log("\nRun with --update to regenerate the golden output.");
-  console.log("Note: Every changed line must be explained in the PR description.");
-  
-  process.exit(1);
+  console.log("golden output matches");
+  checkUncached();
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  console.error(err instanceof Error ? err.message : err);
+  process.exit(1);
+}

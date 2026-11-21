@@ -48,7 +48,6 @@ export const transcendentalEdgeCases = [
   // ln edge cases
   "ln(1+10^-130)",
   "ln(1+3*10^(-130))",
-  "ln(0)",
   "ln(-1)",
   "ln(-2-10^(-20)*i)",
   "ln(-2-10^(-110)*i)",
@@ -59,8 +58,6 @@ export const transcendentalEdgeCases = [
   // tan edge cases
   "tan(1e100)",
   "tan(1e22)",
-  "tan(pi/2)",
-  "tan(3*pi/2)",
   "tan(10^(-20))",
   "tan(10^(-40))",
   "tan(1e-5000)",
@@ -172,8 +169,41 @@ export const packUnpackCases = [
 /**
  * Get all corpus expressions
  */
+/**
+ * Rows from the open exact-zero (#38) and infinity (#39) releases, plus the
+ * severity-1 repros. `(1+1e-20*i)-1` is the exact-zero sibling at exact.ts
+ * residueParts: its real part is 0, its imaginary part is ~1e-20, and that
+ * sibling sits under 10^(work-12). `sqrt(-0)` is the signed-zero wire row.
+ */
+export const releaseRows = [
+  "-5e-801",
+  "1e-100*1.5/1.5-1e-100",
+  "1e-50*1.5/1.5-1e-50",
+  "1e-500*e/e-1e-500",
+  "1e-500",
+  "exp(-1200)",
+  "1e-400*(1+1e-100)-1e-400",
+  "1e-400*pi+1e-400",
+  "exp(-1000)-exp(-1001)",
+  "1e-400-1e-400*(1+1e-50)",
+  "(1e-400)*3/3-(1e-400)*(1+1e-50)",
+  "inf+1",
+  "ln(0)+0",
+  "ln(0)-1",
+  "ln(0)+i",
+  "(inf*i)/2",
+  "ln(ln(0)*i)",
+  "1e-320*(1+1e-100)-1e-320",
+  "exp(ln(ln(0))*i)",
+  "exp(800)-exp(800)",
+  "sqrt(-0)",
+  "(1+1e-20*i)-1",
+];
+
 export function getAllCorpus(): string[] {
-  return [
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const source of [
     ...basicExpressions,
     ...getCancellationCases(),
     ...transcendentalEdgeCases,
@@ -182,7 +212,13 @@ export function getAllCorpus(): string[] {
     ...poleCases,
     ...precisionCases,
     ...wireBugCases,
-  ];
+    ...releaseRows,
+  ]) {
+    if (seen.has(source)) continue;
+    seen.add(source);
+    out.push(source);
+  }
+  return out;
 }
 
 /**
