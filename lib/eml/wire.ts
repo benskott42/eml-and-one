@@ -1,4 +1,4 @@
-import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
 import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
@@ -21,6 +21,8 @@ export type Wire =
       dec?: number;
       lead?: 1;
       shell?: 1;
+      /** The add or sub gate between a 10^k lift and its drop; exact mode sizes its cancellation. */
+      lc?: 1;
       /** A past-cap power, or a sum of two float underflows. A vanished result is not certified. */
       cap?: 1;
       /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
@@ -104,6 +106,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     if (isTwoScaled(frame.n)) token.lift = 1;
     if (inScaledShell(frame.n)) token.shell = 1;
+    if (isLiftedCombine(frame.n)) token.lc = 1;
     if (isSeriesShortcut(frame.n)) token.lead = 1;
     if (isLostTiny(frame.n)) token.cap = 1;
     const decade = decadeOf(frame.n);
@@ -148,6 +151,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       }
       if (tok.lift) markTwoScaled(node);
       if (tok.shell) noteScaledShell(node);
+      if (tok.lc) noteLiftedCombine(node);
       if (tok.lead) markSeriesShortcut(node);
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);

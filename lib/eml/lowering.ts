@@ -1231,6 +1231,11 @@ export function isLiftedCombine(node: Node): boolean {
   return liftedCombines.has(node);
 }
 
+/** The worker rebuilds the circuit from the wire, so the mark travels with it. */
+export function noteLiftedCombine(node: Node): void {
+  liftedCombines.add(node);
+}
+
 /** (a·10^k − b·10^k) / 10^k. The short subtraction loses a difference near 10^(−20). */
 function scaledTinySub(a: Node, b: Node): Node | null {
   if (nearCut(rangeOf(a)) || nearCut(rangeOf(b))) return null;

@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Decimal from "decimal.js";
 import { exactReport, formatExact } from "./exact";
 import { compileExpression } from "./parse";
@@ -118,6 +121,46 @@ function certifyChecks(): number {
       console.log("FAIL certify kept", source, text, "want", want);
     } else {
       console.log("certify kept", source, text);
+    }
+  }
+  failed += freshChecks();
+  return failed;
+}
+
+/**
+ * The same rows in a process that never built the circuits, as the worker
+ * receives them: only what the wire carries (the lift marks included) survives.
+ */
+function freshChecks(): number {
+  let failed = 0;
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const sources = [...tinyRows.map(([source]) => source), ...refusedRows, ...keptRows.map(([source]) => source)];
+  const jobs = sources.map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const run = spawnSync(process.execPath, [path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), path.join(repoRoot, "scripts/fresh-exact.ts")], {
+    cwd: repoRoot,
+    input: JSON.stringify(jobs),
+    encoding: "utf8",
+    timeout: 600_000,
+  });
+  if (run.status !== 0) {
+    console.log("FAIL certify fresh", run.status, run.stderr);
+    return 1;
+  }
+  const rows = JSON.parse(run.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+  for (const row of rows) {
+    const tiny = tinyRows.find(([source]) => source === row.source);
+    const kept = keptRows.find(([source]) => source === row.source);
+    const text = row.unverified ? "unverified" : row.text.replace(/\u200b/g, "");
+    // A tiny row compares its 12 shown digits here; the in-process rows above compare 30.
+    const want = tiny ? formatExact({ re: new R(tiny[1]), im: new R(tiny[2]) }) : kept ? kept[1] : "unverified";
+    if (text !== want) {
+      failed += 1;
+      console.log("FAIL certify fresh", row.source, text, "want", want);
+    } else {
+      console.log("certify fresh", row.source, text);
     }
   }
   return failed;
