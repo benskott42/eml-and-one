@@ -13,7 +13,9 @@
     "eml:check:props": "tsx lib/eml/check.ts --shard=props",
     "count:e2e": "node scripts/count-e2e.mjs",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
-    "eml:golf": "tsx scripts/eml-golf-slow.ts"
+    "eml:golf": "tsx scripts/eml-golf-slow.ts",
+    "program-id:check": "tsx scripts/program-id-check.ts",
+    "load-bits:smoke": "tsx scripts/load-bits-smoke.tsx"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

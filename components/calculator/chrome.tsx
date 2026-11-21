@@ -37,7 +37,7 @@ export function PressLine({ node }: { node: Node | null }) {
         {view.preview} ({view.presses.toString()} presses)
       </p>
       <div className="ti-press-meta">
-        <span>1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</span>
+        <span>E = 1, the 1 key = 0. Within one length, a higher program number is a higher binary value. The program ID is these bits with a 1 in front.</span>
         {view.usesVariables ? <span>x and y stay in the string</span> : null}
         {view.copyable ? (
           <button
@@ -47,7 +47,7 @@ export function PressLine({ node }: { node: Node | null }) {
               void navigator.clipboard.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
             }}
           >
-            {copied ? "Copied" : "Copy"}
+            {copied ? "Copied bits" : "Copy bits"}
           </button>
         ) : null}
       </div>

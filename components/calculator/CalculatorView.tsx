@@ -9,6 +9,7 @@ import table from "@/lib/eml/best-known.json";
 import { programIndexDigits } from "@/lib/eml/programIndex";
 import { recordLine } from "@/lib/eml/recordLabel";
 import { CopyNumber, GolfPanel, KeyButton, PressLine } from "./chrome";
+import { ProgramIdPanel } from "./ProgramIdPanel";
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
@@ -29,7 +30,7 @@ export function CalculatorView(props: CalculatorModel) {
     mode, twoButtons, heldShortcut, setHeldShortcut, costs, expansions, writeTwoButtons,
     requestMode, cancelExact, pushOne, pushNode, pushScalar, applyEml, applyUnary, applyBinary,
     compute, swap, drop, undo, clearAll, loadProgramText, compilePressSource, clearPressCount,
-    pressCount, stepLoaded,
+    pressCount, stepLoaded, loadWord,
   } = props;
   const [pressText, setPressText] = useState("3+4");
   const buried = model.stack.slice(-4, -1);
@@ -170,10 +171,10 @@ export function CalculatorView(props: CalculatorModel) {
           )}
 
           <div className="ti-prime">
-            <KeyButton tone="one" secondary="const" onClick={pushOne} title="Push the constant 1. This is one press: 1" ariaLabel="Push the constant 1. This is one press: 1">
+            <KeyButton tone="one" secondary="const" onClick={pushOne} title="Push the constant 1. One press. The 1 key = 0." ariaLabel="Push the constant 1. One press. The 1 key = 0.">
               1
             </KeyButton>
-            <KeyButton tone="eml" secondary="exp − ln" onClick={applyEml} title="The EML key. One press, written 0. exp(x) − ln(y)" ariaLabel="The EML key. One press, written 0. exp(x) − ln(y)">
+            <KeyButton tone="eml" secondary="exp − ln" onClick={applyEml} title="The EML key. One press, written E, or 1 in bits. exp(x) − ln(y)" ariaLabel="The EML key. One press, written E, or 1 in bits. exp(x) − ln(y)">
               EML
             </KeyButton>
           </div>
@@ -267,16 +268,21 @@ export function CalculatorView(props: CalculatorModel) {
             }}
           >
             <label className="ti-label">
-              Program number (#110), presses, or a word of 1 and E
+              Program number (#1), bits (001), or a word of 1 and E
               <input
                 value={programField}
                 onChange={(event) => setProgramField(event.target.value)}
-                placeholder="#110, 110, or 11E"
+                placeholder="#1, 001, or 11E"
+                aria-describedby="load-bits-hint"
                 className="ti-field"
                 spellCheck={false}
                 autoComplete="off"
               />
             </label>
+            <p className="ti-caption" id="load-bits-hint">
+              Bits: E = 1, the 1 key = 0, so 11E is 001. Bits in the old convention (0 = EML) are read only
+              with old: in front, such as old:110.
+            </p>
             <div className="ti-form-row">
               <button type="button" onClick={() => stepLoaded(-1)} className="ti-text-btn">
                 Prev
@@ -289,6 +295,8 @@ export function CalculatorView(props: CalculatorModel) {
               </button>
             </div>
           </form>
+
+          <ProgramIdPanel node={top?.node} loadWord={loadWord} />
 
           <div className="ti-group">
             <h2>Constants from 1</h2>

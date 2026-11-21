@@ -18,7 +18,7 @@ import {
 import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
 import { compilePresses } from "@/lib/eml/exprSeq";
 import { compileExpression } from "@/lib/eml/parse";
-import { parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
+import { loadNotice, parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 import {
   EMPTY,
   binaryCaption,
@@ -678,10 +678,17 @@ export function useCalculatorModel() {
         showProgram(unrankProgram(parsed.index), `program #${parsed.index.toString()}`, false);
         return;
       }
-      const from = parsed.rotatedFrom;
-      const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
-      const notice = from ? `Rotated ${from} to ${to}.` : null;
+      const notice = loadNotice(parsed);
       showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice);
+    } catch (err) {
+      fail(failure(err));
+    }
+  }, [fail, showProgram]);
+
+  /** Load a word of 1 and E (from the Program ID panel). Replaces the top when it was a loaded program. */
+  const loadWord = useCallback((word: string, caption: string, replace: boolean) => {
+    try {
+      showProgram(nodeFromRpn(word.split("")), caption, replace);
     } catch (err) {
       fail(failure(err));
     }
@@ -799,6 +806,7 @@ export function useCalculatorModel() {
     clearPressCount,
     pressCount,
     stepLoaded,
+    loadWord,
   };
 }
 
