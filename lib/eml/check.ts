@@ -3829,6 +3829,113 @@ failed += runPropertyChecks();
   }
 }
 
+{
+  // Outside review, section A. Each row fails while its claim holds.
+  // A1: an angle within the snap tolerance of 0 is not the axis. sin(6.103e-120) is not 0,
+  // so the doubled tiny imaginary sum keeps both halves (or says it could not verify).
+  const tinyTwice = exactReport(compileExpression("6.103e-120*i + 6.103e-120*i", {}));
+  const tinyTwiceText = formatExact(tinyTwice.value);
+  if (!tinyTwice.unverified && tinyTwiceText !== "1.2206×10^−119i") {
+    failed += 1;
+    console.log("FAIL review A1 tiny imaginary sum", tinyTwiceText);
+  } else {
+    console.log("review A1 tiny imaginary sum", tinyTwice.unverified ? "couldn't verify" : tinyTwiceText);
+  }
+  // exp of a tiny imaginary angle. Float gives 1 + 6.1e-120i, so an exact 1 with no note drops a component.
+  const tinyTurn = exactReport(compileExpression("exp(6.103515625e-120*i)", {}));
+  const tinyTurnText = formatExact(tinyTurn.value);
+  if (!tinyTurn.unverified && !tinyTurn.singular && tinyTurn.value.im.isZero()) {
+    failed += 1;
+    console.log("FAIL review A1 tiny turn", tinyTurnText);
+  } else {
+    console.log("review A1 tiny turn", tinyTurn.unverified ? "couldn't verify" : tinyTurnText, tinyTurn.singular ?? "");
+  }
+  // A tiny real part beside an imaginary one. The real part is a known 10^(−130) or
+  // 10^(−136), so 0.5i or 1.5i alone drops it. Direct here, and packed in a fresh process
+  // below in both orders, so cache hits and misses are both covered.
+  const tinyBesideRows: Array<[string, string]> = [
+    ["((1+10^(-130))-1)+i/2", "1×10^−130 + 0.5i"],
+    ["(i*(1+10^-130)-i)*i+i/2", "−1×10^−130 + 0.5i"],
+    ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"],
+  ];
+  for (const [source, want] of tinyBesideRows) {
+    const report = exactReport(compileExpression(source, {}));
+    const text = report.unverified ? "unverified" : formatExact(report.value);
+    if (text !== want && text !== "unverified") {
+      failed += 1;
+      console.log("FAIL tiny real beside imaginary", source, text);
+    } else {
+      console.log("tiny real beside imaginary", source, text);
+    }
+  }
+  const besideJobs = tinyBesideRows.map(([source]) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root, again: true as const };
+  });
+  for (const jobs of [besideJobs, [...besideJobs].reverse()]) {
+    const run = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
+    if (run.status !== 0) {
+      failed += 1;
+      console.log("FAIL fresh tiny real beside imaginary", run.status, run.stderr?.slice(0, 400));
+      continue;
+    }
+    for (const row of JSON.parse(run.stdout) as Array<{ source: string; text: string; unverified: boolean; again?: string }>) {
+      const want = tinyBesideRows.find(([source]) => source === row.source)?.[1];
+      const first = row.unverified ? "unverified" : row.text;
+      const ok = (text: string | undefined) => text === want || text === "unverified";
+      if (!ok(first) || !ok(row.again)) {
+        failed += 1;
+        console.log("FAIL fresh tiny real beside imaginary", row.source, first, row.again);
+      }
+    }
+  }
+  // A2: a word built with no lowering notes, evaluated twice on the same node in a
+  // fresh process. The second pass reads the var-free cache and must still find the
+  // cancellation that the first pass recovered.
+  const lossSource = "exp(10^(-115))-1";
+  const lossWord = rpnTokens(compileExpression(lossSource, {}), 100_000);
+  // A4: the worker receives a packed circuit. Its singular note must match the main thread.
+  const noteRows: Array<[string, Record<string, { re: number; im: number }>]> = [
+    ["asinh(x)", { x: c(1e-13) }],
+    ["x+y", { x: c(1e-20), y: c(1e-20) }],
+  ];
+  const noteMain = noteRows.map(([source, env]) => exactReport(compileExpression(source, { x: V("x"), y: V("y") }), env).singular);
+  const reviewJobs = [
+    ...(lossWord ? [{ source: lossSource, word: lossWord, again: true }] : []),
+    ...noteRows.map(([source, env]) => {
+      const packed = packCircuit(compileExpression(source, { x: V("x"), y: V("y") }));
+      return { source, tokens: packed.tokens, root: packed.root, env };
+    }),
+  ];
+  const reviewFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(reviewJobs));
+  if (!lossWord || reviewFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL review A fresh run", lossWord ? lossWord.length : "no word", reviewFresh.status, reviewFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(reviewFresh.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; again?: string }>;
+    const [loss, ...notes] = rows;
+    const shown = (text: string, unverified: boolean) => (unverified ? "unverified" : text);
+    const first = loss ? shown(loss.text, loss.unverified) : "missing";
+    const second = loss?.again ?? "missing";
+    const honest = (text: string) => text === "1×10^−115" || text === "unverified";
+    if (!honest(first) || !honest(second)) {
+      failed += 1;
+      console.log("FAIL review A2 cached word", lossSource, "first", first, "second", second);
+    } else {
+      console.log("review A2 cached word", lossSource, first, second);
+    }
+    notes.forEach((row, index) => {
+      const want = noteMain[index] ?? null;
+      if (row.singular !== want) {
+        failed += 1;
+        console.log("FAIL review A4 worker note", row.source, "worker", row.singular, "main", want);
+      } else {
+        console.log("review A4 worker note", row.source, row.singular);
+      }
+    });
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
