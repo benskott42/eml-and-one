@@ -1,4 +1,4 @@
-import { eml } from "./complex";
+import { cexp, clog, writeEmlDifference } from "./complex";
 import { ballVerdict, enclose } from "./enclose";
 import { type ExactReport, type Z, exactClose, exactReport, exactValueAt, valueMatchesTarget } from "./exact";
 import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows, rpnTokens } from "./node";
@@ -27,6 +27,8 @@ import { SoundDedup, type SoundReport } from "./sound";
  * Sound mode is off unless `sound: true`. The default path is the key table
  * above and does not call SoundDedup. Sound mode admits through
  * SoundDedup.consider, including ln 0 specials, which stay inconclusive.
+ * Each class stores exp(v) and Log(v) once. A pair subtracts those two
+ * values; the operations are the same ones `eml` uses.
  * A class is dropped only when exact proves equality, so a sound-mode count
  * is an upper bound. Disks are the bounds in docs/interval-bounds.md for
  * normal components; a subnormal component or a subnormal hypot is inconclusive.
@@ -68,6 +70,8 @@ export type SearchResult = {
   levels: SearchLevel[];
   sound?: SoundReport;
   classes?: TracedClass[];
+  /** FNV-1a of committed floats, present only when `digest` was requested. */
+  digest?: number;
 };
 
 type Target = { id: string; re: number; im: number };
@@ -281,6 +285,8 @@ export function searchConstants(
     sound?: boolean;
     /** Keep one record per class. Used by the parity and containment checks. */
     trace?: boolean;
+    /** Hash every committed float. Off the hot path unless set. */
+    digest?: boolean;
     shouldStop?: () => boolean;
     onProgress?: (progress: SearchProgress) => void;
   } = {},
@@ -288,6 +294,19 @@ export function searchConstants(
   const workers = options.workers ?? 1;
   const sound = options.sound === true;
   const trace = options.trace === true;
+  let digest = 2166136261;
+  const digF = new Float64Array(1);
+  const digU = new Uint32Array(digF.buffer);
+  const mixDigest = (valueRe: number, valueIm: number) => {
+    if (!options.digest) return;
+    digF[0] = valueRe;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digF[0] = valueIm;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digest = digest >>> 0;
+  };
   const maxGates = (maxK - 1) >> 1;
   let rejected = 0;
   const levels: SearchLevel[] = [];
@@ -296,20 +315,36 @@ export function searchConstants(
   let right = new Int32Array(cap);
   let re = new Float64Array(cap);
   let im = new Float64Array(cap);
+  let expRe = new Float64Array(cap);
+  let expIm = new Float64Array(cap);
+  let logRe = new Float64Array(cap);
+  let logIm = new Float64Array(cap);
   const grow = () => {
     cap *= 2;
     const nextLeft = new Int32Array(cap);
     const nextRight = new Int32Array(cap);
     const nextRe = new Float64Array(cap);
     const nextIm = new Float64Array(cap);
+    const nextExpRe = new Float64Array(cap);
+    const nextExpIm = new Float64Array(cap);
+    const nextLogRe = new Float64Array(cap);
+    const nextLogIm = new Float64Array(cap);
     nextLeft.set(left);
     nextRight.set(right);
     nextRe.set(re);
     nextIm.set(im);
+    nextExpRe.set(expRe);
+    nextExpIm.set(expIm);
+    nextLogRe.set(logRe);
+    nextLogIm.set(logIm);
     left = nextLeft;
     right = nextRight;
     re = nextRe;
     im = nextIm;
+    expRe = nextExpRe;
+    expIm = nextExpIm;
+    logRe = nextLogRe;
+    logIm = nextLogIm;
     growLogged();
     growFlow();
   };
@@ -475,6 +510,7 @@ export function searchConstants(
       re[count] = value.re;
       im[count] = value.im;
       count += 1;
+      mixDigest(value.re, value.im);
       return;
     }
     if (count >= cap) grow();
@@ -486,6 +522,7 @@ export function searchConstants(
     re[id] = value.re;
     im[id] = value.im;
     count += 1;
+    mixDigest(value.re, value.im);
     const built = buildNode(left, right, id, nodeMemo);
     let kept = false;
     for (const target of watch) {
@@ -537,12 +574,28 @@ export function searchConstants(
     pool: count,
     rejected,
     levels,
+    ...(options.digest ? { digest } : {}),
     ...(soundDedup ? { sound: soundDedup.report() } : {}),
     ...(trace ? { classes: traced() } : {}),
   });
 
+  let filled = 0;
+  const pairOut = new Float64Array(2);
+  const fillTranscendentals = (upto: number) => {
+    for (let id = filled; id < upto; id += 1) {
+      const exp = cexp({ re: re[id] ?? 0, im: im[id] ?? 0 });
+      expRe[id] = exp.re;
+      expIm[id] = exp.im;
+      const log = clog({ re: re[id] ?? 0, im: im[id] ?? 0 });
+      logRe[id] = log.re;
+      logIm[id] = log.im;
+    }
+    filled = upto;
+  };
+
   for (let gates = 1; gates <= maxGates; gates += 1) {
     if (options.shouldStop?.()) break;
+    fillTranscendentals(count);
     const start = count;
     let pair = 0;
     const buckets: { pair: number; a: number; b: number; re: number; im: number }[][] = options.partition
@@ -558,16 +611,18 @@ export function searchConstants(
             return finish();
           }
           if (options.allowLn0 === false && touchesLn0(a, b)) continue;
-          const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
-          if (Number.isNaN(value.re) || Number.isNaN(value.im)) {
+          writeEmlDifference(expRe[a] ?? 0, expIm[a] ?? 0, logRe[b] ?? 0, logIm[b] ?? 0, pairOut);
+          const valueRe = pairOut[0] ?? Number.NaN;
+          const valueIm = pairOut[1] ?? Number.NaN;
+          if (Number.isNaN(valueRe) || Number.isNaN(valueIm)) {
             rejected += 1;
             continue;
           }
           if (options.partition) {
-            buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im });
+            buckets[index % workers]?.push({ pair: index, a, b, re: valueRe, im: valueIm });
             continue;
           }
-          commit(a, b, value.re, value.im, gates);
+          commit(a, b, valueRe, valueIm, gates);
         }
       }
     }
