@@ -146,13 +146,25 @@ function cancelled(diff: number, left: number, right: number): number {
   return diff;
 }
 
+/** exp(x) − Log(y), with the same cancellation as `eml`, into `out`. */
+export function writeEmlDifference(expRe: number, expIm: number, logRe: number, logIm: number, out: Float64Array): void {
+  let re = cancelled(expRe - logRe, expRe, logRe);
+  let im = cancelled(expIm - logIm, expIm, logIm);
+  if (Number.isNaN(re) || Number.isNaN(im)) {
+    re = Number.NaN;
+    im = Number.NaN;
+  }
+  out[0] = re;
+  out[1] = im;
+}
+
+const emlScratch = new Float64Array(2);
+
 export function eml(x: C, y: C): C {
   const a = cexp(x);
   const b = clog(y);
-  const re = cancelled(a.re - b.re, a.re, b.re);
-  const im = cancelled(a.im - b.im, a.im, b.im);
-  if (Number.isNaN(re) || Number.isNaN(im)) return { re: NaN, im: NaN };
-  return { re, im };
+  writeEmlDifference(a.re, a.im, b.re, b.im, emlScratch);
+  return { re: emlScratch[0] ?? Number.NaN, im: emlScratch[1] ?? Number.NaN };
 }
 
 export function hypotC(z: C): number {
