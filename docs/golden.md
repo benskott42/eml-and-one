@@ -20,23 +20,29 @@ The output is deterministic (no timings), sorted, and stored line-by-line for re
 ### Check against golden output (CI mode)
 
 ```bash
-npm run eml:golden
+npm run eml:golden              # In-process mode
+npm run eml:golden -- --wire    # Fresh-process wire mode
 ```
 
-Compares the current output against the checked-in `lib/eml/golden/golden.txt`. Exits with code 0 if they match, code 1 with a readable diff if they differ.
+Compares the current output against the checked-in golden files. Exits with code 0 if they match, code 1 with a readable diff if they differ.
+
+- **In-process mode** (`golden.txt`): Evaluates with same-process `packCircuit` → `unpackCircuit` round-trip
+- **Wire mode** (`golden-wire.txt`): Packs in parent, evaluates in fresh child process (batched for efficiency)
 
 ### Regenerate golden output
 
 ```bash
-npm run eml:golden -- --update
+npm run eml:golden -- --update              # In-process mode
+npm run eml:golden -- --update --wire       # Wire mode
 ```
 
-Evaluates the corpus and writes a new `lib/eml/golden/golden.txt`. Use this when you've made an intentional behavior change.
+Evaluates the corpus and writes new golden files. Use this when you've made an intentional behavior change.
 
 ### Include heavy test cases
 
 ```bash
 npm run eml:golden -- --heavy
+npm run eml:golden -- --heavy --wire
 ```
 
 Adds slow cases (not run in CI by default). Use for thorough local testing before opening a PR.
@@ -77,12 +83,17 @@ Current known bugs:
 
 - **v1.1-complex-half**: `6.103e-120*i+6.103e-120*i` shows half the sum in exact mode (no flag)
 - **A1-real-drop**: `(i*(1+10^(-124))-i)*i+i*10^10/3` drops its real part
-- **wire-real-drop** (severity-1, owned by bigfixer): Three expressions lose their tiny real part (~1e-130) when round-tripped through `packCircuit` → `unpackCircuit`:
-  - `((1+10^(-130))-1)+i/2` → wrongly certified as `0.5i`
-  - `((1+10^(-130))-1)+i*(1+10^(-130))/2` → wrongly certified as `0.5i`
-  - `((1+10^(-136))-1)+i*3/2` → wrongly certified as `1.5i`
+- **wire-real-drop** (severity-1, owned by bigfixer): Three expressions lose their tiny real part when added to a much larger imaginary part:
+  - `((1+10^(-130))-1)+i/2` → wrongly certified as `0.5i` (missing ~1e-130 real)
+  - `((1+10^(-130))-1)+i*(1+10^(-130))/2` → wrongly certified as `0.5i` (missing ~1e-130 real)
+  - `((1+10^(-136))-1)+i*3/2` → wrongly certified as `1.5i` (missing ~1e-136 real)
   
-  These expressions produce a tiny real part (the `((1+10^(-k))-1)` term) plus an imaginary part. The real part ~1e-130 or ~1e-136 is correctly computed in direct evaluation, but drops when the circuit is packed, unpacked, and re-evaluated. The harness's round-trip test currently evaluates in the same process; a future wire-mode enhancement will test through a fresh child process to match production conditions.
+  **Diagnostic**: The bug manifests in ALL three evaluation paths:
+  - (a) Direct evaluation of parsed node: **WRONG** (certified 0.5i / 1.5i)
+  - (b) Same-process pack → unpack → evaluate: **WRONG** (certified 0.5i / 1.5i)
+  - (c) Fresh-process wire (child process): **WRONG** (certified 0.5i / 1.5i)
+  
+  The `((1+10^(-k))-1)` subexpression correctly evaluates to `1×10^-k` in isolation, but when added to `i/2` or `i*3/2`, the tiny real part is dropped during the addition. This is NOT a wire-specific bug - it's in the core addition logic when combining a tiny real with a much larger imaginary component. Both in-process and wire-mode golden files record the wrong output.
 
 ## How to add test cases
 
@@ -126,7 +137,8 @@ Known cache issues are logged but do not fail the harness (they're tracked separ
 The golden harness runs in `.github/workflows/ci.yml` after `eml:check`:
 
 ```yaml
-- run: npm run eml:golden
+- run: npm run eml:golden         # In-process mode
+- run: npm run eml:golden -- --wire  # Fresh-process wire mode
 ```
 
-It does not run with `--heavy`, so heavy cases stay out of CI.
+Both modes run in CI to catch bugs in either evaluation path. Heavy cases (`--heavy`) are not run in CI.

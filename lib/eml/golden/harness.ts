@@ -12,22 +12,30 @@
  * 
  * The output is deterministic (no timings) and stored in a stable,
  * sorted format for readable diffs.
+ * 
+ * Modes:
+ * - Default: in-process evaluation with same-process pack/unpack round-trip
+ * - --wire: fresh-process wire mode (pack in parent, unpack+evaluate in child)
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { getAllCorpus, heavyCorpus } from "./corpus";
 import { compileExpression } from "../parse";
 import { exactReport, formatExact, exactToFloat } from "../exact";
 import { evaluateReport } from "../node";
-import { packCircuit, unpackCircuit } from "../wire";
+import { packCircuit, unpackCircuit, type Wire } from "../wire";
 import { seriesShortcutNote } from "../library";
 import { pressPreviewForNode } from "../presses";
 import { formatC } from "../format";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const goldenPath = path.join(repoRoot, "lib/eml/golden/golden.txt");
+const goldenWirePath = path.join(repoRoot, "lib/eml/golden/golden-wire.txt");
+const wireChildScript = path.join(repoRoot, "scripts/wire-eval-child.ts");
+const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 
 interface GoldenEntry {
   source: string;
@@ -175,6 +183,109 @@ function evaluateExpression(source: string, useCache: boolean): GoldenEntry {
   }
 }
 
+interface WireJob {
+  source: string;
+  tokens: Wire[];
+  root: number;
+}
+
+interface WireResult {
+  source: string;
+  exactText: string;
+  exactNotes: string[];
+  floatText: string;
+  floatNotes: string[];
+  pressCount: string;
+  error?: string;
+}
+
+/**
+ * Evaluate expressions via fresh-process wire (packCircuit in parent,
+ * unpackCircuit + evaluate in child). Batches expressions for efficiency.
+ */
+function evaluateViaWire(sources: string[]): Map<string, GoldenEntry> {
+  const results = new Map<string, GoldenEntry>();
+  
+  // Pack all circuits in parent process
+  const jobs: WireJob[] = [];
+  for (const source of sources) {
+    try {
+      const node = compileExpression(source, {});
+      const packed = packCircuit(node);
+      jobs.push({
+        source,
+        tokens: packed.tokens,
+        root: packed.root,
+      });
+    } catch (err) {
+      results.set(source, {
+        source,
+        exactText: "ERROR",
+        exactNotes: [err instanceof Error ? err.message : String(err)],
+        floatText: "ERROR",
+        floatNotes: [],
+        pressCount: "?",
+        roundTripOk: false,
+        roundTripError: "pack-error",
+      });
+    }
+  }
+  
+  if (jobs.length === 0) return results;
+  
+  // Send to child process for evaluation
+  const childResult = spawnSync(
+    process.execPath,
+    [tsxCli, wireChildScript],
+    {
+      input: JSON.stringify(jobs),
+      encoding: "utf8",
+      timeout: 180_000,
+      maxBuffer: 50 * 1024 * 1024,
+    }
+  );
+  
+  if (childResult.status !== 0) {
+    console.error("Wire child process failed:", childResult.stderr);
+    // Mark all as errors
+    for (const job of jobs) {
+      if (!results.has(job.source)) {
+        results.set(job.source, {
+          source: job.source,
+          exactText: "ERROR",
+          exactNotes: ["wire-child-failed"],
+          floatText: "ERROR",
+          floatNotes: [],
+          pressCount: "?",
+          roundTripOk: false,
+          roundTripError: "wire-child-failed",
+        });
+      }
+    }
+    return results;
+  }
+  
+  try {
+    const wireResults: WireResult[] = JSON.parse(childResult.stdout);
+    for (const wr of wireResults) {
+      results.set(wr.source, {
+        source: wr.source,
+        exactText: wr.exactText,
+        exactNotes: wr.exactNotes,
+        floatText: wr.floatText,
+        floatNotes: wr.floatNotes,
+        pressCount: wr.pressCount,
+        roundTripOk: !wr.error,
+        roundTripError: wr.error,
+      });
+    }
+  } catch (err) {
+    console.error("Failed to parse wire results:", err);
+  }
+  
+  return results;
+}
+
 function formatGoldenEntry(entry: GoldenEntry, knownBugs: Map<string, string>): string {
   const parts: string[] = [];
   
@@ -190,7 +301,12 @@ function formatGoldenEntry(entry: GoldenEntry, knownBugs: Map<string, string>): 
   if (bugId) {
     let bugNote = `# KNOWN-BUG ${bugId}`;
     if (bugId === "wire-real-drop") {
-      bugNote += ": real part ~1e-130 dropped over wire; fix owned by bigfixer";
+      // Different precision for different expressions
+      if (entry.source.includes("10^(-136)")) {
+        bugNote += ": real part ~1e-136 dropped; fix owned by bigfixer";
+      } else {
+        bugNote += ": real part ~1e-130 dropped; fix owned by bigfixer";
+      }
     }
     parts.push(bugNote);
   }
@@ -212,7 +328,7 @@ function parseGoldenFile(content: string): Map<string, string> {
   return map;
 }
 
-function generateGolden(includeHeavy: boolean): string {
+function generateGolden(includeHeavy: boolean, wireMode: boolean): string {
   const corpus = includeHeavy ? [...getAllCorpus(), ...heavyCorpus] : getAllCorpus();
   
   // Known bugs (from docs/known-limitations.md and task description)
@@ -228,22 +344,44 @@ function generateGolden(includeHeavy: boolean): string {
   console.log(`Evaluating ${corpus.length} expressions...`);
   const entries: GoldenEntry[] = [];
   
-  for (const source of corpus) {
-    try {
-      const entry = evaluateExpression(source, true);
-      entries.push(entry);
-    } catch (err: unknown) {
-      console.error(`Error evaluating ${source}:`, err);
-      entries.push({
-        source,
-        exactText: "ERROR",
-        exactNotes: [err instanceof Error ? err.message : String(err)],
-        floatText: "ERROR",
-        floatNotes: [],
-        pressCount: "?",
-        roundTripOk: false,
-        roundTripError: "evaluation-error",
-      });
+  if (wireMode) {
+    console.log("Using fresh-process wire mode (batched)...");
+    const wireResults = evaluateViaWire(corpus);
+    for (const source of corpus) {
+      const entry = wireResults.get(source);
+      if (entry) {
+        entries.push(entry);
+      } else {
+        entries.push({
+          source,
+          exactText: "ERROR",
+          exactNotes: ["missing-wire-result"],
+          floatText: "ERROR",
+          floatNotes: [],
+          pressCount: "?",
+          roundTripOk: false,
+          roundTripError: "missing-wire-result",
+        });
+      }
+    }
+  } else {
+    for (const source of corpus) {
+      try {
+        const entry = evaluateExpression(source, true);
+        entries.push(entry);
+      } catch (err: unknown) {
+        console.error(`Error evaluating ${source}:`, err);
+        entries.push({
+          source,
+          exactText: "ERROR",
+          exactNotes: [err instanceof Error ? err.message : String(err)],
+          floatText: "ERROR",
+          floatNotes: [],
+          pressCount: "?",
+          roundTripOk: false,
+          roundTripError: "evaluation-error",
+        });
+      }
     }
   }
   
@@ -253,6 +391,7 @@ function generateGolden(includeHeavy: boolean): string {
   // Format output
   const lines: string[] = [];
   lines.push("# EML and One Golden Output");
+  lines.push(`# Mode: ${wireMode ? "fresh-process wire" : "in-process"}`);
   lines.push(`# Generated: ${new Date().toISOString()}`);
   lines.push(`# Corpus size: ${entries.length}`);
   lines.push("");
@@ -306,12 +445,16 @@ function main() {
   const args = process.argv.slice(2);
   const isUpdate = args.includes("--update");
   const isHeavy = args.includes("--heavy");
+  const isWire = args.includes("--wire");
+  
+  const targetPath = isWire ? goldenWirePath : goldenPath;
+  const modeName = isWire ? "wire mode" : "in-process mode";
   
   if (isUpdate) {
-    console.log("Regenerating golden output...");
-    const content = generateGolden(isHeavy);
-    writeFileSync(goldenPath, content, "utf-8");
-    console.log(`Golden output written to ${goldenPath}`);
+    console.log(`Regenerating golden output (${modeName})...`);
+    const content = generateGolden(isHeavy, isWire);
+    writeFileSync(targetPath, content, "utf-8");
+    console.log(`Golden output written to ${targetPath}`);
     
     // Also run cache check on update
     const cacheCheck = checkCacheConsistency();
@@ -329,18 +472,18 @@ function main() {
   }
   
   // Compare mode
-  console.log("Comparing against golden output...");
+  console.log(`Comparing against golden output (${modeName})...`);
   
   let existingContent: string;
   try {
-    existingContent = readFileSync(goldenPath, "utf-8");
+    existingContent = readFileSync(targetPath, "utf-8");
   } catch {
-    console.error(`Could not read ${goldenPath}`);
+    console.error(`Could not read ${targetPath}`);
     console.error("Run with --update to generate the golden output.");
     process.exit(1);
   }
   
-  const newContent = generateGolden(isHeavy);
+  const newContent = generateGolden(isHeavy, isWire);
   
   if (newContent === existingContent) {
     console.log("✓ Golden output matches!");
