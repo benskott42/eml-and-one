@@ -25,6 +25,7 @@ import {
   chypot,
 } from "./complex";
 import {
+  builtHugeAngle,
   tAvg,
   tDiv,
   tE,
@@ -43,7 +44,7 @@ import {
   unaryBuilders,
 } from "./library";
 import { formatC, isUsable } from "./format";
-import { EmlError, isolateCircuit, type Node } from "./node";
+import { EmlError, isolateCircuit, markExactUnsure, precisionNoteOf, type Node } from "./node";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
@@ -386,7 +387,15 @@ function foldAst(ast: Ast): Node {
 }
 
 export function compileExpression(source: string, variables: Record<string, Node>): Node {
-  return isolateCircuit(() => compileParsed(source, variables));
+  return isolateCircuit(() => {
+    const root = compileParsed(source, variables);
+    // A trig angle past 10^15 under the root is refused; the root's own trig or
+    // pole note already says the angle is too large.
+    const note = precisionNoteOf(root);
+    const own = note?.kind === "trig" || note?.kind === "pole";
+    if (builtHugeAngle() && !own && root.type === "eml") markExactUnsure(root);
+    return root;
+  });
 }
 
 function compileParsed(source: string, variables: Record<string, Node>): Node {

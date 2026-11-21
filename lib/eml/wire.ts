@@ -1,5 +1,5 @@
 import { decadeOf, inScaledShell, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isSeriesShortcut, isUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -30,6 +30,8 @@ export type Wire =
       int?: string;
       /** A dropped term. Exact mode must not certify the gates. */
       unver?: 1;
+      /** Exact mode cannot certify this value; float keeps its own. */
+      xu?: 1;
     };
 
 function exactIntDigits(node: Node): string | undefined {
@@ -114,6 +116,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     const digits = exactIntDigits(frame.n);
     if (digits !== undefined) token.int = digits;
     if (isUnverified(frame.n)) token.unver = 1;
+    if (isExactUnsure(frame.n)) token.xu = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -151,6 +154,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
       if (tok.unver) markUnverified(node);
+      if (tok.xu) markExactUnsure(node);
     }
   }
   const node = nodes[root];

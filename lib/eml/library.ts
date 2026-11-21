@@ -36,7 +36,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, isUnverified, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -64,6 +64,7 @@ function memo(build: () => Node): () => Node {
 }
 
 onCircuitIsolate(() => {
+  hugeAngleBuilt = false;
   for (const reset of memoResets) reset();
   intCache.clear();
   unaryCache.clear();
@@ -252,6 +253,7 @@ const SERIES_WIDE = -20;
 const SERIES_REL = -480;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
+const SMALL_NOTE = "series shortcut: the leading term z, for a small |z|";
 const seriesNotes = new WeakMap<Node, string>();
 
 function markSeries(node: Node, note: string): Node {
@@ -476,6 +478,7 @@ function userSum(a: Node, b: Node, sub: boolean): Node {
   if (negation || !left || !right || (!left.inf && !right.inf)) {
     // 1+(2+∞) must not drop the inner refusal and certify a NaN as ∞−∞.
     if (isUnverified(a) || isUnverified(b)) return markUnverified(node);
+    if (isExactUnsure(a) || isExactUnsure(b)) return markExactUnsure(node);
     return node;
   }
   return refuseInfiniteSum(node, left, right, sub);
@@ -871,7 +874,9 @@ export function tSigmoid(t: Node): Node {
 export function tSinh(t: Node): Node {
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  // The dropped cubic is not exact, so z is marked as a series shortcut: a later
+  // sinh(z) − z is a series zero and is not certified.
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   // exp(t)/2 · (1 − exp(−2t)). Subtracting the real 1 keeps exp(t) out of the exponent.
   const em2 = tExp(tNeg(tAdd(t, t)));
   return tHalfOf(tMul(tExp(t), tSub(ONE, em2)));
@@ -889,7 +894,11 @@ export function tTanh(t: Node): Node {
   if (series) return series;
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
-  return tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  const out = tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  // Past |Re t| ≈ 100 the distance from ±1, 2e^(−2|t|), is below the working precision
+  // and the quotient rounds to an exact ±1. Not certified.
+  const known = knownValue(t);
+  return known && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
 }
 
 /**
@@ -898,7 +907,28 @@ export function tTanh(t: Node): Node {
  */
 function flagAngle(node: Node, arg: Node, tan: boolean): Node {
   notePrecision(node, { kind: tan ? "pole" : "trig", arg });
+  let known = knownValue(arg);
+  if (!known) {
+    try {
+      known = evaluateReport(arg).value;
+    } catch {
+      known = null;
+    }
+  }
+  if (known && Number.isFinite(known.re) && Math.abs(known.im) <= 1 && Math.abs(known.re) > HUGE_ANGLE) hugeAngleBuilt = true;
   return node;
+}
+
+/** Past this a 120-digit π no longer reduces the angle reliably. */
+const HUGE_ANGLE = 1e15;
+let hugeAngleBuilt = false;
+
+/**
+ * Whether the expression being compiled took sin, cos, or tan of an angle past
+ * 10^15. A later sum can rebuild the trig node away, so its note is not enough.
+ */
+export function builtHugeAngle(): boolean {
+  return hugeAngleBuilt;
 }
 
 /**
@@ -1123,13 +1153,17 @@ function arcsinSeries(t: Node): Node {
  */
 export function tArcsin(t: Node): Node {
   const known = knownValue(t);
+  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
+  const tiny = known ? Math.hypot(known.re, known.im) : Number.NaN;
+  if (tiny > 0 && tiny < 1e-60) return markSeries(t, SMALL_NOTE);
   if (known && (known.im === 0 || Object.is(known.im, -0)) && (known.re === 1 || known.re === -1)) {
     const half = tHalfOf(tPi());
     return known.re < 0 ? tNeg(half) : half;
   }
   if (rangeOf(t).int === BigInt(0)) return tZero();
   const box = asinhBox(t);
-  if (box !== null && box < 1e-4) return arcsinSeries(t);
+  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
+  if (box !== null && box < 1e-4) return box < 1e-60 ? markUnverified(arcsinSeries(t)) : arcsinSeries(t);
   const re = realBounds(t);
   const side = provenImagSign(t);
   const lower = side === 1 || (side === 0 && !!re && re.hi < 0);
@@ -1224,7 +1258,8 @@ function artanhAboveOne(t: Node): Node {
 
 export function tArtanh(t: Node): Node {
   const known = tightValue(t);
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);
   if (known && imagZero(known) && known.re < -1) return tNeg(artanhAboveOne(tNeg(t)));
   return tHalfOf(tLn(tDiv(tAdd(ONE, t), tSub(ONE, t))));

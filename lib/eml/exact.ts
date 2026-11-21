@@ -15,7 +15,7 @@ import {
   trigArg,
 } from "./node";
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
-import { isSeriesShortcut } from "./node";
+import { evaluate as floatEvaluate, isExactUnsure, isSeriesShortcut, precisionNoteOf } from "./node";
 
 /**
  * Wide-exponent complex values for EML circuits.
@@ -201,15 +201,25 @@ let lossGap = 0;
 let tiniest = 0;
 
 /** Smallest exponent of a nonzero finite component, or 0, the same floor `tiniest` starts from. */
+function exponentCeil(v: Z): number {
+  let high = Number.NEGATIVE_INFINITY;
+  for (const part of [v.re, v.im]) if (part.isFinite() && !part.isZero() && part.e > high) high = part.e;
+  return high;
+}
+
 function exponentFloor(v: Z): number {
   let low = 0;
   for (const part of [v.re, v.im]) if (part.isFinite() && !part.isZero() && part.e < low) low = part.e;
   return low;
 }
 
+/** Largest exponent of a finite value computed in this pass. */
+let biggest = Number.NEGATIVE_INFINITY;
+
 function noteSeen(v: Z): void {
   const take = (part: Decimal) => {
     if (part.isFinite() && !part.isZero() && part.e < tiniest) tiniest = part.e;
+    if (part.isFinite() && !part.isZero() && part.e > biggest) biggest = part.e;
   };
   take(v.re);
   take(v.im);
@@ -489,7 +499,7 @@ function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): nu
   return best;
 }
 /** `loss`, `tiniest` and `lead` are the subtree's share of the pass state, restored on a hit. */
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; lead: boolean };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; lead: boolean; big: number };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -841,7 +851,91 @@ function hidesBeside(root: Node): boolean {
   return false;
 }
 
+/** The first pass's smallest and largest exponents, for the refusals below. */
+let firstTiny = 0;
+let firstBig = Number.NEGATIVE_INFINITY;
+
+/**
+ * Results this release refuses rather than certify:
+ * - a sin, cos or tan below the root whose argument is too large to reduce
+ *   (−cos(10^119), cos(10^125)·cos(10^130)); the root's own note already flags it;
+ * - a component cancelled to 0 beside a nonzero one when the pass computed a
+ *   value too small for the working precision (((1+1/10^130)−1)+i/2);
+ * - a finite result far below a value past float range that the circuit went
+ *   through ((exp(800)+1)−exp(800)), or a non-finite one reached that way (exp(800)·0).
+ */
+function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): boolean {
+  if (nestedTrigTooLarge(root, env)) return true;
+  // A series shortcut scales its argument by its own reciprocal powers, so the
+  // smallest and largest values seen say nothing about cancellation there.
+  if (out.sawLead) return false;
+  const v = out.value;
+  const digits = out.digits ?? D.precision;
+  if (v.re.isFinite() && v.im.isFinite() && v.re.isZero() !== v.im.isZero()) {
+    // A value below the precision went through the pass: retry with room for it.
+    // If the zero part comes back nonzero above the noise, or the room needed is
+    // past the cap, the 0 is not certified.
+    const which = v.re.isZero() ? "re" : "im";
+    const other = which === "re" ? v.im : v.re;
+    const need = other.e - firstTiny + 30;
+    if (need > digits) {
+      if (need > PRECISION_CAP) return true;
+      const wide = atPrecision(need, root, env, budget, false).value[which];
+      if (!wide.isFinite() || (!wide.isZero() && wide.e > other.e - need + 20)) return true;
+    }
+  }
+  if (firstBig > 308) {
+    if (!zFinite(v)) return out.singular === SINGULAR_NONFINITE;
+    const top = exponentCeil(v);
+    if (top >= -300 && top < firstBig - (digits - 12)) return true;
+  }
+  return false;
+}
+
+function nestedTrigTooLarge(root: Node, env: Record<string, C | Z>): boolean {
+  const floatEnv: Record<string, C> = {};
+  for (const [name, value] of Object.entries(env)) floatEnv[name] = value.re instanceof Decimal ? exactToFloat(value as Z) : (value as C);
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    const note = precisionNoteOf(n);
+    // A lowered sum can rebuild its operands, so the noted originals are walked too.
+    if (note?.kind === "add") stack.push(note.left, note.right);
+    else if (note) stack.push(note.arg);
+    if (n !== root) {
+      if (note && (note.kind === "trig" || note.kind === "pole")) {
+        let arg: C | undefined;
+        try {
+          arg = floatEvaluate(note.arg, floatEnv);
+        } catch {
+          arg = undefined;
+        }
+        if (arg && Number.isFinite(arg.re) && Number.isFinite(arg.im) && Math.abs(arg.im) <= 1 && Math.abs(arg.re) > 1e15) return true;
+      }
+    }
+    if (n.type === "eml" && n.a && n.b) stack.push(n.a, n.b);
+  }
+  return false;
+}
+
 export function exactReport(
+  root: Node,
+  env: Record<string, C | Z> = {},
+  budget: EvalBudget = {},
+  pass = 0,
+): ExactReport {
+  if (pass !== 0) return exactReportCore(root, env, budget, pass);
+  firstTiny = 0;
+  firstBig = Number.NEGATIVE_INFINITY;
+  const out = exactReportCore(root, env, budget, pass);
+  if (out.unverified || !refusedResult(root, env, budget, out)) return out;
+  return { ...out, unverified: true };
+}
+
+function exactReportCore(
   root: Node,
   env: Record<string, C | Z> = {},
   budget: EvalBudget = {},
@@ -853,7 +947,7 @@ export function exactReport(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
-  if (isUnverified(root) || hidesBeside(root)) {
+  if (isUnverified(root) || isExactUnsure(root) || hidesBeside(root)) {
     return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
   }
   // The integer is the value. A later retry would rebuild the circuit and round off its units.
@@ -873,6 +967,10 @@ export function exactReport(
   }
   lossGap = 0;
   const report = exactReportOnce(root, env, budget);
+  if (pass === 0) {
+    firstTiny = tiniest;
+    firstBig = biggest;
+  }
   // Pass 3 is a raised pass whose caller judges a tiny part itself, so it is not scrubbed.
   if (pass !== 0) return pass === 3 ? report : present(report);
   if (vanished(report.value)) {
@@ -967,10 +1065,12 @@ function exactReportOnce(
   const lossOf = new Map<Node, number>();
   const tinyOf = new Map<Node, number>();
   const leadOf = new Map<Node, boolean>();
+  const bigOf = new Map<Node, number>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  biggest = Number.NEGATIVE_INFINITY;
   const risk = new Map<Node, GateRisk>();
   let steps = 0;
   const nocache = cacheOff();
@@ -1058,6 +1158,8 @@ function exactReportOnce(
       if (hit.loss > lossGap) lossGap = hit.loss;
       if (hit.tiniest < tiniest) tiniest = hit.tiniest;
       if (hit.lead) sawLead = true;
+      if (hit.big > biggest) biggest = hit.big;
+      bigOf.set(n, hit.big);
       lossOf.set(n, hit.loss);
       tinyOf.set(n, hit.tiniest);
       leadOf.set(n, hit.lead);
@@ -1102,6 +1204,8 @@ function exactReportOnce(
     lossOf.set(n, subLoss);
     tinyOf.set(n, subTiny);
     leadOf.set(n, subLead);
+    const subBig = Math.max(exponentCeil(value), bigOf.get(n.a) ?? exponentCeil(a), bigOf.get(n.b) ?? exponentCeil(b));
+    bigOf.set(n, subBig);
     const ownHits = gateHits;
     const shell = inScaledShell(n);
     // A short lift never reaches 1, so its cancellation is the result's rounding.
@@ -1137,7 +1241,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, lead: subLead });
+    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, lead: subLead, big: subBig });
   }
 
   const out = memo.get(root);
