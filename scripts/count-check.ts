@@ -435,7 +435,7 @@ async function finish(): Promise<void> {
       }
       inbox.length = 0;
       fakeSelf.onmessage?.({ data: { request: workerCases + 1, tokens: packed.tokens, root: packed.root, env: {} } });
-      const reply = inbox[0];
+      const reply = inbox.find((item) => item.type === "done");
       if (!reply || reply.type !== "done" || reply.cutHits !== stored.exact.cutHits) {
         fail(`worker message ${n}/${mode} ${JSON.stringify(reply)}`);
       }
