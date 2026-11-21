@@ -48,6 +48,7 @@ async function main() {
     "low absolute precision",
     'aria-label="Calculator screen"',
     'aria-pressed="false"',
+    "Cancel stops a long one and shows a dash.",
   ];
 
   let failed = false;
@@ -116,8 +117,13 @@ async function main() {
     console.error("pressing 1, 1, EML did not build e", built);
     failed = true;
   }
-  if (!built.includes("higher program number is a higher binary value")) {
-    console.error("ordering legend missing after a key press", built);
+  const manualText = () => view.document.querySelector(".ti-manual")?.textContent ?? "";
+  if (!manualText().includes("higher program number is a higher binary value")) {
+    console.error("ordering legend missing from the manual", manualText());
+    failed = true;
+  }
+  if (built.includes("higher program number is a higher binary value")) {
+    console.error("ordering legend is still on the screen", built);
     failed = true;
   }
   await act(async () => {
