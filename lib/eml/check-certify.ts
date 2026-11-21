@@ -46,6 +46,42 @@ const tinyRows: Array<[string, string, string]> = [
   ["5e-200*i+3e-200*i", "0", "8e-200"],
   ["5e-200*i+(-4e-200*i)", "0", "1e-200"],
   ["5e-320*i+3e-320*i", "0", "8e-320"],
+  // Was listed in docs/known-limitations.md as showing half the true sum. Same cause as the rows above.
+  ["6.103e-120*i+6.103e-120*i", "0", "1.2206e-119"],
+  ["6.103*10^(-120)*i+6.103*10^(-120)*i", "0", "1.2206e-119"],
+];
+
+/**
+ * An infinity whose finite partner a gate drops. ln(ln(0)) is ∞ + iπ, so
+ * ln(ln(0))·i is −π + i∞, and exp of that has modulus e^(−π) and no limiting
+ * angle. The product word printed a real ∞ for both. Neither may be certified.
+ */
+const refusedRows = [
+  "exp(ln(ln(0))*i)",
+  "ln(ln(0))*i",
+  "exp(-ln(ln(0))*i)",
+  "ln(ln(0))*2",
+  "sqrt(-inf)*2",
+  "1/exp(ln(ln(0))*i)",
+  "exp(-(ln(ln(0))*i))",
+];
+
+/** Directed and extended values that lose nothing stay certified, with these texts. */
+const keptRows: Array<[string, string]> = [
+  ["ln(0)*i", "−∞i"],
+  ["(ln(0)*i)^3", "∞i"],
+  ["(inf*i)^3", "−∞i"],
+  ["inf*i*i", "−∞"],
+  ["sqrt(ln(0))", "∞i"],
+  ["ln(ln(0))", "∞ + 3.14159265359i"],
+  ["ln(-inf)", "∞ + 3.14159265359i"],
+  ["ln(0)^2", "∞"],
+  ["exp(ln(0))", "0"],
+  ["0^2", "0"],
+  ["6*i+(-6*i)", "0"],
+  ["4*i+0.5*i", "4.5i"],
+  ["exp(ln(0)*i)", "undefined"],
+  ["exp(inf*i)", "undefined"],
 ];
 
 function certifyChecks(): number {
@@ -61,6 +97,27 @@ function certifyChecks(): number {
       } else {
         console.log("certify tiny", run, source, text);
       }
+    }
+  }
+  for (const source of refusedRows) {
+    for (const run of ["first", "cached"]) {
+      const report = workerReport(source);
+      if (report.unverified !== true) {
+        failed += 1;
+        console.log("FAIL certify lost partner", run, source, formatExact(report.value), report.singular ?? "");
+      } else {
+        console.log("certify lost partner", run, source, "unverified");
+      }
+    }
+  }
+  for (const [source, want] of keptRows) {
+    const report = workerReport(source);
+    const text = report.unverified ? "unverified" : formatExact(report.value);
+    if (text !== want) {
+      failed += 1;
+      console.log("FAIL certify kept", source, text, "want", want);
+    } else {
+      console.log("certify kept", source, text);
     }
   }
   return failed;

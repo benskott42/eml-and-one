@@ -320,6 +320,35 @@ function exactEml(x: Z, y: Z): Z {
 }
 
 /**
+ * What one gate's extended-value rule cannot carry forward. The infinity rules
+ * are limits taken one gate at a time, and two of them drop a finite part:
+ * - exp(−∞ + iθ) is a zero that keeps only the signs of cos θ and sin θ. A later
+ *   ln reads that zero as −∞ or −∞ − iπ, so θ off the real axis is lost. That only
+ *   matters when the gate's output is this zero.
+ * - exp(+∞ + iθ) off an axis is ±∞ ± ∞i, which is no direction.
+ * - ln of an infinity beside a finite nonzero part keeps only the limit angle, so
+ *   ln(∞ + iπ) is ∞ and the iπ is gone: (∞ + iπ)·i came out a real ∞, not −π + i∞.
+ * An infinity whose partner is exactly 0 loses nothing. The loss travels with
+ * the value while it stays 0 or infinite (see carriesLoss); a result that still
+ * carries it is not certified.
+ */
+function gateLosesPart(x: Z, y: Z, out: Z): boolean {
+  if (x.re.isNaN() || x.im.isNaN() || y.re.isNaN() || y.im.isNaN()) return false;
+  if (!x.re.isFinite() && x.im.isFinite()) {
+    const trig = cosSin(x.im);
+    if (x.re.isNeg()) {
+      if (!trig.s.isZero() && zZero(out)) return true;
+    } else if (!axisInfinity(trig.c).isZero() && !axisInfinity(trig.s).isZero()) return true;
+  }
+  const reInf = !y.re.isFinite();
+  const imInf = !y.im.isFinite();
+  if (reInf && imInf) return true;
+  if (reInf && !y.im.isZero()) return true;
+  if (imInf && !y.re.isZero()) return true;
+  return false;
+}
+
+/**
  * The gate between a 10^k lift and its drop: decades its add or sub cancelled.
  * The lift gates are not in the work tally, so this is the only record of it.
  */
@@ -336,8 +365,24 @@ function liftedGap(x: Z, y: Z, out: Z): number {
   return gap;
 }
 
-/** This gate's lifted cancellation. */
-type GateRisk = { liftGap: number };
+/**
+ * `lost`: this node's value carries a dropped part. `inherited`: it came from an
+ * operand, not from this gate's own zero. `liftGap`: this gate's lifted cancellation.
+ */
+type GateRisk = { lost: boolean; inherited: boolean; liftGap: number };
+
+/**
+ * A dropped part matters only while the value is 0 or infinite: a later ln reads
+ * its angle. exp(−∞ + iθ) is 0 for every θ, so a finite nonzero result no longer
+ * depends on the lost part, and the routine 4i + 0.5i words that pass through
+ * exp(−∞ ± iπ/2) stay certified.
+ */
+function carriesLoss(own: boolean, a: GateRisk | undefined, b: GateRisk | undefined, out: Z): Pick<GateRisk, "lost" | "inherited"> {
+  const none = { lost: false, inherited: false };
+  if (out.re.isNaN() || out.im.isNaN() || !(zZero(out) || !zFinite(out))) return none;
+  const inherited = a?.lost === true || b?.lost === true;
+  return own || inherited ? { lost: true, inherited } : none;
+}
 
 /** Pure gates' risk by working precision, for subtrees a cache hit skips. */
 const riskCache = new Map<number, WeakMap<Node, GateRisk>>();
@@ -351,12 +396,15 @@ function gateRiskStore(): WeakMap<Node, GateRisk> {
   return store;
 }
 
-/** The largest lifted cancellation under `root` in this pass. */
-function riskBelow(root: Node, pass: Map<Node, GateRisk>): GateRisk {
+/** Whether the root carries a lost part, and the largest lifted cancellation under it. */
+function riskBelow(root: Node, out: Z, pass: Map<Node, GateRisk>): GateRisk {
   const store = gateRiskStore();
   const seen = new Set<Node>();
   const stack: Node[] = [root];
-  const total: GateRisk = { liftGap: 0 };
+  // A root zero whose own exp(−∞ + iθ) dropped θ is still 0: no later ln reads that angle.
+  const top = riskOf(root, pass, store);
+  const rootLost = top !== undefined && top.lost && (top.inherited || !zZero(out));
+  const total: GateRisk = { lost: rootLost, inherited: false, liftGap: 0 };
   while (stack.length) {
     const node = stack.pop();
     if (!node || node.type !== "eml" || seen.has(node)) continue;
@@ -370,6 +418,12 @@ function riskBelow(root: Node, pass: Map<Node, GateRisk>): GateRisk {
 
 function riskOf(node: Node, pass: Map<Node, GateRisk>, store: WeakMap<Node, GateRisk>): GateRisk | undefined {
   return pass.get(node) ?? (hasVarOf.get(node) === false ? store.get(node) : undefined);
+}
+
+/** A lost part refuses any value but undefined. */
+function riskReport(out: Z, below: GateRisk): Pick<ExactReport, "unverified" | "liftGap"> {
+  const lost = below.lost && !out.re.isNaN() && !out.im.isNaN();
+  return lost ? { unverified: true, liftGap: below.liftGap } : { liftGap: below.liftGap };
 }
 
 function asZ(value: C | Z): Z {
@@ -1068,6 +1122,7 @@ function exactReportOnce(
     logged.set(n, childLog);
     const store = gateRiskStore();
     const gate: GateRisk = {
+      ...carriesLoss(!angleInfinite && gateLosesPart(a, b, value), riskOf(n.a, risk, store), riskOf(n.b, risk, store), value),
       liftGap: isLiftedCombine(n) && !angleInfinite ? liftedGap(a, b, value) : 0,
     };
     risk.set(n, gate);
@@ -1103,7 +1158,7 @@ function exactReportOnce(
     prodIm: componentProd("im", out.im, hits),
     digits: D.precision,
     sawLead,
-    liftGap: riskBelow(root, risk).liftGap,
+    ...riskReport(out, riskBelow(root, out, risk)),
   };
 }
 
