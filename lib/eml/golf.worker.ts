@@ -4,7 +4,7 @@ import { searchConstants, type GolfHit } from "./golf";
 
 declare const self: DedicatedWorkerGlobalScope;
 
-type Request = { type?: string; maxK?: number; request?: number; allowLn0?: boolean };
+type Request = { type?: string; maxK?: number; request?: number; allowLn0?: boolean; sound?: boolean };
 
 let active = 0;
 
@@ -23,6 +23,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
   try {
     const result = searchConstants(maxK, {
       allowLn0: data.allowLn0 === false ? false : undefined,
+      ...(data.sound === true ? { sound: true } : {}),
       shouldStop: () => token !== active,
       onProgress: (progress) => {
         if (token !== active) return;

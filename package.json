@@ -8,6 +8,7 @@
     "build": "next build",
     "lint": "eslint --max-warnings=0",
     "eml:check": "tsx lib/eml/check.ts && tsx scripts/count-check.ts",
+    "eml:parity": "tsx scripts/enum-parity.ts",
     "eml:check:core": "tsx lib/eml/check.ts --shard=core",
     "eml:check:isolate": "tsx lib/eml/check.ts --shard=isolate",
     "eml:check:props": "tsx lib/eml/check.ts --shard=props",

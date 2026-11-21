@@ -51,6 +51,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run eml:parity
+      - run: npx tsx scripts/interval-containment.ts
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
