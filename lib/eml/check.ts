@@ -11,7 +11,7 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { acceptsConstantProgram, acceptsConstantValue, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
+import { acceptsConstantProgram, acceptsConstantValue, exactSkipCounts, floatDedupKey, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
 import { DiskGrid, diskInconclusive, disksDisjoint, emlDisk, expDisk, libmCertification, logDisk, pointDisk } from "./interval";
 import { SoundDedup } from "./sound";
 import {
@@ -1058,6 +1058,33 @@ if (inShard("core")) {
       failed += 1;
       console.log("FAIL v1.1 parity", want.maxK, got.pool, want.pool, got.rejected, want.rejected, sameHits, sameLevels);
     }
+  }
+
+  const digests: { k: number; allowLn0: boolean; pool: number; digest: number; hits: string }[] = [
+    { k: 17, allowLn0: true, pool: 1569, digest: 3917316957, hits: "e|3|11E,0|7|111E1EE,-1|15|11111E1EEEE11EE" },
+    { k: 19, allowLn0: true, pool: 5013, digest: 418583411, hits: "e|3|11E,0|7|111E1EE,-1|15|11111E1EEEE11EE,2|19|111111EEE1EE11EE1EE" },
+    { k: 21, allowLn0: true, pool: 16311, digest: 900952470, hits: "e|3|11E,0|7|111E1EE,-1|15|11111E1EEEE11EE,2|19|111111EEE1EE11EE1EE,ipi|21|111111E1EEEE11E1E1EEE" },
+    { k: 23, allowLn0: true, pool: 53982, digest: 3518807416, hits: "e|3|11E,0|7|111E1EE,-1|15|11111E1EEEE11EE,2|19|111111EEE1EE11EE1EE,ipi|21|111111E1EEEE11E1E1EEE" },
+    { k: 23, allowLn0: false, pool: 44057, digest: 3829186137, hits: "e|3|11E,0|7|111E1EE,-1|17|11111EEE1EE11E1EE,2|19|111111EEE1EE11EE1EE,ipi|23|111111E1E1EEE1EE11E1EEE" },
+  ];
+  for (const want of digests) {
+    const got = searchConstants(want.k, { digest: true, ...(want.allowLn0 ? {} : { allowLn0: false }) });
+    const hits = got.hits.map((hit) => `${hit.id}|${hit.k}|${hit.rpn}`).join(",");
+    if (got.pool !== want.pool || got.digest !== want.digest || hits !== want.hits) {
+      failed += 1;
+      console.log("FAIL v1.1 digest", want.k, want.allowLn0, got.pool, got.digest, hits);
+    }
+  }
+
+  const diskBefore = exactSkipCounts.disk;
+  if (acceptsConstantProgram(ONE, 0, 0) !== false || exactSkipCounts.disk !== diskBefore + 1) {
+    failed += 1;
+    console.log("FAIL disk skip of 1 against 0", exactSkipCounts.disk, diskBefore);
+  }
+  const diskMid = exactSkipCounts.disk;
+  if (acceptsConstantProgram(ONE, 1, 0) !== true || acceptsConstantProgram(E(ONE, ONE), Math.E, 0) !== true || exactSkipCounts.disk !== diskMid) {
+    failed += 1;
+    console.log("FAIL disk skip rejected a real hit", exactSkipCounts.disk, diskMid);
   }
 
   const plain = searchConstants(21);

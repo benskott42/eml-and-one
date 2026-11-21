@@ -1,4 +1,5 @@
 import { eml } from "./complex";
+import { disksDisjoint, emlDisk, pointDisk, type Disk } from "./interval";
 import { ballVerdict, enclose } from "./enclose";
 import { type ExactReport, type Z, exactClose, exactReport, exactValueAt, valueMatchesTarget } from "./exact";
 import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows, rpnTokens } from "./node";
@@ -68,6 +69,8 @@ export type SearchResult = {
   levels: SearchLevel[];
   sound?: SoundReport;
   classes?: TracedClass[];
+  /** FNV-1a of committed floats, present only when `digest` was requested. */
+  digest?: number;
 };
 
 type Target = { id: string; re: number; im: number };
@@ -98,16 +101,38 @@ export function acceptsConstantValue(value: Z, targetRe: number, targetIm: numbe
 }
 
 /**
- * Overflow or underflow rejects the hit. A ball that certifies 240-digit
- * agreement with the target is accepted. Anything else is not a certificate: a cut, a loose radius, or an
- * overflow from ln 0 falls through to a 240-digit comparison. That comparison
- * still requires a zero part to be exactly zero and a nonzero part to agree
- * to 240 digits. It is not a proof below the working tolerance.
+ * Overflow or underflow rejects the hit. A conclusive float disk that is
+ * disjoint from the target rejects before any decimal.js work: the true value
+ * lies in that disk, so it is not the target. A disk that overlaps, or that
+ * is inconclusive, is not a decision. A ball that certifies 240-digit
+ * agreement is accepted. Anything else is not a certificate: a cut, a loose
+ * radius, or an overflow from ln 0 falls through to a 240-digit comparison.
  */
+export const exactSkipCounts = { disk: 0, confirms: 0 };
+
+const diskMemo = new WeakMap<Node, Disk>();
+
+function circuitDisk(node: Node): Disk {
+  const hit = diskMemo.get(node);
+  if (hit) return hit;
+  let disk: Disk;
+  if (node.type === "one") disk = pointDisk(1, 0, 0);
+  else if (node.type === "eml" && node.a && node.b) disk = emlDisk(circuitDisk(node.a), circuitDisk(node.b));
+  else disk = { re: Number.NaN, im: Number.NaN, r: Number.POSITIVE_INFINITY, ok: false };
+  diskMemo.set(node, disk);
+  return disk;
+}
+
 export function acceptsConstantProgram(node: Node, targetRe: number, targetIm: number): boolean {
+  exactSkipCounts.confirms += 1;
   const floated = evaluateReport(node);
   if (floated.overflowed || floated.underflowed) return false;
   if (!Number.isFinite(floated.value.re) || !Number.isFinite(floated.value.im)) return false;
+  const disk = circuitDisk(node);
+  if (disk.ok && disksDisjoint(disk, pointDisk(targetRe, targetIm, 0))) {
+    exactSkipCounts.disk += 1;
+    return false;
+  }
   const coarse = exactValueAt(node, 40);
   if (!exactClose(coarse, targetRe, targetIm, 12)) return false;
   const ball = enclose(node);
@@ -281,6 +306,8 @@ export function searchConstants(
     sound?: boolean;
     /** Keep one record per class. Used by the parity and containment checks. */
     trace?: boolean;
+    /** Hash every committed float. Off the hot path unless set. */
+    digest?: boolean;
     shouldStop?: () => boolean;
     onProgress?: (progress: SearchProgress) => void;
   } = {},
@@ -288,6 +315,19 @@ export function searchConstants(
   const workers = options.workers ?? 1;
   const sound = options.sound === true;
   const trace = options.trace === true;
+  let digest = 2166136261;
+  const digF = new Float64Array(1);
+  const digU = new Uint32Array(digF.buffer);
+  const mixDigest = (valueRe: number, valueIm: number) => {
+    if (!options.digest) return;
+    digF[0] = valueRe;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digF[0] = valueIm;
+    digest = Math.imul(digest ^ (digU[0] ?? 0), 16777619);
+    digest = Math.imul(digest ^ (digU[1] ?? 0), 16777619);
+    digest = digest >>> 0;
+  };
   const maxGates = (maxK - 1) >> 1;
   let rejected = 0;
   const levels: SearchLevel[] = [];
@@ -475,6 +515,7 @@ export function searchConstants(
       re[count] = value.re;
       im[count] = value.im;
       count += 1;
+      mixDigest(value.re, value.im);
       return;
     }
     if (count >= cap) grow();
@@ -486,6 +527,7 @@ export function searchConstants(
     re[id] = value.re;
     im[id] = value.im;
     count += 1;
+    mixDigest(value.re, value.im);
     const built = buildNode(left, right, id, nodeMemo);
     let kept = false;
     for (const target of watch) {
@@ -537,6 +579,7 @@ export function searchConstants(
     pool: count,
     rejected,
     levels,
+    ...(options.digest ? { digest } : {}),
     ...(soundDedup ? { sound: soundDedup.report() } : {}),
     ...(trace ? { classes: traced() } : {}),
   });

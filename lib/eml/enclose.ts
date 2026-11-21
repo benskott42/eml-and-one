@@ -92,9 +92,19 @@ function cemi(x: Ball, y: Ball): Ball {
   return csub(cexp(x), cln(y));
 }
 
+/**
+ * One ball per node. Constant circuits are hash-consed, and a ball depends
+ * only on the node, so a later confirm reuses the prefix it already bounded.
+ * Only nodes that reach a confirm are stored. The map does not retain them.
+ */
+const ballCache = new WeakMap<Node, Ball>();
+
+/** Nodes reused from an earlier enclosure, and nodes bounded for the first time. */
+export const ballCacheCounts = { hit: 0, miss: 0 };
+
 /** Outward ball for a pure circuit. Overflow anywhere in the dag sets the flag. */
 export function enclose(root: Node): Ball {
-  const memo = new Map<Node, Ball>();
+  const memo = ballCache;
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   const visiting = new Set<Node>();
   while (stack.length) {
@@ -102,13 +112,18 @@ export function enclose(root: Node): Ball {
     if (!frame) break;
     const n = frame.n;
     if (!n) throw new EmlError("Could not evaluate this circuit.");
-    if (memo.has(n)) continue;
+    if (memo.has(n)) {
+      ballCacheCounts.hit += 1;
+      continue;
+    }
     if (n.type === "one") {
       memo.set(n, point(1));
+      ballCacheCounts.miss += 1;
       continue;
     }
     if (n.type === "input") {
       memo.set(n, point(n.value.re, n.value.im));
+      ballCacheCounts.miss += 1;
       continue;
     }
     if (n.type === "var") throw new EmlError("An enclosure needs a value for every variable.");
@@ -126,6 +141,7 @@ export function enclose(root: Node): Ball {
     const b = memo.get(n.b);
     if (!a || !b) throw new EmlError("Could not evaluate this circuit.");
     memo.set(n, cemi(a, b));
+    ballCacheCounts.miss += 1;
   }
   const out = memo.get(root);
   if (!out) throw new EmlError("Could not evaluate this circuit.");
