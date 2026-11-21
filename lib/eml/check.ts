@@ -3307,6 +3307,83 @@ failed += runPropertyChecks();
 }
 
 {
+  // Identities that are exactly 0 below the float range. The circuit's residue
+  // sits hundreds of decades under the operands, so the screen must say 0 or
+  // that it could not verify. A nearby difference, and a sum that does not
+  // cancel, stays a certified value. Both the packed worker and a fresh process.
+  const cancelRows = [
+    "exp(ln(1e-400))-1e-400",
+    "1e-400*1.5/1.5-1e-400",
+    "(1e-400)/2*2-(1e-400)",
+    "1e-400/0.5/2-1e-400",
+    "1e-400*(2^0.5)^2-2e-400",
+  ];
+  const keptRows: Array<[string, string]> = [
+    ["1e-400-1e-400*(1+1e-50)", "−1×10^−450"],
+    ["(1e-400)*3/3-(1e-400)*(1+1e-50)", "−1×10^−450"],
+    ["1e-400*(1+1e-100)-1e-400", "1×10^−500"],
+    ["1e-400*pi+1e-400", "4.14159265359×10^−400"],
+    ["exp(-1000)-exp(-1001)", "3.20861797491×10^−435"],
+  ];
+  const packedReport = (source: string) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 400_000 });
+  };
+  const shownText = (report: ReturnType<typeof exactReport>) => formatExact(report.value).replace(/\u200b/g, "");
+  const honestZero = (report: ReturnType<typeof exactReport>) => {
+    if (report.unverified) return true;
+    const text = shownText(report);
+    return text === "0" || text === "−0";
+  };
+  for (const source of cancelRows) {
+    const report = packedReport(source);
+    if (!honestZero(report)) {
+      failed += 1;
+      console.log("FAIL certified tiny cancel", source, shownText(report));
+    } else {
+      console.log("cancel", source, report.unverified ? "couldn't verify" : shownText(report));
+    }
+  }
+  for (const [source, want] of keptRows) {
+    const report = packedReport(source);
+    const text = shownText(report);
+    if (report.unverified || text !== want) {
+      failed += 1;
+      console.log("FAIL tiny kept value", source, report.unverified ? "unverified" : text);
+    } else {
+      console.log("kept", source, text);
+    }
+  }
+  const cancelJobs = [...cancelRows, ...keptRows.map(([source]) => source)].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const cancelFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(cancelJobs), 300_000);
+  if (cancelFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh tiny cancel", cancelFresh.status, cancelFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(cancelFresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+    rows.forEach((row, index) => {
+      const text = row.text.replace(/\u200b/g, "");
+      if (index < cancelRows.length) {
+        const ok = row.unverified || text === "0" || text === "−0";
+        if (!ok) {
+          failed += 1;
+          console.log("FAIL fresh certified tiny cancel", row.source, text);
+        }
+        return;
+      }
+      const want = keptRows[index - cancelRows.length]?.[1];
+      if (!want || row.unverified || text !== want) {
+        failed += 1;
+        console.log("FAIL fresh tiny kept value", row.source, row.unverified ? "unverified" : text, want);
+      }
+    });
+  }
+}
+
+{
   // Marked infinities. mpmath dps 50: ln(0) is -inf and 0/0 raises ZeroDivisionError.
   // tan(pi/2) there is the finite -1.9788349012695708716820519525808990497221781173111e+51,
   // because a 50-digit pi/2 is not the symbolic pole. The self-differences below are undefined,
