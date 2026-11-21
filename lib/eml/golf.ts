@@ -1,7 +1,8 @@
 import { eml } from "./complex";
 import { ballVerdict, enclose } from "./enclose";
-import { type Z, exactClose, exactValueAt, valueMatchesTarget } from "./exact";
-import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows } from "./node";
+import { type ExactReport, type Z, exactClose, exactReport, exactValueAt, valueMatchesTarget } from "./exact";
+import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows, rpnTokens } from "./node";
+import { SoundDedup, type SoundReport } from "./sound";
 
 /**
  * Bottom-up search for short 1-and-EML circuits.
@@ -23,6 +24,12 @@ import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflow
  * cannot hold the K=35 pool. Slot 3 and any mantissa >= 2^31 are negative as
  * signed int32s, so they always admit. Clean dedup is effectively off, and the
  * pool is not a set of 10-digit value classes.
+ * Sound mode is off unless `sound: true`. The default path is the key table
+ * above and does not call SoundDedup. Sound mode admits through
+ * SoundDedup.consider, including ln 0 specials, which stay inconclusive.
+ * A class is dropped only when exact proves equality, so a sound-mode count
+ * is an upper bound. Disks are the bounds in docs/interval-bounds.md for
+ * normal components; a subnormal component or a subnormal hypot is inconclusive.
  */
 
 export type GolfHit = {
@@ -38,6 +45,30 @@ export type GolfHit = {
   domain: "C" | "extended";
 };
 export type SearchProgress = { k: number; pool: number };
+
+export type SearchLevel = { k: number; added: number };
+
+export type { SoundReport };
+
+export type TracedClass = {
+  id: number;
+  rpn: string;
+  re: number;
+  im: number;
+  diskRe: number;
+  diskIm: number;
+  diskR: number;
+  diskOk: boolean;
+};
+
+export type SearchResult = {
+  hits: GolfHit[];
+  pool: number;
+  rejected: number;
+  levels: SearchLevel[];
+  sound?: SoundReport;
+  classes?: TracedClass[];
+};
 
 type Target = { id: string; re: number; im: number };
 
@@ -169,6 +200,29 @@ function keyOf(re: number, im: number): [number, number, number, number] {
   return [a, b, c, d];
 }
 
+/** The 10-digit dedup key. A hit nominates a merge in sound mode and does not drop a class. */
+export function floatDedupKey(re: number, im: number): [number, number, number, number] {
+  return keyOf(re, im);
+}
+
+function keyString(re: number, im: number): string {
+  const [a, b, c, d] = keyOf(re, im);
+  return `${a}:${b}:${c}:${d}`;
+}
+
+/** True only when both reports are certified and the decimals are identical. */
+function proofsMatch(left: ExactReport, right: ExactReport): boolean {
+  if (left.unverified || right.unverified) return false;
+  if (left.notCertified || right.notCertified) return false;
+  if (left.singular || right.singular) return false;
+  if (left.cancelledZero || right.cancelledZero) return false;
+  if (left.cutSeen || right.cutSeen) return false;
+  const a = left.value;
+  const b = right.value;
+  if (!a.re.isFinite() || !a.im.isFinite() || !b.re.isFinite() || !b.im.isFinite()) return false;
+  return a.re.eq(b.re) && a.im.eq(b.im);
+}
+
 function buildNode(left: Int32Array, right: Int32Array, id: number, memo: Array<Node | undefined>): Node {
   const stack: { id: number; seen: boolean }[] = [{ id, seen: false }];
   while (stack.length) {
@@ -220,12 +274,23 @@ export function searchConstants(
     partition?: boolean;
     /** When false, programs that log 0 are left out of the pool. */
     allowLn0?: boolean;
+    /**
+     * Opt-in. Off by default, and the default path is the 4-slot float key.
+     * When set, a float-key hit only nominates a merge; the exact engine confirms it.
+     */
+    sound?: boolean;
+    /** Keep one record per class. Used by the parity and containment checks. */
+    trace?: boolean;
     shouldStop?: () => boolean;
     onProgress?: (progress: SearchProgress) => void;
   } = {},
-): { hits: GolfHit[]; pool: number } {
+): SearchResult {
   const workers = options.workers ?? 1;
+  const sound = options.sound === true;
+  const trace = options.trace === true;
   const maxGates = (maxK - 1) >> 1;
+  let rejected = 0;
+  const levels: SearchLevel[] = [];
   let cap = 4096;
   let left = new Int32Array(cap);
   let right = new Int32Array(cap);
@@ -270,6 +335,8 @@ export function searchConstants(
   let count = 1;
   const level = [0, 1];
   const seen = new KeySet();
+  const soundDedup = sound ? new SoundDedup(keyString(1, 0)) : null;
+  const exactCache: Array<ExactReport | null | undefined> = [];
   const oneKey = keyOf(1, 0);
   seen.add(oneKey[0], oneKey[1], oneKey[2], oneKey[3]);
   const found = new Map<string, GolfHit>();
@@ -284,6 +351,45 @@ export function searchConstants(
     flow[id] = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn) ? 1 : 0;
   };
 
+  const reportOf = (id: number): ExactReport | null => {
+    const cached = exactCache[id];
+    if (cached !== undefined) return cached;
+    try {
+      const report = exactReport(buildNode(left, right, id, nodeMemo));
+      exactCache[id] = report;
+      return report;
+    } catch {
+      exactCache[id] = null;
+      return null;
+    }
+  };
+
+  const maybeRecord = (a: number, b: number, valueRe: number, valueIm: number, gates: number, id: number | null) => {
+    const imagAbs = Math.abs(valueIm);
+    const watch =
+      imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4
+        ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(valueRe, valueIm, target))
+        : [];
+    if (watch.length === 0) return;
+    const built = E(buildNode(left, right, a, nodeMemo), buildNode(left, right, b, nodeMemo));
+    for (const target of watch) {
+      if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
+      const report = evaluateReport(built);
+      const onCut = Math.abs(valueIm) > 1e-8 && Math.abs(Math.abs(valueIm) - Math.PI) < 1e-6;
+      const rpn = id === null ? (rpnTokens(built, gates * 2 + 1)?.join("") ?? "") : rpnOf(left, right, id);
+      if (!rpn) continue;
+      found.set(target.id, {
+        id: target.id,
+        k: gates * 2 + 1,
+        rpn,
+        singular: report.singular === SINGULAR_LN0,
+        usesLn0: report.touchedLn0,
+        branch: onCut || report.touchedLn0 ? "lower-bank" : "either",
+        domain: report.touchedLn0 ? "extended" : "C",
+      });
+    }
+  };
+
   const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number) => {
     const fromLn = touchesLn0(a, b);
     const nonFinite = !Number.isFinite(valueRe) || !Number.isFinite(valueIm);
@@ -294,8 +400,46 @@ export function searchConstants(
     if (overflow || under) {
       // A shorter overflowed or underflowed word must not occupy the clean
       // value key, or the exact subtree with the same 10 digits is never built.
+      rejected += 1;
       const raw = keyOf(valueRe, valueIm);
       seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0);
+      return;
+    }
+    // Sole sound-mode hook. KeySet is not consulted.
+    // ln 0 specials pass inconclusive parents, so consider takes the branch
+    // that keeps every float-key nomination unless exact proves equality.
+    if (soundDedup) {
+      let incoming: ExactReport | null | undefined;
+      const inconclusive = { re: Number.NaN, im: Number.NaN, r: Number.POSITIVE_INFINITY, ok: false as const };
+      const leftDisk = fromLn ? inconclusive : soundDedup.diskAt(a);
+      const rightDisk = fromLn ? inconclusive : soundDedup.diskAt(b);
+      const decision = soundDedup.consider(leftDisk, rightDisk, gates * 2 + 1, keyString(valueRe, valueIm), (id) => {
+        if (incoming === undefined) {
+          try {
+            incoming = exactReport(E(buildNode(left, right, a, nodeMemo), buildNode(left, right, b, nodeMemo)));
+          } catch {
+            incoming = null;
+          }
+        }
+        const resident = reportOf(id);
+        return incoming !== null && resident !== null && proofsMatch(incoming, resident);
+      });
+      if (decision.merged) {
+        rejected += 1;
+        maybeRecord(a, b, valueRe, valueIm, gates, null);
+        return;
+      }
+      if (count >= cap) grow();
+      const id = count;
+      logged[id] = fromLn ? 1 : 0;
+      markFlow(id, a, b, valueRe, valueIm);
+      left[id] = a;
+      right[id] = b;
+      re[id] = valueRe;
+      im[id] = valueIm;
+      count += 1;
+      soundDedup.remember(id, keyString(valueRe, valueIm), decision.disk);
+      maybeRecord(a, b, valueRe, valueIm, gates, id);
       return;
     }
     const value = { re: valueRe, im: valueIm };
@@ -319,7 +463,10 @@ export function searchConstants(
           break;
         }
       }
-      if (!admitted) return;
+      if (!admitted) {
+        rejected += 1;
+        return;
+      }
       if (count >= cap) grow();
       logged[count] = fromLn ? 1 : 0;
       markFlow(count, a, b, value.re, value.im);
@@ -361,9 +508,38 @@ export function searchConstants(
       seen.add(key[0], key[1], key[2], key[3]);
     } else {
       const raw = keyOf(value.re, value.im);
-      if (!seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0)) count -= 1;
+      if (!seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0)) {
+        count -= 1;
+        rejected += 1;
+      }
     }
   };
+
+  const traced = (): TracedClass[] => {
+    const out: TracedClass[] = [];
+    for (let id = 0; id < count; id += 1) {
+      out.push({
+        id,
+        rpn: rpnOf(left, right, id),
+        re: re[id] ?? 0,
+        im: im[id] ?? 0,
+        diskRe: soundDedup?.stored(id).re ?? 0,
+        diskIm: soundDedup?.stored(id).im ?? 0,
+        diskR: soundDedup?.stored(id).ok ? (soundDedup.stored(id).r ?? 0) : Number.POSITIVE_INFINITY,
+        diskOk: soundDedup?.stored(id).ok === true,
+      });
+    }
+    return out;
+  };
+
+  const finish = (): SearchResult => ({
+    hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)),
+    pool: count,
+    rejected,
+    levels,
+    ...(soundDedup ? { sound: soundDedup.report() } : {}),
+    ...(trace ? { classes: traced() } : {}),
+  });
 
   for (let gates = 1; gates <= maxGates; gates += 1) {
     if (options.shouldStop?.()) break;
@@ -379,11 +555,14 @@ export function searchConstants(
           const index = pair++;
           if ((index & 2047) === 0 && options.shouldStop?.()) {
             level[gates + 1] = count;
-            return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
+            return finish();
           }
           if (options.allowLn0 === false && touchesLn0(a, b)) continue;
           const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
-          if (Number.isNaN(value.re) || Number.isNaN(value.im)) continue;
+          if (Number.isNaN(value.re) || Number.isNaN(value.im)) {
+            rejected += 1;
+            continue;
+          }
           if (options.partition) {
             buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im });
             continue;
@@ -397,10 +576,12 @@ export function searchConstants(
       for (const item of ordered) commit(item.a, item.b, item.re, item.im, gates);
     }
     level[gates + 1] = count;
-    options.onProgress?.({ k: gates * 2 + 1, pool: count - start });
+    const added = count - start;
+    levels.push({ k: gates * 2 + 1, added });
+    options.onProgress?.({ k: gates * 2 + 1, pool: added });
   }
 
-  return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
+  return finish();
 }
 
 /** The with-infinity search keeps these and says so. The finite search rejects them. */
@@ -408,8 +589,12 @@ export function ln0Dependence(hit: GolfHit): string | null {
   return hit.usesLn0 ? "depends on ln 0 = −∞" : null;
 }
 
-export function searchConstantsMerged(maxK: number, workers: number): GolfHit[] {
-  return searchConstants(maxK, { workers, partition: workers > 1 }).hits;
+export function searchConstantsMerged(maxK: number, workers: number, sound = false): GolfHit[] {
+  return searchConstants(maxK, {
+    workers,
+    partition: workers > 1,
+    ...(sound ? { sound: true } : {}),
+  }).hits;
 }
 
 export const FINGERPRINT_POINTS = [
