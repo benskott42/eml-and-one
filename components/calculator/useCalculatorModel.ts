@@ -16,6 +16,7 @@ import {
   unaryNode,
 } from "@/lib/eml/library";
 import { E, ONE, type Node, circuitStats, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
+import { compilePresses } from "@/lib/eml/exprSeq";
 import { compileExpression } from "@/lib/eml/parse";
 import { loadNotice, parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 import {
@@ -52,6 +53,7 @@ type Live = {
   undo: () => void;
   clearAll: () => void;
   showProgram: (node: Node, caption: string, replace: boolean, notice?: string | null) => void;
+  compilePressSource: (source: string) => void;
   stepLoaded: (delta: 1 | -1) => void;
 };
 
@@ -73,6 +75,8 @@ export function useCalculatorModel() {
   const queueRef = useRef<Array<() => void>>([]);
   const jobRef = useRef(0);
   const twoButtonsRef = useRef(false);
+  const pressGen = useRef(0);
+  const [pressCount, setPressCount] = useState<number | "pending" | null>(null);
   const live = useRef<Live>({
     pushNode: () => {},
     pushOne: () => {},
@@ -87,6 +91,7 @@ export function useCalculatorModel() {
     undo: () => {},
     clearAll: () => {},
     showProgram: () => {},
+    compilePressSource: () => {},
     stepLoaded: () => {},
   });
   useEffect(() => {
@@ -641,6 +646,31 @@ export function useCalculatorModel() {
     })();
   }, []);
 
+  const clearPressCount = useCallback(() => {
+    pressGen.current += 1;
+    setPressCount(null);
+  }, []);
+
+  const compilePressSource = useCallback((source: string): void => {
+    const gen = pressGen.current;
+    if (recomputeRef.current) {
+      setPressCount("pending");
+      queueRef.current.push(() => {
+        if (pressGen.current !== gen) return;
+        live.current.compilePressSource(source);
+      });
+      return;
+    }
+    try {
+      const seq = compilePresses(source);
+      showProgram(seq.node, source.trim(), false, null);
+      if (pressGen.current === gen) setPressCount(seq.presses);
+    } catch (err) {
+      fail(failure(err));
+      if (pressGen.current === gen) setPressCount(null);
+    }
+  }, [fail, showProgram]);
+
   const loadProgramText = useCallback((source: string) => {
     try {
       const parsed = parseProgramInput(source);
@@ -708,6 +738,7 @@ export function useCalculatorModel() {
       undo,
       clearAll,
       showProgram,
+      compilePressSource,
       stepLoaded,
     };
   });
@@ -771,6 +802,9 @@ export function useCalculatorModel() {
     undo,
     clearAll,
     loadProgramText,
+    compilePressSource,
+    clearPressCount,
+    pressCount,
     stepLoaded,
     loadWord,
   };

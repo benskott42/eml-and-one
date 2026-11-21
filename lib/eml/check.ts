@@ -3,6 +3,7 @@ import DecimalValue from "decimal.js";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
+import { runExprChecks } from "./check-expr";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
@@ -3828,6 +3829,8 @@ if (inShard("core")) {
     }
   }
 }
+
+if (inShard("core")) failed += runExprChecks();
 
 if (failed) {
   console.log(`\n${failed} failed`);

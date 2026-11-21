@@ -2,13 +2,13 @@
 
 a two-button calculator
 
-Two keys. The 1 key is the bit 1. The EML key is the bit 0. Every other key is a shortcut that presses those two. A program is a circuit of the operator
+Two keys. The 1 key is the bit 0. The EML key is the bit 1. Every other key is a shortcut that presses those two. A program is a circuit of the operator
 
 ```
 eml(x, y) = exp(x) − ln(y)
 ```
 
-with the constant 1. EML is the operator introduced in arXiv:2603.21852, [https://arxiv.org/abs/2603.21852](https://arxiv.org/abs/2603.21852).
+with the constant 1. EML is the operator introduced in arXiv:2603.21852, [https://arxiv.org/abs/2603.21852](https://arxiv.org/abs/2603.21852). An expression such as `3+4` or `2^3-1` compiles into presses of those two keys. The screen shows the sequence and its length.
 
 Exact mode is the default. It evaluates the circuit you see with 120-digit decimal arithmetic, raised up to 480 digits when a cancellation would otherwise hide a value. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That is not a fixed snap at 10^(−112), and it is not symbolic mathematics or an interval proof. When the spelling stores the exponent, as in 1e-432, a known magnitude of 10^(−432) still resolves. 1e-433 is past the cap, and the screen says it could not verify. That does not hold for ln(1+10^(−k)) or log(1+10^(−k)); see [docs/known-limitations.md](docs/known-limitations.md). Float mode is a hardware view of the same gates. When the two disagree beyond what float can claim, the float stays on screen and the exact value is shown beside it.
 
@@ -57,6 +57,8 @@ The ranking of programs is the classical ranking of binary trees and prefix code
 ## Prior art
 
 [pmocz/two_button_calculator](https://github.com/pmocz/two_button_calculator) and [LeaderOnePro](https://eml-calculator.vercel.app/) are earlier two-button calculators. This project drew on those ideas only. None of their code was used.
+
+John Haas's [eml-calculator](https://github.com/j0hnhaas/eml-calculator) (MIT; [demo](https://j0hnhaas.github.io/eml-calculator/)) is the source of the typed-expression playback: an ordinary sum compiled into presses of 1 and EML, with the short recipes used only where they were checked. None of that source was copied. The recipes are the words in [lib/eml/best-known.json](lib/eml/best-known.json). His multiply word is the same string as ours (`1111xEE1EEyE1EE1E`). His add word is that string with the two operands exchanged (`1111x1EEE1EEy1EE1EE` there, `1111y1EEE1EEx1EE1EE` here). Both of our words were already in best-known.json in commit 91f4360 (2026-11-15, message “EML and One v1.0.0”), found independently of his source. The domains in [lib/eml/exprSeq.ts](lib/eml/exprSeq.ts) are what this project's exact engine accepts on the lower bank. A nonzero integer sum or difference with both operands in −8…8 uses the short word, and each such pair was certified. An add or a sub whose value is exactly 0 is the certified 7-press 0 word: a printed 0 is not certified for every spelling.
 
 ## References
 

@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import { EXACT_MAX_NODES } from "./exactBudget";
 import { exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "./exact";
 import { unpackCircuit, type Wire } from "./wire";
 
@@ -27,14 +28,19 @@ self.onmessage = (event: MessageEvent<Request>) => {
       last = now;
       self.postMessage({ type: "progress", request: data.request, digits, elapsedMs: Math.round(now - started) });
     };
-    const report = exactReport(node, data.env ?? {}, { maxNodes: 80_000, deadline: started + EXACT_DEADLINE_MS, onProgress });
+    const report = exactReport(node, data.env ?? {}, { maxNodes: EXACT_MAX_NODES, deadline: started + EXACT_DEADLINE_MS, onProgress });
     const floated = exactToFloat(report.value);
+    const digits = (part: { isFinite(): boolean; toFixed(places: number): string; toString(): string }) =>
+      part.isFinite() ? part.toFixed(120) : part.toString();
     self.postMessage({
       type: "done",
       request: data.request,
       text: formatExact(report.value),
       re: floated.re,
       im: floated.im,
+      // 120-digit decimals. The on-screen text is shorter. Old clients ignore these.
+      reDigits: digits(report.value.re),
+      imDigits: digits(report.value.im),
       singular: report.singular,
       touchedLn0: report.touchedLn0,
       underflowedExact: exactUnderflowsFloat(report.value),

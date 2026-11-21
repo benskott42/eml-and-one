@@ -321,7 +321,7 @@ export function parseProgramInput(source: string): ParsedProgram {
   if (raw.startsWith("#")) {
     if (/\s/.test(raw)) throw new RangeError("A program number cannot contain spaces.");
     const digits = raw.slice(1);
-    if (!/^\d+$/.test(digits)) throw new RangeError("A program number is # followed by digits, such as #110.");
+    if (!/^\d+$/.test(digits)) throw new RangeError("A program number is # followed by digits, such as #1.");
     return { kind: "index", index: BigInt(digits) };
   }
   if (/\s/.test(raw) && /[2-9]/.test(raw)) {
