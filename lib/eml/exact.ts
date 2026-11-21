@@ -463,7 +463,14 @@ function mergeHits(left: CancelHit[] | undefined, right: CancelHit[] | undefined
   if (a.length === 0 && b.length === 0) return own;
   if (b.length === 0 && own.length === 0) return a;
   if (a.length === 0 && own.length === 0) return b;
-  return [...a, ...b, ...own];
+  if (a === b && own.length === 0) return a;
+  // A shared subtree reaches a node through both children. Concatenating copied its
+  // hits once per path, which doubles per level of sharing. Each hit is one object,
+  // and both readers (liftedResidue, componentProd) ignore repeats, so keep one copy.
+  const merged = new Set(a);
+  for (const hit of b) merged.add(hit);
+  for (const hit of own) merged.add(hit);
+  return [...merged];
 }
 
 /** Scale of the cancellation whose residual is this component, when one is that close. */
