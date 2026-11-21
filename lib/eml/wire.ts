@@ -120,7 +120,8 @@ export function wireNum(x: number): WireNum {
   if (Object.is(x, -0)) return "-0";
   return Number.isFinite(x) ? x : String(x);
 }
-export function readWireNum(x: WireNum): number {
+export function readWireNum(x: WireNum | null): number {
+  if (x == null || x === "") throw new Error("The circuit value was empty.");
   return typeof x === "number" ? x : Number(x);
 }
 

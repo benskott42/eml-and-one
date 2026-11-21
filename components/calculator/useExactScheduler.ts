@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { type C } from "@/lib/eml/complex";
 import { beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "@/lib/eml/exact";
-import { compareVerdict, exactProgressNote, exactScreen, fillNotice, type History } from "@/lib/eml/history";
+import { compareVerdict, exactProgressNote, exactScreen, exactShownText, fillNotice, type History } from "@/lib/eml/history";
 import { type Node } from "@/lib/eml/node";
 import { packCircuit } from "@/lib/eml/wire";
 import { failure, noteFor, resultError, type Entry, type Model } from "./screen";
@@ -112,7 +112,7 @@ export function useExactScheduler(input: {
         return;
       }
       if (payload.unverified) {
-        publishWatch(job.watch, { ...current, pendingExact: false, text: "—", value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify" });
+        publishWatch(job.watch, { ...current, pendingExact: false, text: exactShownText(true, payload.text), value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify" });
         return;
       }
       if (!current.pendingExact) return;

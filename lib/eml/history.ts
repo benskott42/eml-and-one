@@ -100,6 +100,11 @@ export function isZeroText(text: string): boolean {
  * Exact mode never keeps a previous result up. Computing and cancel both
  * replace it. A finished value is the only number the screen may show.
  */
+/** An unverified exact result is a dash. The worker's raw text is not a value. */
+export function exactShownText(unverified: boolean, text: string): string {
+  return unverified ? "—" : text;
+}
+
 export function exactScreen(phase: "computing" | "cancelled" | "ready", readyText = ""): { text: string; note: string | null } {
   if (phase === "ready") return { text: readyText, note: null };
   if (phase === "cancelled") return { text: "—", note: "cancelled" };

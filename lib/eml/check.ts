@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
-import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
+import { applyModeSwitch, commitHistory, compareVerdict, exactProgressNote, exactShownText, fillNotice, withholdZeroName, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
 import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
@@ -1943,9 +1943,10 @@ if (inShard("core")) {
     const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify([{ source: "(1+1/0)-1/0", tokens: packed.tokens, root: packed.root }]));
     const row = fresh.status === 0 ? (JSON.parse(fresh.stdout) as Array<{ unverified: boolean; text: string }>)[0] : undefined;
     const verdict = row ? compareVerdict({ text: row.text, unverified: row.unverified, notCertified: false, cancelledZero: false, differs: true }) : null;
-    if (!row || !row.unverified || !verdict || !("notice" in verdict) || verdict.notice !== "couldn't verify") {
+    const exactText = row ? exactShownText(row.unverified, row.text) : "";
+    if (!row || exactText !== "—" || !verdict || !("notice" in verdict) || verdict.notice !== "couldn't verify") {
       failed += 1;
-      console.log("FAIL (1+∞)-∞ exact screen", fresh.status, row?.text, row?.unverified, fresh.stderr?.slice(0, 200));
+      console.log("FAIL (1+∞)-∞ exact screen", fresh.status, exactText, row?.unverified, fresh.stderr?.slice(0, 200));
     }
   }
   const varFold = evaluateReport(compileExpression("(x+y)-y", { x: V("x"), y: V("y") }), { x: c(1), y: c(Infinity) });
@@ -3322,6 +3323,18 @@ if (inShard("core")) {
     { src: "-1/inf", leaf: false, exact: "0" },
     { src: "-(10^(-400))", leaf: false, exact: "−1×10^−400" },
   ];
+  for (const empty of ["", null] as const) {
+    let threw = false;
+    try {
+      readWireNum(empty);
+    } catch {
+      threw = true;
+    }
+    if (!threw) {
+      failed += 1;
+      console.log("FAIL readWireNum empty", JSON.stringify(empty));
+    }
+  }
   const isNegZero = (x: WireNum | null | undefined) => x !== null && x !== undefined && Object.is(readWireNum(x), -0);
   const jobs = zeroRows.map((row) => {
     const packed = packCircuit(compileExpression(row.src, {}));
