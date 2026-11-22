@@ -2,7 +2,20 @@
   box-sizing: border-box;
 }
 
+/*
+ * ti-calculator.css reads --font-sans in every font stack. An undefined custom
+ * property makes the whole font-family declaration invalid at computed-value
+ * time (its own fallbacks included), so all text fell back to Times New Roman.
+ */
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
 html,
 body {
   margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
 }

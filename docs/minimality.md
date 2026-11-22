@@ -20,3 +20,13 @@ The certificate was produced with separate verification scripts, which aren't in
 - **2 at K 19.** All 2056 programs with K ≤ 17 are decided, and none of them is 2. The word does not use ln 0.
 
 The same exclusions hold when infinities keep a direction. The two infinity models agree on all 2056 programs with K ≤ 17.
+
+## Reproducing the proof
+
+The verification scripts above are not in this repository. [tools/minimality/decide.py](../tools/minimality/decide.py) is an independent check that is: interval arithmetic (mpmath) with exact k·π tags, symbolic cancellation, and signed tower offsets. Run `python tools/minimality/decide.py` and it reports each claim as PROVED or lists the programs it could not decide. On 2026-11-22 every claim above came out PROVED with nothing undecided: 0 at K 7, −1 at K 15 with ln 0 and at K 17 without it, and 2 at K 19. That includes the four K 17 programs settled by hand above.
+
+## +iπ at K 21
+
+`python tools/minimality/decide.py --open` also settles a length that this document did not claim. **+iπ on this cut (−iπ under the principal log) is minimal at K 21 with ln 0 = −∞**: all 6918 programs with K ≤ 19 are excluded, with nothing undecided. Three of them were tower impostors that differ from +iπ by about 10^(−1656519). The script excludes them because it tracks the sign of the term a tower absorbs, not by numerical comparison, which no precision short of a million digits could do.
+
+Still open: +iπ without ln 0 at K 23 (16 K 21 programs undecided) and −2 at K 25 (188 programs with K ≤ 23 undecided). No counterexample was found among them.

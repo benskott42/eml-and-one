@@ -76,8 +76,54 @@ import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
 import { runCertifyChecks } from "./check-certify";
+import shardWeights from "./check-shards.json";
 
 let failed = 0;
+
+/**
+ * EML_SHARD=i/N runs only the top-level blocks assigned to shard i (0-based) of N,
+ * so CI can run the suite as parallel jobs. Setup outside the blocks runs in every
+ * shard. Blocks are dealt by the measured weights in check-shards.json (greedy,
+ * heaviest first); a block missing from it goes round-robin. EML_BLOCK_TIMES=1
+ * prints each block's wall time, which is how that file is regenerated.
+ */
+const shardMatch = /^(\d+)\/(\d+)$/.exec(process.env.EML_SHARD ?? "");
+const shardIndex = shardMatch ? Number(shardMatch[1]) : 0;
+const shardCount = shardMatch ? Math.max(1, Number(shardMatch[2])) : 1;
+const shardOf = assignShards(shardCount);
+const blockTimes = process.env.EML_BLOCK_TIMES === "1";
+let openBlock = -1;
+let openedAt = 0;
+
+function assignShards(count: number): Map<number, number> {
+  const owner = new Map<number, number>();
+  if (count <= 1) return owner;
+  const load = Array.from({ length: count }, () => 0);
+  const weights = Object.entries(shardWeights as Record<string, number>).map(([id, ms]) => [Number(id), ms] as const);
+  weights.sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  for (const [id, ms] of weights) {
+    let best = 0;
+    for (let k = 1; k < count; k += 1) if (load[k] < load[best]) best = k;
+    owner.set(id, best);
+    load[best] += ms;
+  }
+  return owner;
+}
+
+function closeBlockTimer(): void {
+  if (blockTimes && openBlock >= 0) console.log(`block ${openBlock} ${Math.round(performance.now() - openedAt)} ms`);
+  openBlock = -1;
+}
+
+function shardTurn(id: number): boolean {
+  closeBlockTimer();
+  const mine = shardCount <= 1 || (shardOf.get(id) ?? id % shardCount) === shardIndex;
+  if (mine) {
+    openBlock = id;
+    openedAt = performance.now();
+  }
+  return mine;
+}
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 
@@ -248,7 +294,7 @@ if (!(belowCut.im < 0)) {
   console.log("FAIL ln below the cut", belowCut);
 }
 check("sqrt(-4) via radical", evaluate(compileExpression("√-4", {})), c(0, 2), 1e-6);
-{
+if (shardTurn(0)) {
   const huge = compileExpression("asinh(1e200)", {});
   const wide = exactToFloat(exactEvaluate(huge));
   check("asinh huge exact", wide, c(Math.asinh(1e200)), 1e-8);
@@ -260,7 +306,7 @@ if (Math.abs(hypotTiny.re - hypotTinyWant) > 1e-6 * hypotTinyWant || Math.abs(hy
   failed += 1;
   console.log("FAIL hypot tiny", hypotTiny, hypotTinyWant);
 }
-{
+if (shardTurn(1)) {
   const at = exactReport(compileExpression("atan(1/0)", {}));
   if (at.value.im.isFinite() || at.singular === null) {
     failed += 1;
@@ -324,7 +370,7 @@ if (rpnTokens(ONE, 1)?.join(" ") !== "1" || describe(ONE, 1) !== "1") {
 }
 
 check("integer 6", evaluate(integerNode(6)), c(6), 1e-8);
-{
+if (shardTurn(2)) {
   const neg = integerNode(-1000);
   const wide = exactToFloat(exactEvaluate(neg));
   check("integer -1000 exact", wide, c(-1000), 1e-9);
@@ -359,7 +405,7 @@ if (divPos.re !== Infinity || divPos.im !== 0) {
   console.log("FAIL 1/0", divPos);
 }
 
-{
+if (shardTurn(3)) {
   const pole = evaluate(compileExpression("tan(pi/2)", {}));
   if (Number.isFinite(pole.re) && Math.abs(pole.re) < 1e6) {
     failed += 1;
@@ -368,7 +414,7 @@ if (divPos.re !== Infinity || divPos.im !== 0) {
 }
 check("arcsin(2)", evaluate(compileExpression("arcsin(2)", {})), c(Math.PI / 2, -1.3169578969248166), 1e-6);
 check("arccos(2)", evaluate(compileExpression("arccos(2)", {})), c(0, 1.3169578969248166), 1e-6);
-{
+if (shardTurn(4)) {
   const sinhNode = compileExpression("sinh(710)", {});
   const coshNode = compileExpression("cosh(710)", {});
   check("sinh(710) exact", exactToFloat(exactEvaluate(sinhNode)), c(Math.sinh(710)), 1e-6);
@@ -577,7 +623,7 @@ const checkRecord = (id: string, k: number, re: Decimal.Value, im: Decimal.Value
   }
 };
 checkRecord("-ipi", 45, 0, storedPi.neg(), true);
-checkRecord("-ipi-strict", 55, 0, storedPi.neg(), false);
+checkRecord("-ipi-strict", 47, 0, storedPi.neg(), false);
 checkRecord("4", 39, 4, 0, false);
 checkRecord("2/3", 39, third.mul(2), 0, false);
 checkRecord("-1/3", 41, third.neg(), 0, false);
@@ -618,7 +664,7 @@ if (zeroInfExact.singular !== SINGULAR_INDET || !zeroInfExact.value.re.isNaN()) 
   failed += 1;
   console.log("FAIL exact 0*inf", formatExact(zeroInfExact.value), zeroInfExact.singular);
 }
-{
+if (shardTurn(5)) {
   const rawMul = applyProgram("mul", {
     x: E(input({ re: -Infinity, im: 0 }, "−∞"), ONE),
     y: applyProgram("div", { x: input({ re: 5, im: 0 }, "5"), y: input({ re: 0, im: 0 }, "0") }),
@@ -629,7 +675,7 @@ if (zeroInfExact.singular !== SINGULAR_INDET || !zeroInfExact.value.re.isNaN()) 
     console.log("FAIL raw mul(exp(−∞), 5/0)", formatExact(rawReport.value), rawReport.singular);
   }
 }
-{
+if (shardTurn(6)) {
   const logged = compileExpression("ln(-0)", {});
   const floated = evaluateReport(logged);
   const exact = exactReport(logged);
@@ -651,7 +697,7 @@ if (zeroInfExact.singular !== SINGULAR_INDET || !zeroInfExact.value.re.isNaN()) 
     console.log("FAIL log clearly below the cut was flagged", clear.value, clear.nearCut);
   }
 }
-{
+if (shardTurn(7)) {
   const huge = evaluateReport(compileExpression("x-y", { x: V("x"), y: V("y") }), { x: c(1), y: c(1e200, 2e7) });
   if (huge.singular !== SINGULAR_RANGE || !Number.isNaN(huge.value.re)) {
     failed += 1;
@@ -713,6 +759,13 @@ if (acceptsConstantProgram(k35Node, 0, -Math.PI)) {
   failed += 1;
   console.log("FAIL K35 −iπ impostor was accepted");
 }
+// A deeper one: −9×10^(−307) − i(π − 4×10^(−307)). The ball and the 280-digit compare
+// both read it as −iπ; exact mode sees the 10^(−306) part it passes through.
+const k35DeepNode = nodeFromCompact("11111111E11E1EE1EEEEEE1E1E11E1E1EEE");
+if (acceptsConstantProgram(k35DeepNode, 0, -Math.PI)) {
+  failed += 1;
+  console.log("FAIL K35 −iπ impostor near 10^(−307) was accepted");
+}
 const rot = rotSubCircuit(V("x"), V("y"));
 const rotStats = circuitStats(rot);
 if (rotStats.rpnLength !== BigInt(131) || rotStats.dagGates !== 34) {
@@ -758,7 +811,7 @@ if (!noInf.some((hit) => hit.id === "0") || !noInf.some((hit) => hit.id === "e")
   failed += 1;
   console.log("FAIL no-inf search dropped a finite constant", noInf.map((hit) => hit.id));
 }
-{
+if (shardTurn(8)) {
   const k23Word = "111111E1E1EEE1EE11E1EEE";
   const k23Node = nodeFromCompact(k23Word);
   const k23Ball = enclose(k23Node);
@@ -886,7 +939,7 @@ for (const [source, re, im] of regressions) {
 
 // (a − c) − c is a − 2c. mpmath at 50 digits. Hardware is the float circuit;
 // exact is compared at 40 digits, which these circuits actually reach.
-{
+if (shardTurn(9)) {
   const rows: Array<{ source: string; re: string; im: string; vars?: Record<string, Node> }> = [
     { source: "e-1-1", re: "0.71828182845904523536028747135266249775724709369996", im: "0" },
     { source: "pi-1-1", re: "1.1415926535897932384626433832795028841971693993751", im: "0" },
@@ -930,7 +983,7 @@ for (const source of zeroSubtrahends) {
     console.log("FAIL zero subtrahend", source, got.value, got.overflowed, exact);
   }
 }
-{
+if (shardTurn(10)) {
   // A variable is not the integer 0, so y = 0 at runtime still runs the scaled
   // circuit. √(b²) is 0 there, k is 1, and both modes are that gate result.
   const bounds = [
@@ -957,7 +1010,7 @@ for (const source of zeroSubtrahends) {
     }
   }
 }
-{
+if (shardTurn(11)) {
   const tiny = [
     ["1e-100-3e-100", c(-2e-100)],
     ["0-1e-90", c(-1e-90)],
@@ -1088,7 +1141,7 @@ for (const [source, want] of asinhCases) {
     console.log("FAIL asinh", source, got);
   }
 }
-{
+if (shardTurn(12)) {
   const negative = evaluate(tArsinh(V("x")), { x: c(-2) });
   const zero = evaluate(tArsinh(V("x")), { x: c(0) });
   if (!close(negative, c(Math.asinh(-2)), 1e-8) || !close(zero, c(0), 0)) {
@@ -1151,7 +1204,7 @@ function conformance(name: string, source: string, want: { re: number; im: numbe
 
 conformance("ln just below the cut", "ln(-1-1e-15*i)", c(0, -Math.PI));
 conformance("0-ln(0)", "0-ln(0)", c(Infinity, 0), SINGULAR_LN0);
-{
+if (shardTurn(13)) {
   // Float64 cannot recover a real 2 beside an imaginary 10^16 through exp and ln:
   // one ulp of the angle is already larger than 2. Exact mode still has both.
   const scaledImag = evaluate(compileExpression("2-1e16*i", {}));
@@ -1161,7 +1214,7 @@ conformance("0-ln(0)", "0-ln(0)", c(Infinity, 0), SINGULAR_LN0);
   }
 }
 check("implicit i", evaluate(compileExpression("2-1e16i", {})), evaluate(compileExpression("2-1e16*i", {})), 0);
-{
+if (shardTurn(14)) {
   const inf = evaluate(compileExpression("inf", {}));
   if (inf.re !== Infinity || inf.im !== 0) {
     failed += 1;
@@ -1169,14 +1222,14 @@ check("implicit i", evaluate(compileExpression("2-1e16i", {})), evaluate(compile
   }
 }
 check("tan(1+800i) juxtaposition", evaluate(compileExpression("tan(1+800i)", {})), c(0, 1), 1e-6);
-{
+if (shardTurn(15)) {
   const exact = exactReport(compileExpression("2-1e16*i", {}), {}, { maxNodes: 200_000 });
   if (!exactClose(exact.value, 2, "-1e16", 12)) {
     failed += 1;
     console.log("FAIL exact 2-1e16i", formatExact(exact.value));
   }
 }
-{
+if (shardTurn(16)) {
   const exact = exactReport(compileExpression("10000000000000001-10000000000000000", {}), {}, { maxNodes: 200_000 });
   if (!exactClose(exact.value, 1, 0, 20)) {
     failed += 1;
@@ -1184,28 +1237,28 @@ check("tan(1+800i) juxtaposition", evaluate(compileExpression("tan(1+800i)", {})
   }
 }
 check("big integer sub is not the zero program", evaluate(compileExpression("10000000000000001-10000000000000000", {})), c(1), 0);
-{
+if (shardTurn(17)) {
   const exact = exactReport(compileExpression("(2^53+1)-2^53", {}), {}, { maxNodes: 200_000 });
   if (!exactClose(exact.value, 1, 0, 12)) {
     failed += 1;
     console.log("FAIL exact 2^53", formatExact(exact.value));
   }
 }
-{
+if (shardTurn(18)) {
   const exact = exactReport(compileExpression("(1e16+1)-1e16", {}), {}, { maxNodes: 200_000 });
   if (!exactClose(exact.value, 1, 0, 12)) {
     failed += 1;
     console.log("FAIL exact 1e16+1-1e16", formatExact(exact.value));
   }
 }
-{
+if (shardTurn(19)) {
   const exact = exactReport(compileExpression("(1+1e-20)-1", {}), {}, { maxNodes: 200_000 });
   if (!exactClose(exact.value, "1e-20", 0, 12)) {
     failed += 1;
     console.log("FAIL exact (1+1e-20)-1", formatExact(exact.value));
   }
 }
-{
+if (shardTurn(20)) {
   const node = compileExpression("1-((1e9+pi+1e-10)-1e9)*i", {});
   const exact = exactReport(node, {}, { maxNodes: 400_000 });
   if (exact.value.im.gt(0) || !exactClose(exact.value, 1, exact.value.im, 8)) {
@@ -1217,14 +1270,14 @@ check("big integer sub is not the zero program", evaluate(compileExpression("100
     console.log("FAIL float near-pi", evaluate(node));
   }
 }
-{
+if (shardTurn(21)) {
   const exact = exactReport(compileExpression("(1e17+pi)-1e17", {}), {}, { maxNodes: 400_000 });
   if (!exactClose(exact.value, Math.PI, 0, 10)) {
     failed += 1;
     console.log("FAIL exact (1e17+pi)-1e17", formatExact(exact.value));
   }
 }
-{
+if (shardTurn(22)) {
   const variable = tSub(literalNode("1"), V("x"));
   const exact = exactReport(variable, { x: c(1e20) }, { maxNodes: 400_000 });
   if (exact.value.re.plus("99999999999999999999").abs().gt("1e-6")) {
@@ -1232,7 +1285,7 @@ check("big integer sub is not the zero program", evaluate(compileExpression("100
     console.log("FAIL variable 1-1e20", exact.value.re.toString());
   }
 }
-{
+if (shardTurn(23)) {
   const exact = exactReport(compileExpression("1e308+1e308", {}), {}, { maxNodes: 400_000 });
   if (!exactClose(exact.value, "2e308", 0, 12)) {
     failed += 1;
@@ -1253,14 +1306,14 @@ if (!close(ctan(c(1, -1)), c(0.27175258531951174, -1.0839233273386948), 1e-9)) {
   failed += 1;
   console.log("FAIL ctan negative imag", ctan(c(1, -1)));
 }
-{
+if (shardTurn(24)) {
   const asinh = evaluate(tArsinh(V("x")), { x: c(1000) });
   if (!close(asinh, c(Math.asinh(1000)), 1e-9)) {
     failed += 1;
     console.log("FAIL variable asinh(1000)", asinh);
   }
 }
-{
+if (shardTurn(25)) {
   let threw = false;
   try {
     literalNode("1e400000000");
@@ -1277,7 +1330,7 @@ if (!close(evaluate(literalNode("5.")), c(5), 0)) {
   console.log("FAIL literal 5.", evaluate(literalNode("5.")));
 }
 const twentyK = Array.from({ length: 20_000 }, () => "1").join("+");
-{
+if (shardTurn(26)) {
   const summed = compileExpression(twentyK, {});
   const sum = evaluateReport(summed, {}, { maxNodes: 2_000_000 });
   if (!close(sum.value, c(20000), 1e-12) || sum.value.im !== 0) {
@@ -1286,7 +1339,7 @@ const twentyK = Array.from({ length: 20_000 }, () => "1").join("+");
   }
 }
 
-{
+if (shardTurn(27)) {
   let total = BigInt(0);
   for (let n = 0; n <= 12; n += 1) total += catalan(n);
   for (let i = BigInt(0); i < total; i += BigInt(1)) {
@@ -1304,7 +1357,7 @@ const twentyK = Array.from({ length: 20_000 }, () => "1").join("+");
     }
   }
 }
-{
+if (shardTurn(28)) {
   const first = `${"1".repeat(1001)}${"E".repeat(1000)}`;
   const index = rankRpn(first);
   const last = unrankRpn(index + catalan(1000) - BigInt(1));
@@ -1368,7 +1421,7 @@ for (let n = 0; n <= 7; n += 1) {
   }
 }
 
-{
+if (shardTurn(29)) {
   const short = previewPresses("110");
   const exact = previewPresses("1".repeat(30));
   const over = previewPresses("1".repeat(31));
@@ -1437,7 +1490,7 @@ for (let n = 0; n <= 7; n += 1) {
   }
 }
 
-{
+if (shardTurn(30)) {
   const records: Record<string, string> = {
     e: "1",
     "0": "5",
@@ -1478,7 +1531,7 @@ for (let n = 0; n <= 7; n += 1) {
   }
 }
 
-{
+if (shardTurn(31)) {
   const copied = pressPreviewForNode(unrankProgram(BigInt(1)));
   const pasted = copied ? parseProgramInput(copied.full) : null;
   const roundTrip = pasted && pasted.kind === "word" ? rankProgram(nodeFromRpn(pasted.word.split(""))) : null;
@@ -1573,7 +1626,7 @@ for (let n = 0; n <= 7; n += 1) {
   }
 }
 
-{
+if (shardTurn(32)) {
   const near = unrankProgram(BigInt(431));
   const report = evaluateReport(near);
   // Guard digits past 240. This overflowed word then agrees with −1, so the
@@ -1622,7 +1675,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   console.log("FAIL close accepts a 700% error near 1e-12");
 }
 
-{
+if (shardTurn(33)) {
   const circuit = evaluate(compileExpression("1/(-0)", {}));
   const ref = referenceExpression("1/(-0)", {});
   if (circuit.re !== -Infinity || ref?.re !== -Infinity || circuit.im !== 0 || ref?.im !== 0) {
@@ -1631,7 +1684,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(34)) {
   const typed = evaluateReport(compileExpression("0*inf", {}));
   const typedExact = exactReport(compileExpression("0*inf", {}), {}, { maxNodes: 20_000 });
   if (typed.singular !== SINGULAR_INDET || !Number.isNaN(typed.value.re) || !Number.isNaN(typed.value.im)) {
@@ -1892,7 +1945,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(35)) {
   const wide = exactEvaluate(compileExpression("1e40+i", {}));
   if (wide.re.toExponential(2) !== "1.00e+40" || wide.im.minus(1).abs().gt("1e-6")) {
     failed += 1;
@@ -1900,7 +1953,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(36)) {
   let history = { past: [] as string[], current: "empty" };
   history = commitHistory(history, "one");
   history = commitHistory(history, "two");
@@ -1928,7 +1981,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(37)) {
   let seed = 20261115;
   const rand = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -1971,7 +2024,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(38)) {
   const variableCases: Array<[string, Record<string, { re: number; im: number }>, { re: number; im: number }]> = [
     ["x-y", { x: c(1), y: c(0) }, c(1)],
     ["x-y", { x: c(0), y: c(0) }, c(0)],
@@ -2202,7 +2255,7 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
   }
 }
 
-{
+if (shardTurn(39)) {
   let seed = 11;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -2305,7 +2358,7 @@ function samePoint(a: { re: number; im: number }, b: { re: number; im: number })
   return Object.is(a.re, b.re) && Object.is(a.im, b.im);
 }
 
-{
+if (shardTurn(40)) {
   const samples = [
     "2-1e10*i",
     "1-800",
@@ -2393,7 +2446,7 @@ function samePoint(a: { re: number; im: number }, b: { re: number; im: number })
   }
 }
 
-{
+if (shardTurn(41)) {
   let seed = 11;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -2506,7 +2559,7 @@ function dagTokens(root: Node): RebuildTok[] {
   return out;
 }
 
-{
+if (shardTurn(42)) {
   const both = (name: string, source: string, re: number, im = 0, tol = 1e-6) => {
     const node = compileExpression(source, {});
     const got = evaluate(node);
@@ -2618,7 +2671,7 @@ function dagTokens(root: Node): RebuildTok[] {
   }
 }
 
-{
+if (shardTurn(43)) {
   const repoRoot = path.resolve(__dirname, "../..");
   const payload = isolateCases.map((item, id) => {
     const node = compileExpression(item.source, { x: V("x"), y: V("y") });
@@ -2626,7 +2679,7 @@ function dagTokens(root: Node): RebuildTok[] {
     for (const [name, value] of Object.entries(item.env)) env[name] = { re: packNum(value.re), im: packNum(value.im) };
     return { id, source: item.source, tokens: dagTokens(node), env, live: item.env };
   });
-  const child = spawnSync(path.join(repoRoot, "node_modules/.bin/tsx"), [path.join(repoRoot, "scripts/eml-rebuild.ts")], {
+  const child = spawnSync(process.execPath, [tsxCli, path.join(repoRoot, "scripts/eml-rebuild.ts")], {
     input: JSON.stringify(payload.map(({ id, tokens, env }) => ({ id, tokens, env }))),
     encoding: "utf8",
     cwd: repoRoot,
@@ -2673,14 +2726,14 @@ function dagTokens(root: Node): RebuildTok[] {
   }
 }
 
-failed += runPropertyChecks();
+if (shardTurn(44)) failed += runPropertyChecks();
 // Wrong values that exact mode certified (lib/eml/check-certify.ts).
-failed += runCertifyChecks();
+if (shardTurn(45)) failed += runCertifyChecks();
 
 // Inverse-function regressions. Reference values are mpmath 1.3.0 at 30 digits.
 // arcsin: principal value, counter-clockwise continuity on the real cut (as mpmath):
 // arcsin(x > 1) = π/2 − i·arcosh(x), arcsin(x < −1) = −π/2 + i·arcosh(−x).
-{
+if (shardTurn(46)) {
   const bfRel = (got: { re: number; im: number }, want: { re: number; im: number }, tol: number) =>
     Number.isFinite(got.re) && Number.isFinite(got.im) && Math.hypot(got.re - want.re, got.im - want.im) <= tol * Math.max(Math.hypot(want.re, want.im), 1e-300);
   const asinCases: Array<[number, number, number, number]> = [
@@ -2843,7 +2896,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(47)) {
   // The float flag compares each component at the 12 displayed digits.
   // The exact reference raises its precision when a subtraction cancels, so a
   // float 0 is not certified by an exact 0. The −6.7×10^(−106) real part is a
@@ -3004,7 +3057,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(48)) {
   // The screen's worker path: parse, pack, unpack, then the exact engine.
   // Equivalent spellings, series corrections, dust, and the 480-digit cap.
   const workerReport = (source: string) => {
@@ -3170,7 +3223,11 @@ failed += runCertifyChecks();
   const neg15 = byKey.get("−1@15");
   const neg17 = byKey.get("−1@17");
   const two = byKey.get("2@19");
+  // Proved by tools/minimality/decide.py --open (all 6918 programs with K <= 19 excluded).
+  const ipi = byKey.get("+iπ on this cut (−iπ on the principal log)@21");
   if (
+    ipi?.label !== "proven minimal" ||
+    !ipi.note.includes("6918") ||
     zero?.label !== "proven minimal" ||
     !zero.note.includes("K ≤ 5") ||
     neg15?.label !== "proven minimal (uses ln 0)" ||
@@ -3183,7 +3240,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(49)) {
   // A same-process unpack reuses the nodes that still hold the float range.
   // The screen's worker is a fresh realm, so the tiny known value has to cross the wire.
   const sources = [
@@ -3219,7 +3276,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(50)) {
   // A float underflow is not the integer 0. Negation, sine, and 0 − b keep the tiny term.
   const tinyRows: Array<[string, string]> = [
     ["-10^(-400)", "−1×10^−400"],
@@ -3380,7 +3437,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(51)) {
   // Identities that are exactly 0. A rounding residue, including one that
   // holds still while the precision climbs, must come out 0 or unverified.
   // A nearby difference, and a sum that does not cancel, stays a certified
@@ -3469,7 +3526,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(52)) {
   // Marked infinities. mpmath dps 50: ln(0) is -inf and 0/0 raises ZeroDivisionError.
   // tan(pi/2) there is the finite -1.9788349012695708716820519525808990497221781173111e+51,
   // because a 50-digit pi/2 is not the symbolic pole. The self-differences below are undefined,
@@ -3832,7 +3889,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(53)) {
   // Outside review, section A. Each row fails while its claim holds.
   // A1: an angle within the snap tolerance of 0 is not the axis. sin(6.103e-120) is not 0,
   // so the doubled tiny imaginary sum keeps both halves (or says it could not verify).
@@ -3939,12 +3996,16 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(54)) {
   // Release refusals: a large trig argument below the root, a part cancelled to 0
   // beside a nonzero part after a value below the precision, a finite overflow
   // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
-  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
-  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "undefined"], ["(1-1)^0", "undefined"], ["0^(1-1)", "undefined"]];
+  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
+  // A large real product passes through its reciprocal; that tiny real cannot reach the
+  // zero imaginary part, so these stay certified (v1.0.1 refused every one of them).
+  // atanh of a real above 1 is −iπ/2, and arctan of iy with y < −1 is −π/2 + …i,
+  // however the argument was built (mpmath's atanh and atan).
+  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "undefined"], ["(1-1)^0", "undefined"], ["0^(1-1)", "undefined"], ["10^400/7", "1.428571428571×10^399"], ["10^400*2", "2×10^400"], ["10^400*i", "1×10^400i"], ["-(10^400)/3", "−3.333333333333×10^399"], ["10^300*10^100", "1×10^400"], ["atanh(1.694^3)", "0.208689790346 − 1.570796326795i"], ["atanh(-(1.5^3))", "−0.305454541161 + 1.570796326795i"], ["atanh(1.694^3)*atanh(32)", "−2.460877420177 − 0.376912529663i"], ["atan((-i-i)*asinh(9))", "−1.570796326795 − 0.174556001875i"], ["atan(-i*(1.5^3))", "−1.570796326795 − 0.305454541161i"], ["atan(i*(1.5^3))", "1.570796326795 + 0.305454541161i"]];
   for (const source of refused) {
     const node = compileExpression(source, {});
     const packed = packCircuit(node);
@@ -3977,7 +4038,7 @@ failed += runCertifyChecks();
   }
 }
 
-{
+if (shardTurn(55)) {
   // A repeat evaluation in one process (the exact worker is reused across jobs) must
   // match an evaluation with the pure cache off: same text, same note, same verdict.
   // Large trig arguments: each certified a wrong value on a repeat before (cos(1e119) → −0.98499,
@@ -4040,6 +4101,8 @@ failed += runCertifyChecks();
   }
 }
 
+closeBlockTimer();
+if (shardCount > 1) console.log(`shard ${shardIndex}/${shardCount}`);
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);

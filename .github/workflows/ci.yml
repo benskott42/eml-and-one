@@ -17,10 +17,15 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# The suite used to be one sequential job (about 20 minutes, almost all of it
+# eml:check). The jobs below run in parallel: eml:check is split into shards by
+# EML_SHARD (see the top of lib/eml/check.ts and check-shards.json), and each
+# golden mode runs in 4 shards by GOLDEN_SHARD. The site job builds, runs headless Chrome, and
+# uploads the folder it tested.
 jobs:
-  check:
+  static:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -33,9 +38,60 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
+
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm run eml:check
-      - run: npm run eml:golden
-      - run: npm run eml:golden -- --wire
+        env:
+          EML_SHARD: ${{ matrix.shard }}/6
+
+  golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ["", "--wire"]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run eml:golden -- ${{ matrix.mode }}
+        env:
+          GOLDEN_SHARD: ${{ matrix.shard }}/4
+
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm run build
         env:
           PAGES_BASE_PATH: /eml-and-one
@@ -254,8 +310,10 @@ jobs:
                   one: !!document.querySelector(".ti-btn-one"),
                   eml: !!document.querySelector(".ti-btn-eml"),
                   result: document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "",
+                  // The keys exist in the static HTML before hydration; a click then is lost.
+                  ready: document.querySelector(".ti-stage")?.getAttribute("data-ready") === "1",
                 })`);
-                if (boot?.screen && boot.one && boot.eml) break;
+                if (boot?.screen && boot.one && boot.eml && boot.ready) break;
               } catch {
                 /* the document is still navigating */
               }
@@ -265,6 +323,7 @@ jobs:
             if (!boot?.path?.startsWith("/eml-and-one")) fail(`page loaded at ${JSON.stringify(boot?.path)}`);
             if (!boot?.screen) fail("calculator screen is missing");
             if (!boot?.one || !boot?.eml) fail("1 or EML key is missing");
+            if (!boot?.ready) fail("the calculator did not hydrate within 30 s");
 
             const field = `document.querySelector("#expression") || [...document.querySelectorAll("label")].find((label) => /^\\s*Expression/i.test(label.textContent || ""))?.querySelector("input")`;
 

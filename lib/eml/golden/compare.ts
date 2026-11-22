@@ -129,3 +129,28 @@ export function compareGolden(existing: string, generated: string): string[] {
   if (messages.length === 0 && existing !== generated) messages.push("file text differs from the generated golden");
   return messages;
 }
+
+/**
+ * One shard's rows against the full file. Every generated row must match its line.
+ * `owner` (shard 0) also reports rows the file has that the corpus does not, and a
+ * file whose row count is not the corpus size.
+ */
+export function compareGoldenShard(existing: string, generated: string, corpus: string[], owner: boolean): string[] {
+  const before = parseGolden(existing);
+  const after = parseGolden(generated);
+  const messages = [...before.errors.map((error) => `existing: ${error}`), ...after.errors.map((error) => `generated: ${error}`)];
+  if (before.errors.length || after.errors.length) return messages;
+  for (const [source, line] of after.rows) {
+    const previous = before.rows.get(source);
+    if (previous === undefined) messages.push(`NEW: ${source}`);
+    else if (previous !== line) messages.push(`CHANGED: ${source}
+  - ${previous}
+  + ${line}`);
+  }
+  if (owner) {
+    const known = new Set(corpus);
+    for (const source of before.rows.keys()) if (!known.has(source)) messages.push(`REMOVED: ${source}`);
+    if (before.rows.size !== corpus.length) messages.push(`row count ${before.rows.size}, corpus ${corpus.length}`);
+  }
+  return messages;
+}

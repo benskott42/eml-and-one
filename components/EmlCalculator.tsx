@@ -44,6 +44,9 @@ let twoButtonsStored = false;
 let twoButtonsLoaded = false;
 const twoButtonsListeners = new Set<() => void>();
 
+/** False in the static HTML and during hydration, true once React owns the keys. */
+const subscribeNothing = () => () => {};
+
 function subscribeTwoButtons(listener: () => void) {
   twoButtonsListeners.add(listener);
   return () => {
@@ -540,6 +543,8 @@ export function EmlCalculator() {
   const [programField, setProgramField] = useState("");
   const [mode, setMode] = useState<Mode>("exact");
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
+  // Presses on the static HTML before hydration do nothing; tests and scripts wait for data-ready.
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
   const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
   const modelRef = useRef(model);
   const textRef = useRef({ xText, yText });
@@ -598,11 +603,12 @@ export function EmlCalculator() {
     return table;
   }, [model.stack, xText, yText]);
 
-  useEffect(() => {
-    modelRef.current = model;
-    textRef.current = { xText, yText };
-    modeRef.current = mode;
-  }, [model, xText, yText, mode]);
+  // The handlers are the only writers of modelRef and modeRef: each one sets the
+  // ref before its setState. Syncing them from an effect let a late passive effect
+  // of an earlier render roll the ref back, so 1, 1, EML in one turn could see one
+  // operand. textRef follows the inputs during render, so a press right after
+  // typing reads the new text.
+  textRef.current = { xText, yText };
 
   const followedRef = useRef(new Set<number>());
   type JobKind = "fill" | "compare";
@@ -1399,7 +1405,7 @@ export function EmlCalculator() {
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
   return (
-    <main className="ti-stage">
+    <main className="ti-stage" data-ready={hydrated ? "1" : undefined}>
       <div className={twoButtons ? "ti-device ti-device-two" : "ti-device"}>
         <div className="ti-top">
           <div>

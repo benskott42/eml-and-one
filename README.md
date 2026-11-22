@@ -26,7 +26,7 @@ K is the RPN length: one token for each leaf and each eml. Every record below is
 
 These lengths were already public. They are not claimed as first discoveries. The search in this project also finds them, under the ln 0 policy named with each one.
 
-- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is shortest known at K 21, and without ln 0, +iπ on this cut is shortest known at K 23. Unresolved tower trees remain, so neither length is proven minimal.
+- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is proved minimal at K 21: `python tools/minimality/decide.py --open` excludes all 6918 programs with K ≤ 19 (2026-11-22). Without ln 0, +iπ on this cut is shortest known at K 23; 16 K 21 programs are still undecided, so that length is not proven minimal.
 - 3 at K 29 ties Kaseorg's code-golf answer.
 - 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proved minimal on the lower cut, Arg in [−π, π), towers included, with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proved minimal and uses ln 0. Without ln 0, −1 is proved minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17.
 
@@ -38,7 +38,7 @@ Ours, labelled as above:
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
 | −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
-| −iπ on the lower cut | 55 | shortest known, not proven minimal, without ln 0. The word lies on the negative axis and comes out as +iπ under the principal Log at some precisions. |
+| −iπ on the lower cut | 47 | shortest known, not proven minimal, without ln 0. Found by inverting the last gate against every value with K ≤ 35 (2026-11-22); it replaces K 55. |
 | 4 | 39 | shortest known, not proven minimal |
 | 2/3 | 39 | shortest known, not proven minimal |
 | −1/3 | 41 | shortest known, not proven minimal |
@@ -48,7 +48,7 @@ Ours, labelled as above:
 | scaled subtraction | 565 | shortest known construction, with ln 0 = −∞ |
 | scaled addition | 655 | shortest known construction, with ln 0 = −∞ |
 
-The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 55 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
+The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 47 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
 
 ## Encoding
 
@@ -85,9 +85,11 @@ npm run eml:check
 npm run eml:smoke
 ```
 
-`npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. `npm run build` writes a static site to `out/`.
+`npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. [tools/emlsearch](tools/emlsearch) is a much faster independent search in Rust, with an mpmath checker. It reaches K 41 in about five minutes on 16 cores, and its results are in [docs/search-k41.md](docs/search-k41.md). `npm run build` writes a static site to `out/`.
 
-`npm run eml:golden` checks the recorded exact output. `npm run eml:golden -- --update` rewrites it. An update needs a PR note that explains every changed line. See [docs/golden.md](docs/golden.md).
+`EML_SHARD=i/N npm run eml:check` runs shard i (from 0) of N. CI runs 6 shards in parallel. `EML_BLOCK_TIMES=1` prints each block's time. Copy those times into `lib/eml/check-shards.json` to rebalance the shards.
+
+`npm run eml:golden` checks the recorded exact output. `GOLDEN_SHARD=i/N` checks every Nth row from row i; shard 0 also checks for rows that were removed. `npm run eml:golden -- --update` rewrites it. An update needs a PR note that explains every changed line. See [docs/golden.md](docs/golden.md).
 
 ## Publish
 
