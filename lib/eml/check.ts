@@ -3996,7 +3996,7 @@ if (shardTurn(54)) {
   // Release refusals: a large trig argument below the root, a part cancelled to 0
   // beside a nonzero part after a value below the precision, a finite overflow
   // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
-  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
+  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
   // A large real product passes through its reciprocal; that tiny real cannot reach the
   // zero imaginary part, so these stay certified (v1.0.1 refused every one of them).
   // atanh of a real above 1 is −iπ/2, and arctan of iy with y < −1 is −π/2 + …i,

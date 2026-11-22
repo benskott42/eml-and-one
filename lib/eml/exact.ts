@@ -869,24 +869,35 @@ function settleResidue(
  * That mul is not the sum: exact evaluation would certify the bare integer.
  * The leaf sits next to the root, so this does not walk the power.
  */
+/**
+ * Whether the circuit uses a remembered huge sum (rememberHugeReal) anywhere. That
+ * node's gates hold only the bare integer, so any circuit built on it drops the
+ * small term. The walk covers the whole DAG: a depth-8 / 64-step cap missed the
+ * marker under the product word, and (10^400+i)·2 was certified as 2×10^400.
+ */
 function hidesBeside(root: Node): boolean {
-  const stack: { n: Node; depth: number }[] = [{ n: root, depth: 0 }];
-  let steps = 0;
-  while (stack.length && steps < 64) {
-    const frame = stack.pop();
-    if (!frame) break;
-    steps += 1;
-    const node = frame.n;
+  const known = besideMemo.get(root);
+  if (known !== undefined) return known;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  let found = false;
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
     if (node.type === "input") {
-      if (node.label.startsWith("beside:")) return true;
+      if (node.label.startsWith("beside:")) {
+        found = true;
+        break;
+      }
       continue;
     }
-    if (node.type === "eml" && frame.depth < 8) {
-      stack.push({ n: node.a, depth: frame.depth + 1 }, { n: node.b, depth: frame.depth + 1 });
-    }
+    if (node.type === "eml") stack.push(node.a, node.b);
   }
-  return false;
+  besideMemo.set(root, found);
+  return found;
 }
+const besideMemo = new WeakMap<Node, boolean>();
 
 /** The first pass's smallest and largest exponents, for the refusals below. */
 let firstTinyParts: TinyParts = { re: 0, im: 0 };
