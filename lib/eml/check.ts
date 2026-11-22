@@ -3223,7 +3223,11 @@ if (shardTurn(48)) {
   const neg15 = byKey.get("−1@15");
   const neg17 = byKey.get("−1@17");
   const two = byKey.get("2@19");
+  // Proved by tools/minimality/decide.py --open (all 6918 programs with K <= 19 excluded).
+  const ipi = byKey.get("+iπ on this cut (−iπ on the principal log)@21");
   if (
+    ipi?.label !== "proven minimal" ||
+    !ipi.note.includes("6918") ||
     zero?.label !== "proven minimal" ||
     !zero.note.includes("K ≤ 5") ||
     neg15?.label !== "proven minimal (uses ln 0)" ||

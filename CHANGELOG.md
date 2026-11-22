@@ -14,6 +14,7 @@ Fixes from an outside review. Each one has a check.ts or golden row.
 - CI runs in parallel: static checks, eml:check in 6 shards (EML_SHARD), each golden mode in 4 shards (GOLDEN_SHARD), and the site build with headless Chrome. Locally the check suite drops from 830 s to 167 s, and each golden mode from about 300 s to 90 s.
 - eml:check and eml:golden --wire run on Windows: child processes use node and tsx's cli.mjs, and the wire build uses esbuild's API.
 - New record: −iπ (lower cut) without ln 0 at K 47, down from K 55. tools/emlsearch found it by inverting the last gate against every value with K ≤ 35 (MITM=1).
+- +iπ on this cut is proved minimal at K 21 (with ln 0). It had been shortest known. All 6918 programs with K ≤ 19 are excluded, three tower impostors near 10^(−1656519) among them.
 - tools/minimality/decide.py re-derives every claim in docs/minimality.md. The original scripts are not in the repository. It reports 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 as PROVED with nothing undecided.
 - tools/emlsearch is a fast independent search (K 41 in about 5 minutes on 16 cores) with an mpmath checker. docs/search-k41.md lists its results. Every record with K ≤ 41 was found again at its stated length, and none was beaten.
 

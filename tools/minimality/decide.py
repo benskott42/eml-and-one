@@ -73,11 +73,39 @@ LN_ARG = {}
 
 
 def single_atom(v):
-    if v.kind in ("fin", "big", "small") and len(v.lin) == 1:
+    """The atom when v's form is exactly that one atom (coefficient 1, no offset)."""
+    if v.kind in ("fin", "big", "small") and len(v.lin) == 1 and v.off is None:
         (atom, c), = v.lin.items()
         if c == 1:
             return atom
     return None
+
+
+def combine_off(o1, o2):
+    """Net sign of two infinitesimal offsets (None = none, "mixed" = unknown)."""
+    if o1 is None:
+        return o2
+    if o2 is None or o1 == o2:
+        return o1
+    return "mixed"
+
+
+def neg_off(o):
+    return -o if o in (1, -1) else o
+
+
+def eff_lin(v):
+    """A tiny value contributes no atom, only an offset."""
+    return {} if v.kind == "small" else v.lin
+
+
+def eff_off(v):
+    return v.s if v.kind == "small" else v.off
+
+
+def tag(sym, off):
+    """Atoms of a value with an offset must differ from those of the exact form."""
+    return sym if off is None else f"{sym}~{'+' if off == 1 else '-' if off == -1 else '?'}"
 
 
 def zero():
@@ -115,10 +143,22 @@ def cexp_raw(v):
         # given by the sign of (-1)^k * delta.
         sign = 1 if v.k % 2 == 0 else -1
         d = iv.mpf([-1e-999, 1e-999])
-        return V("fin", sym + "~", iv.mpf(sign) + d, iv.mpf(0), 0, prov=("nudge", mpf(sign), sign * v.prov[2]))
+        out = V("fin", sym + "~", iv.mpf(sign) + d, iv.mpf(0), 0, prov=("nudge", mpf(sign), sign * v.prov[2]), lin={"1": sign})
+        out.off = sign * v.prov[2]
+        return out
+    if v.kind == "fin" and v.k is not None and v.off in (1, -1) and v.re.b < LIMIT and v.re.a > -LIMIT:
+        # exp(X + k*pi*i + delta) = (-1)^k exp(X) (1 + delta), X the exact real part
+        xlin = {a: c for a, c in v.lin.items() if a != "ipi"}
+        X = V("fin", key_of(xlin), v.re, iv.mpf(0), 0, lin=xlin)
+        atom = f"exp({X.sym})"
+        EXP_ARG.setdefault(atom, X)
+        sign = 1 if v.k % 2 == 0 else -1
+        out = V("fin", tag(atom if sign == 1 else f"-{atom}", sign * v.off), iv.exp(v.re) * sign, iv.mpf(0), 0, lin={atom: sign})
+        out.off = sign * v.off
+        return out
     if is_zero(v):
         return V("fin", "1", iv.mpf(1), iv.mpf(0), 0)  # exp(0) = 1
-    if v.prov and v.prov[0] == "ln":
+    if v.prov and v.prov[0] == "ln" and v.off is None:
         return v.prov[1]  # exp(ln z) = z
     atom = single_atom(v)
     if atom in LN_ARG:
@@ -186,11 +226,36 @@ def clog_raw(v):
         if L.kind == "fin":
             return V("fin", sym, L.re + iv.mpf([-1e-1000, 1e-1000]), theta, None)
         return huge(sym, tower_lm(L.L) if L.L is not None and L.L.kind == "fin" else None)
-    if v.prov and v.prov[0] == "exp" and real(v.prov[1]):
+    if v.prov and v.prov[0] == "exp" and real(v.prov[1]) and v.off is None:
         return v.prov[1]  # ln(exp x) = x for a real x
     atom = single_atom(v)
     if atom in EXP_ARG and real(EXP_ARG[atom]):
         return EXP_ARG[atom]  # ln(exp x) = x for a real x
+    if v.kind == "fin" and v.prov and v.prov[0] == "nudge" and v.prov[1] in (1, -1) and v.k == 0:
+        # ln(c + delta) with c = +-1: real part delta/c (signed infinitesimal), Arg 0 or -pi exactly
+        c, sgn = v.prov[1], v.prov[2]
+        k = 0 if c > 0 else -1
+        off = sgn * (1 if c > 0 else -1)
+        d = iv.mpf([-1e-1000, 1e-1000])
+        out = V("fin", tag(f"ln({c})", off), d, iv.pi * k, k, prov=("nudge", mpf(0), off), lin=({"ipi": k} if k else {}))
+        out.off = off
+        return out
+    if v.kind == "fin" and v.k == 0 and len(v.lin) == 1 and v.off in (1, -1):
+        (atom, c), = v.lin.items()
+        X = EXP_ARG.get(atom)
+        if X is not None and X.kind == "fin" and X.k == 0 and c in (1, -1) and X.off is None:
+            # ln(c*exp(X) + delta) = X + ln(1 + c*delta*e^-X) (- i*pi when c = -1):
+            # the real part moves by a tiny amount of sign c*sign(delta).
+            off = c * v.off
+            d = iv.mpf([-1e-1000, 1e-1000])
+            lin = dict(X.lin)
+            if c == -1:
+                lin["ipi"] = lin.get("ipi", 0) - 1
+            out = V("fin", tag(key_of(lin), off), X.re + d, iv.mpf(0) if c == 1 else -iv.pi, 0 if c == 1 else -1, lin=lin)
+            out.off = off
+            return out
+    if v.off is not None and v.prov and v.prov[0] == "exp":
+        pass  # the provenance rewrite below would drop the offset
     if v.kind == "fin" and v.lin == {"1": 1}:
         return zero()
     if v.kind == "nan":
@@ -277,15 +342,15 @@ def sub_raw(a, b):
         return V("nan", "nan")
     if is_zero(b):
         return a
-    if a.kind in ("fin", "big", "small") and b.kind in ("fin", "big", "small"):
-        lin = dict(a.lin)
-        for atom, c in b.lin.items():
+    if a.kind in ("fin", "big", "small") and b.kind in ("fin", "big", "small") and not (a.kind == "small" and b.kind == "small"):
+        lin = dict(eff_lin(a))
+        for atom, c in eff_lin(b).items():
             lin[atom] = lin.get(atom, 0) - c
             if lin[atom] == 0:
                 del lin[atom]
         # Offsets only add information: when their net sign is unknown the interval
         # below (which already includes +-1e-1000) decides, or nothing does.
-        oa, ob = a.off, b.off
+        oa, ob = eff_off(a), eff_off(b)
         net = None
         if "mixed" not in (oa, ob):
             if oa is not None and ob is None:
@@ -411,14 +476,15 @@ def sub(a, b):
     out = sub_raw(a, b)
     if out is a or out is b or out.kind not in ("fin", "big", "small") or not out.lin or out.sym in ("0",):
         return out
-    if a.kind in ("fin", "big", "small") and b.kind in ("fin", "big", "small"):
-        lin = dict(a.lin)
-        for atom, c in b.lin.items():
+    if a.kind in ("fin", "big", "small") and b.kind in ("fin", "big", "small") and out.kind in ("fin", "big"):
+        lin = dict(eff_lin(a))
+        for atom, c in eff_lin(b).items():
             lin[atom] = lin.get(atom, 0) - c
             if lin[atom] == 0:
                 del lin[atom]
         out.lin = lin
-        out.sym = key_of(lin)
+        out.off = combine_off(eff_off(a), neg_off(eff_off(b)))
+        out.sym = tag(key_of(lin), out.off)
     return out
 
 
@@ -493,7 +559,10 @@ def uses_ln0(word):
             x = st.pop()
             if is_zero(y):
                 return True
-            st.append(eml(x, y))
+            try:
+                st.append(eml(x, y))
+            except Undecided:
+                return None  # unknown: counts against a "needs ln 0" claim
     return False
 
 
@@ -549,7 +618,33 @@ def only_ln0(label, tre, tk, k):
     return not strict
 
 
+# Words whose value is known to equal the target. The decider must never exclude
+# them: an unsound rule would show up here first. Towers, ln 0 and k*pi tags all occur.
+SELF_TEST = [
+    ("111E1EE", 0, 0), ("11111E1EEEE11EE", -1, 0), ("11111EEE1EE11E1EE", -1, 0),
+    ("111111EEE1EE11EE1EE", 2, 0), ("111111E1EEEE11E1E1EEE", 0, 1), ("111111E1E1EEE1EE11E1EEE", 0, 1),
+    ("111111E1EEEE11E1E1EEE11EE", -2, 0), ("1111111EEE1EE11EEE1EE11E1EE", -2, 0),
+    ("11111111EEE1EE11EEE1EE11EE1EE", 3, 0), ("111E11111E1EEEE11E1E1EE1EEE1E", mpf(1) / 2, 0),
+    ("1111111E1EEEE11EEE11E1E1EEE1E", -mpf(1) / 2, 0), ("1111111EEE1EE11E1EEE11E1E1EEE1E", -mpf(1) / 2, 0),
+    ("11111E1E1EEEE11111E1EEEE11111E1E1EEEE1E1E1EEE", 0, -1),
+    ("11111E1E1EEEE11111111E1E1EEEE1E1E1EEE1EE11E1EEE", 0, -1),
+    ("1111111111EEE1EE11EEE1EE11EEE1EE11EE1EE", 4, 0), ("11111111EEE1EE11EE1EEE11E1E1EEE11EE", -3, 0),
+    ("1111111E1EEEE11EEE11E1E1EEE11EE", -mpf(3) / 2, 0),
+    ("1111111E1EEEE11EEE1EE11111111EEE1EE11EEE1EE11EE1EE1EE", -4, 0),
+]
+
+
+def self_test():
+    bad = [w for w, tre, tk in SELF_TEST if decide(w, tre, tk)[0] is True]
+    print(f"self-test: {len(SELF_TEST) - len(bad)}/{len(SELF_TEST)} known words not excluded for their own value")
+    for w in bad:
+        print(f"   UNSOUND: excluded {w}")
+    return not bad
+
+
 def main():
+    if not self_test():
+        sys.exit(2)
     if len(sys.argv) > 1 and sys.argv[1] == "--open":
         # Records the README calls shortest known: +i*pi on this cut at K 21 (K 23 without
         # ln 0), and -2 at K 25 (K 27 without ln 0).
