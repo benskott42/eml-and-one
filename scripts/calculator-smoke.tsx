@@ -84,6 +84,11 @@ async function main() {
   await act(async () => {
     root.render(<EmlCalculator />);
   });
+  // Browser checks wait for this marker: the static HTML has the keys before they work.
+  if (html.includes("data-ready") || view.document.querySelector(".ti-stage")?.getAttribute("data-ready") !== "1") {
+    console.error("data-ready must be absent from the static HTML and set once mounted");
+    failed = true;
+  }
   const click = async (selector: string) => {
     const button = view.document.querySelector(selector);
     if (!(button instanceof view.HTMLButtonElement)) {

@@ -570,3 +570,14 @@ html.ti-two-buttons .ti-btn-eml {
     filter: brightness(0.9);
   }
 }
+
+/* The selected mode was shown only by a 3px press, with the same green on both:
+   the raised, unselected key read as the active one. Dim the unselected key. */
+.ti-radio .ti-btn[aria-checked="false"] {
+  filter: saturate(0.2) brightness(0.78);
+}
+
+.ti-radio .ti-btn[aria-checked="false"]:hover,
+.ti-radio .ti-btn[aria-checked="false"]:focus-visible {
+  filter: saturate(0.6) brightness(0.92);
+}

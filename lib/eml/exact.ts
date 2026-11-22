@@ -199,6 +199,38 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 let lossGap = 0;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
+/**
+ * The same floor per component channel. A value with one nonzero component
+ * records only that channel; a value with both nonzero records its smaller
+ * exponent in both, since exp and ln of a complex value mix the parts. A real
+ * product such as 10^400/7 passes through 10^(−399) in the real channel only,
+ * so it says nothing about a lost imaginary part.
+ */
+let tinyRe = 0;
+let tinyIm = 0;
+
+type TinyParts = { re: number; im: number };
+
+function partsFloor(v: Z): TinyParts {
+  const live = (part: Decimal) => part.isFinite() && !part.isZero();
+  const reLive = live(v.re);
+  const imLive = live(v.im);
+  if (reLive && imLive) {
+    const low = Math.min(0, v.re.e, v.im.e);
+    return { re: low, im: low };
+  }
+  return { re: reLive ? Math.min(0, v.re.e) : 0, im: imLive ? Math.min(0, v.im.e) : 0 };
+}
+
+function minParts(...all: TinyParts[]): TinyParts {
+  let re = 0;
+  let im = 0;
+  for (const p of all) {
+    if (p.re < re) re = p.re;
+    if (p.im < im) im = p.im;
+  }
+  return { re, im };
+}
 
 /** Smallest exponent of a nonzero finite component, or 0, the same floor `tiniest` starts from. */
 function exponentCeil(v: Z): number {
@@ -223,6 +255,9 @@ function noteSeen(v: Z): void {
   };
   take(v.re);
   take(v.im);
+  const parts = partsFloor(v);
+  if (parts.re < tinyRe) tinyRe = parts.re;
+  if (parts.im < tinyIm) tinyIm = parts.im;
 }
 /**
  * Size of the terms that cancelled by at least two decades in the last
@@ -501,7 +536,7 @@ function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): nu
   return best;
 }
 /** `loss`, `tiniest` and `lead` are the subtree's share of the pass state, restored on a hit. */
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; lead: boolean; big: number };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; tinyParts: TinyParts; lead: boolean; big: number };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -854,7 +889,7 @@ function hidesBeside(root: Node): boolean {
 }
 
 /** The first pass's smallest and largest exponents, for the refusals below. */
-let firstTiny = 0;
+let firstTinyParts: TinyParts = { re: 0, im: 0 };
 let firstBig = Number.NEGATIVE_INFINITY;
 
 /**
@@ -879,7 +914,8 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     // past the cap, the 0 is not certified.
     const which = v.re.isZero() ? "re" : "im";
     const other = which === "re" ? v.im : v.re;
-    const need = other.e - firstTiny + 30;
+    // Only a value that could reach the zero component counts: its own channel.
+    const need = other.e - firstTinyParts[which] + 30;
     if (need > digits) {
       if (need > PRECISION_CAP) return true;
       const wide = atPrecision(need, root, env, budget, false).value[which];
@@ -930,7 +966,7 @@ export function exactReport(
   pass = 0,
 ): ExactReport {
   if (pass !== 0) return exactReportCore(root, env, budget, pass);
-  firstTiny = 0;
+  firstTinyParts = { re: 0, im: 0 };
   firstBig = Number.NEGATIVE_INFINITY;
   const out = exactReportCore(root, env, budget, pass);
   if (out.unverified || !refusedResult(root, env, budget, out)) return out;
@@ -970,7 +1006,7 @@ function exactReportCore(
   lossGap = 0;
   const report = exactReportOnce(root, env, budget);
   if (pass === 0) {
-    firstTiny = tiniest;
+    firstTinyParts = { re: tinyRe, im: tinyIm };
     firstBig = biggest;
   }
   // Pass 3 is a raised pass whose caller judges a tiny part itself, so it is not scrubbed.
@@ -1066,12 +1102,15 @@ function exactReportOnce(
   // Per subtree: largest cancellation, smallest exponent seen, and a series shortcut below.
   const lossOf = new Map<Node, number>();
   const tinyOf = new Map<Node, number>();
+  const tinyPartsOf = new Map<Node, TinyParts>();
   const leadOf = new Map<Node, boolean>();
   const bigOf = new Map<Node, number>();
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  tinyRe = 0;
+  tinyIm = 0;
   biggest = Number.NEGATIVE_INFINITY;
   const risk = new Map<Node, GateRisk>();
   let steps = 0;
@@ -1159,11 +1198,14 @@ function exactReportOnce(
       // exactEml did not run below this node, so take its recorded share of the pass state.
       if (hit.loss > lossGap) lossGap = hit.loss;
       if (hit.tiniest < tiniest) tiniest = hit.tiniest;
+      if (hit.tinyParts.re < tinyRe) tinyRe = hit.tinyParts.re;
+      if (hit.tinyParts.im < tinyIm) tinyIm = hit.tinyParts.im;
       if (hit.lead) sawLead = true;
       if (hit.big > biggest) biggest = hit.big;
       bigOf.set(n, hit.big);
       lossOf.set(n, hit.loss);
       tinyOf.set(n, hit.tiniest);
+      tinyPartsOf.set(n, hit.tinyParts);
       leadOf.set(n, hit.lead);
       continue;
     }
@@ -1205,6 +1247,8 @@ function exactReportOnce(
     const subLead = isSeriesShortcut(n) || leadOf.get(n.a) === true || leadOf.get(n.b) === true;
     lossOf.set(n, subLoss);
     tinyOf.set(n, subTiny);
+    const subTinyParts = minParts(partsFloor(value), tinyPartsOf.get(n.a) ?? partsFloor(a), tinyPartsOf.get(n.b) ?? partsFloor(b));
+    tinyPartsOf.set(n, subTinyParts);
     leadOf.set(n, subLead);
     const subBig = Math.max(exponentCeil(value), bigOf.get(n.a) ?? exponentCeil(a), bigOf.get(n.b) ?? exponentCeil(b));
     bigOf.set(n, subBig);
@@ -1243,7 +1287,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, lead: subLead, big: subBig });
+    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, tinyParts: subTinyParts, lead: subLead, big: subBig });
   }
 
   const out = memo.get(root);
@@ -1373,7 +1417,11 @@ function formatDec(d: Decimal): string {
     const intGap = abs.sub(abs.round()).abs();
     const dust = new D(10).pow(-(D.precision - 24));
     // Twelve digits hide 0.5 − 10^(−72) and 1 − 10^(−72). Print the first digits of that tail.
-    const hiddenTail = gap.gt(dust) && gap.e < -14;
+    // Only when the 12 places look rounder than the value (trailing zeros dropped): when
+    // places 13–14 merely happen to be 0, as in 0.019930868458|0096, twelve places are the
+    // usual display, not a hidden tail.
+    const looksRound = /\.\d{0,11}$|^\d+$/.test(abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""));
+    const hiddenTail = gap.gt(dust) && gap.e < -14 && looksRound;
     const hiddenInt = intGap.gt(dust) && intGap.e < -9;
     if (hiddenTail || hiddenInt) {
       const reveal = hiddenTail && (!hiddenInt || gap.e <= intGap.e) ? gap : intGap;

@@ -16,9 +16,11 @@ import { compileExpression } from "./parse";
 export function runPropertyChecks(): number {
   let failed = 0;
   const repoRoot = path.resolve(__dirname, "../..");
+  // node + tsx's cli.mjs, not node_modules/.bin/tsx: that shim does not spawn on Windows.
   const cold = spawnSync(
-    path.join(repoRoot, "node_modules/.bin/tsx"),
+    process.execPath,
     [
+      path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
       "-e",
       `import { compileExpression } from "./lib/eml/parse";
 import { circuitStats, evaluate } from "./lib/eml/node";

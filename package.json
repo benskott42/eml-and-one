@@ -1,6 +1,6 @@
 {
   "name": "eml-and-one",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "EML and One, a two-button calculator",
   "scripts": {
@@ -23,6 +23,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "jsdom": "^31.0.1",

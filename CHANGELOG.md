@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.2 — 2026-11-22
+
+Fixes from an outside review. Each one has a check.ts or golden row.
+
+- Exact mode certifies large real and imaginary products and quotients again. v1.0.1 refused every real or pure-imaginary product or quotient past about 10^226, such as 10^400/7, 10^400·2, and 10^400·i, because the cancellation check counted the reciprocal the product passes through as if it could reach the zero imaginary part. That check now tracks small values per component. ((1+10^(−500))−1)+i/2 and i·((1+10^(−500))−1)+1/2 are still refused. This had also failed the v1.0.1 deploy, so the site still served 1.0.0.
+- artanh of a real above 1 is −iπ/2 however the real was built, and arctan of iy with y < −1 is −π/2 + …i. Before, atanh(1.694^3) and atan(−2i·asinh 9) were certified on the other bank whenever the range table had no point for the argument. artanh is now Log(√(1+z)/√(1−z)), and arctan is −i·artanh(iz). Both equal mpmath's atanh and atan, on the cuts and off them. Circuits for these keys are about 5–9% longer.
+- The record certifier (acceptsConstantProgram) no longer accepts a word whose value differs from the target below about 10^(−240). The K 35 word 11111111E11E1EE1EEEEEE1E1E11E1E1EEE is −9×10^(−307) − i(π − ε). Before this change it was accepted as −iπ, so a K 35 search would have published a false −iπ record.
+- Presses on the page before React has hydrated were lost. The page now sets data-ready once it is live, and the browser check waits for it. That race is what failed "1, 1, EML" in CI. The handlers are also the only writers of the model ref, so an effect can no longer roll it back.
+- Text was set in Times New Roman, because --font-sans was never defined. The unselected evaluation mode is now dimmed. Before, only a 3 px press told the two apart.
+- A small component no longer prints with extra digits when its 13th and 14th places happen to be 0 (0.0199308684580096i is now 0.019930868458i). The hidden-tail display for values such as 0.5 − 10^(−72) is unchanged.
+- CI runs in parallel: static checks, eml:check in 6 shards (EML_SHARD), each golden mode in 4 shards (GOLDEN_SHARD), and the site build with headless Chrome. Locally the check suite drops from 830 s to 167 s, and each golden mode from about 300 s to 90 s.
+- eml:check and eml:golden --wire run on Windows: child processes use node and tsx's cli.mjs, and the wire build uses esbuild's API.
+- tools/emlsearch is a fast independent search (K 41 in about 5 minutes on 16 cores) with an mpmath checker. docs/search-k41.md lists its results. Every record with K ≤ 41 was found again at its stated length, and none was beaten.
+
 ## 1.0.1 — 2026-11-21
 
 Exact-mode fixes. A result is either right or says it could not verify; none of these is certified wrong any more.

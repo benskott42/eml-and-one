@@ -1201,8 +1201,11 @@ export function tArctan(t: Node): Node {
   if (range.re && range.im && Math.abs(range.re.lo) < 1e-6 && Math.abs(range.re.hi) < 1e-6 && (range.im.lo > 1 || range.im.hi < -1)) {
     return tMul(tI(), tArtanh(tMul(tNeg(tI()), t)));
   }
-  const it = tMul(tI(), t);
-  return tDiv(tLn(tDiv(tAdd(ONE, it), tSub(ONE, it))), tMul(tTwo(), tI()));
+  // arctan z = −i·artanh(iz), which holds on both cuts because tArtanh is
+  // mpmath's atanh. (1/2i)·Log((1+iz)/(1−iz)) put iy with y < −1 on the +π/2
+  // bank whenever the range table above could not see that z was imaginary:
+  // atan(−2i·asinh 9) was certified as +π/2 − 0.1746i (mpmath: −π/2 − 0.1746i).
+  return tMul(tNeg(tI()), tArtanh(tMul(tI(), t)));
 }
 
 function asinhBox(t: Node): number | null {
@@ -1262,7 +1265,12 @@ export function tArtanh(t: Node): Node {
   if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);
   if (known && imagZero(known) && known.re < -1) return tNeg(artanhAboveOne(tNeg(t)));
-  return tHalfOf(tLn(tDiv(tAdd(ONE, t), tSub(ONE, t))));
+  // Log(√(1+z) / √(1−z)) with the principal √ and Log. It equals ½(ln(1+z) − ln(1−z))
+  // (DLMF 4.37.24, mpmath's atanh) exactly: half a difference of two Args in (−π, π]
+  // stays inside (−π, π), so no 2πi is lost. ½·Log((1+z)/(1−z)) put a real above 1 on
+  // the other bank (+iπ/2) whenever the range table had no point for it, so
+  // atanh(1.694^3) was +iπ/2 while atanh(4.861) was −iπ/2, both certified.
+  return tLn(tDiv(tSqrt(tAdd(ONE, t)), tSqrt(tSub(ONE, t))));
 }
 
 export function tLogBase(base: Node, value: Node): Node {

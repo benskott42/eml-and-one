@@ -13,6 +13,7 @@
  * time so a row cannot warm the next row's cache.
  */
 import { spawnSync } from "node:child_process";
+import { buildSync } from "esbuild";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { compileExpression } from "../parse";
 import { packCircuit, unpackCircuit } from "../wire";
 import { getAllCorpus, heavyCorpus } from "./corpus";
-import { compareGolden, formatGolden, type GoldenEntry, type GoldenMode } from "./compare";
+import { compareGolden, compareGoldenShard, formatGolden, type GoldenEntry, type GoldenMode } from "./compare";
 import { screenNode, type Screen } from "./screen";
 import { runGoldenSelfTest } from "./self-test";
 
@@ -31,8 +32,6 @@ const goldenWirePath = path.join(repoRoot, "lib/eml/golden/golden-wire.txt");
 const wireChildScript = path.join(repoRoot, "scripts/wire-eval-child.ts");
 const uncachedScript = path.join(repoRoot, "scripts/golden-uncached-child.ts");
 const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
-const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
-
 /** In-process budget. The wire child uses the worker's 80_000. */
 const IN_PROCESS_BUDGET = 200_000;
 
@@ -107,13 +106,11 @@ function evaluateViaWire(sources: string[]): Map<string, GoldenEntry> {
   const dir = mkdtempSync(path.join(tmpdir(), "eml-wire-"));
   try {
     const childPath = path.join(dir, "wire-child.cjs");
-    const built = spawnSync(
-      esbuildBin,
-      [wireChildScript, "--bundle", "--platform=node", "--format=cjs", `--outfile=${childPath}`],
-      { encoding: "utf8" },
-    );
-    if (built.status !== 0) {
-      throw new Error(built.stderr || built.stdout || "esbuild failed");
+    // The JS API, not node_modules/esbuild/bin/esbuild: that path is a native
+    // binary on Linux and a node script on Windows, so spawning it is not portable.
+    const built = buildSync({ entryPoints: [wireChildScript], bundle: true, platform: "node", format: "cjs", outfile: childPath, logLevel: "silent" });
+    if (built.errors.length) {
+      throw new Error(built.errors.map((e) => e.text).join("; ") || "esbuild failed");
     }
     const results = new Map<string, GoldenEntry>();
     for (const source of sources) {
@@ -141,8 +138,26 @@ function evaluateViaWire(sources: string[]): Map<string, GoldenEntry> {
   }
 }
 
-function generateGolden(includeHeavy: boolean, wireMode: boolean): string {
+/**
+ * GOLDEN_SHARD=i/N evaluates every Nth row of the sorted corpus (from row i) and
+ * compares only those rows, so CI can run the corpus as parallel jobs. Shard 0
+ * also checks the rows the file has but the corpus no longer has, and the row count.
+ */
+const shardMatch = /^(\d+)\/(\d+)$/.exec(process.env.GOLDEN_SHARD ?? "");
+const shardIndex = shardMatch ? Number(shardMatch[1]) : 0;
+const shardCount = shardMatch ? Math.max(1, Number(shardMatch[2])) : 1;
+
+function fullCorpus(includeHeavy: boolean): string[] {
   const corpus = includeHeavy ? [...getAllCorpus(), ...heavyCorpus] : getAllCorpus();
+  return [...corpus].sort((a, b) => a.localeCompare(b));
+}
+
+function shardCorpus(corpus: string[]): string[] {
+  return shardCount > 1 ? corpus.filter((_, index) => index % shardCount === shardIndex) : corpus;
+}
+
+function generateGolden(includeHeavy: boolean, wireMode: boolean): string {
+  const corpus = shardCorpus(fullCorpus(includeHeavy));
   const mode: GoldenMode = wireMode ? "fresh-process" : "in-process";
   console.log(`Evaluating ${corpus.length} expressions (${mode})...`);
   const entries: GoldenEntry[] = [];
@@ -206,6 +221,10 @@ function main() {
   const isUpdate = args.includes("--update");
   const isHeavy = args.includes("--heavy");
   const isWire = args.includes("--wire");
+  if (isUpdate && shardCount > 1) {
+    console.error("refusing --update with GOLDEN_SHARD: the file is written whole");
+    process.exit(1);
+  }
   if (isUpdate && process.env.CI) {
     console.error("refusing --update because CI is set");
     process.exit(1);
@@ -228,15 +247,15 @@ function main() {
     console.error("Run with --update to generate it.");
     process.exit(1);
   }
-  const messages = compareGolden(existing, generated);
+  const messages = shardCount > 1 ? compareGoldenShard(existing, generated, fullCorpus(isHeavy), shardIndex === 0) : compareGolden(existing, generated);
   if (messages.length) {
     for (const message of messages) console.log(message);
     console.log(`\n${messages.length} difference(s).`);
     console.log("Run with --update to regenerate. Every changed line needs a reason in the PR.");
     process.exit(1);
   }
-  console.log("golden output matches");
-  checkUncached();
+  console.log(shardCount > 1 ? `golden output matches (shard ${shardIndex}/${shardCount})` : "golden output matches");
+  if (shardIndex === 0) checkUncached();
 }
 
 try {
