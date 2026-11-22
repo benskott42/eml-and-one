@@ -4,7 +4,7 @@ This is the v1 list of what is unfinished. None of it blocks the calculator. 0 a
 
 ## Records
 
-−iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 55 does not use ln 0. That word lies on the negative axis and comes out as +iπ under the principal Log at some precisions. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
+−iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 47 does not use ln 0. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
 
 Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21 and at K 23, and −2 at K 25, are shortest known as well: unresolved tower trees remain, so those lengths are not proven minimal.
 

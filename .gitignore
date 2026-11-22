@@ -6,3 +6,4 @@ next-env.d.ts
 
 # Rust search tool output
 tools/emlsearch/target
+__pycache__/

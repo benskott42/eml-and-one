@@ -623,7 +623,7 @@ const checkRecord = (id: string, k: number, re: Decimal.Value, im: Decimal.Value
   }
 };
 checkRecord("-ipi", 45, 0, storedPi.neg(), true);
-checkRecord("-ipi-strict", 55, 0, storedPi.neg(), false);
+checkRecord("-ipi-strict", 47, 0, storedPi.neg(), false);
 checkRecord("4", 39, 4, 0, false);
 checkRecord("2/3", 39, third.mul(2), 0, false);
 checkRecord("-1/3", 41, third.neg(), 0, false);

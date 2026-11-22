@@ -1,4 +1,4 @@
-# Search through K 41 (2026-11-22)
+# Search through K 41, and last-gate inversion to K 71 (2026-11-22)
 
 An independent bottom-up search ([tools/emlsearch](../tools/emlsearch)) enumerated constant words through K 41 (21 ones) under the calculator's float semantics, twice: with ln 0 = −∞ allowed, and without it (strict). Every hit was then checked with mpmath at 100 and 700 digits (lower cut, ln 0 = −∞), and every dyadic hit also with `acceptsConstantProgram`.
 
@@ -72,3 +72,17 @@ New distinct values per length (ln 0 allowed, 3 representatives per key, so a sl
 | 39 | 1 767 263 190 | 284 386 204 | 0.16 |
 
 Distinct values grow about 3.25× per extra 1, while programs grow about 3.7×. Through K 9 these counts are the 19 finite values of `reachable-values.md`'s 20 that do not overflow float64. The 20th is `11E1E1E1E`, about e^(3.8×10^6).
+
+## Last-gate inversion to K 71
+
+`MITM=1` builds the pool up to K 35. Then, for every value `a` and every target `t`, it computes the `b` that eml(a, b) = t needs (ln b = exp(a) − t on the lower cut) and looks `b` up among the 37 million stored values. This covers every word up to K 71 whose two halves are each at most K 35. The genuine words below passed 100 and 700 digits. Most float hits were impostors.
+
+| value | K | ln 0 | word | note |
+| --- | --- | --- | --- | --- |
+| −iπ (lower cut) | **47** | no | `11111E1E1EEEE11111111E1E1EEEE1E1E1EEE1EE11E1EEE` | **new record; was K 55.** Exact mode certifies it, `acceptsConstantProgram` accepts it, and the imaginary part is −π at every precision from 30 to 480 digits. |
+| −iπ (lower cut) | 45 | yes | `11111E1E1EEEE11111E1EEEE11111E1E1EEEE1E1E1EEE` | the existing record, found again |
+| −4 | 53 | yes / no | `1111111E1EEEE11EEE1EE11111111EEE1EE11EEE1EE11EE1EE1EE` / `11111111EEE1EE11EE1EEE11E1E1EEE111111EEE1EE11EE1EE1EE` | |
+| 5 | 63 / 65 | yes / no | `1111111111E1EEEE11EEE1EE11EE1EEE1EE1111111EEE1EE11EEE1EE11EE1EE` / `11111E1EE1111E1E1EEE11EE1EEE1EE11111E1EE11E11E1EEE11EEE1EE11EE1EE` | |
+| −5 | 63 | yes / no | `111111111EEE1EE11EEE1EE11EEE1EE11111111E1EEEE11EEE1EE11EE1EE1EE` / `11111111EEE1EE11EE1EEE11E1E1EEE11111111EEE1EE11EEE1EE11EE1EE1EE` | |
+
+No genuine word up to K 71 with both halves at most K 35 was found for π, i, √2, √3, φ, ±1/4, ±iπ/2, 2π, 6 or 10. The hand-built constructions (i at K 57, π at K 93, √2 at K 61) stand. A word whose last gate has a half longer than K 35, such as the K 39 records for 4 and 2/3, is out of reach of this pass.

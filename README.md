@@ -38,7 +38,7 @@ Ours, labelled as above:
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
 | −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
-| −iπ on the lower cut | 55 | shortest known, not proven minimal, without ln 0. The word lies on the negative axis and comes out as +iπ under the principal Log at some precisions. |
+| −iπ on the lower cut | 47 | shortest known, not proven minimal, without ln 0. Found by inverting the last gate against every value with K ≤ 35 (2026-11-22); it replaces K 55. |
 | 4 | 39 | shortest known, not proven minimal |
 | 2/3 | 39 | shortest known, not proven minimal |
 | −1/3 | 41 | shortest known, not proven minimal |
@@ -48,7 +48,7 @@ Ours, labelled as above:
 | scaled subtraction | 565 | shortest known construction, with ln 0 = −∞ |
 | scaled addition | 655 | shortest known construction, with ln 0 = −∞ |
 
-The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 55 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
+The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 47 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
 
 ## Encoding
 

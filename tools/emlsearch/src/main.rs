@@ -17,6 +17,11 @@
 //        whether each subtree's key is in the pool, and its representative).
 // The last level is streamed (checked against targets, not stored).
 // K 41 (max_leaves 21, store 20, SLOTS=3) takes ~5 min on 16 cores and ~35 GB.
+// MITM=1 (with store_leaves = max_leaves): after building the pool, invert the last
+// gate. For each stored a and target t, ln_lower(b) = exp(a) - t gives b; b is looked
+// up among all stored values, so words up to 2*K(pool)+1 are reached. MITM_KMAX caps
+// the length kept, MITM_TOL the float tolerance (default 1e-11). A K 35 pool takes
+// about 90 s; that run found -i*pi without ln 0 at K 47.
 use std::f64::consts::{LN_2, PI};
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -252,5 +257,85 @@ fn main() {
         }
         cs.clear();
         std::io::stdout().flush().unwrap();
+    }
+    // MITM=1: invert the last gate. eml(a, b) = t  <=>  ln_lower(b) = exp(a) - t, so for
+    // each stored a the needed b is exp(exp(a) - t), valid when Im(exp(a) - t) is in
+    // [-pi, pi). b is looked up among all stored values by a coarse key (and the
+    // adjacent buckets); every hit is re-evaluated and must land within 1e-9 of t.
+    if std::env::var("MITM").is_ok() {
+        let coarse = |x: f64| -> i64 {
+            if x == 0.0 { return 0; }
+            if !x.is_finite() { return if x > 0.0 { i64::MAX - 1 } else { i64::MIN + 1 }; }
+            let b = x.abs().to_bits() as i64 >> 22; // ~30 mantissa bits, about 9 digits
+            if x < 0.0 { -b } else { b }
+        };
+        let n = pool.re.len();
+        let mut table: Vec<(i64, i64, u32)> = (0..n).filter(|&i| pool.re[i].is_finite() && pool.im[i].is_finite())
+            .map(|i| (coarse(pool.re[i]), coarse(pool.im[i]), i as u32)).collect();
+        table.sort_unstable();
+        let leaves_of = |id: usize| -> usize { pool.level.partition_point(|&s| s <= id) - 1 };
+        println!("MITM table {} values, t={:.1}s", table.len(), started.elapsed().as_secs_f64());
+        let best: Vec<AtomicUsize> = (0..targets.len()).map(|_| AtomicUsize::new(usize::MAX)).collect();
+        let hits: Mutex<Vec<(usize, usize, u32, u32, bool)>> = Mutex::new(Vec::new());
+        let next = AtomicUsize::new(0);
+        let kmax: usize = std::env::var("MITM_KMAX").map(|v| v.parse().unwrap()).unwrap_or(99);
+        let tolerance: f64 = std::env::var("MITM_TOL").map(|v| v.parse().unwrap()).unwrap_or(1e-11);
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                let (pool, table, targets, best, hits, next, kmax, tolerance) = (&pool, &table, &targets, &best, &hits, &next, kmax, tolerance);
+                sc.spawn(move || loop {
+                    let st = next.fetch_add(1024, Ordering::Relaxed);
+                    if st >= n { break; }
+                    for a in st..(st + 1024).min(n) {
+                        let av = C { re: pool.re[a], im: pool.im[a] };
+                        if !av.re.is_finite() || !av.im.is_finite() || exp_underflows(av) || av.re.exp() == f64::INFINITY { continue; }
+                        if strict && pool.ln0[a] { continue; }
+                        let ea = cexp(av);
+                        let ka = 2 * leaves_of(a) - 1;
+                        for (ti, t) in targets.iter().enumerate() {
+                            let w = C { re: ea.re - t.re, im: ea.im - t.im };
+                            if !(w.im >= -PI - 1e-12 && w.im < PI + 1e-12) || !w.re.is_finite() || w.re > 709.0 || w.re < -700.0 { continue; }
+                            let bv = cexp(w);
+                            let snap = |x: f64, s: f64| if x.abs() <= 1e-13 * s { 0.0 } else { x };
+                            let scale = bv.re.abs().max(bv.im.abs());
+                            let tries = [bv, C { re: snap(bv.re, scale), im: snap(bv.im, scale) }];
+                            for (ti2, bq) in tries.iter().enumerate() {
+                                if ti2 == 1 && bq.re == bv.re && bq.im == bv.im { continue; }
+                                let (kr, ki) = (coarse(bq.re), coarse(bq.im));
+                                for dr in [-1i64, 0, 1] { for di in [-1i64, 0, 1] {
+                                    let (qr, qi) = (kr.saturating_add(if kr == 0 { 0 } else { dr }), ki.saturating_add(if ki == 0 { 0 } else { di }));
+                                    if (kr == 0 && dr != 0) || (ki == 0 && di != 0) { continue; }
+                                    let lo = table.partition_point(|e| (e.0, e.1) < (qr, qi));
+                                    let mut j = lo;
+                                    while j < table.len() && table[j].0 == qr && table[j].1 == qi {
+                                        let b = table[j].2 as usize; j += 1;
+                                        if strict && pool.ln0[b] { continue; }
+                                        let v = eml(av, C { re: pool.re[b], im: pool.im[b] });
+                                        let tol = tolerance * t.re.abs().max(t.im.abs()).max(1.0);
+                                        if (v.re - t.re).abs() > tol || (v.im - t.im).abs() > tol { continue; }
+                                        let k = ka + 2 * leaves_of(b) - 1 + 1;
+                                        // No "best so far" filter: an impostor found early must not
+                                        // hide a genuine longer word. Keep everything up to MITM_KMAX.
+                                        if k <= kmax {
+                                            best[ti].fetch_min(k, Ordering::Relaxed);
+                                            hits.lock().unwrap().push((ti, k, a as u32, b as u32, pool.ln0[a] || pool.ln0[b] || (pool.re[b] == 0.0 && pool.im[b] == 0.0)));
+                                        }
+                                    }
+                                } }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        let mut hs = hits.into_inner().unwrap();
+        hs.sort_by_key(|h| (h.0, h.1));
+        let mut per: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for &(ti, k, a, b, fl) in hs.iter() {
+            let c = per.entry(ti * 1000 + k).or_insert(0); *c += 1; if *c > 300 { continue; }
+            let mut w = String::new(); word(&pool, a, &mut w); word(&pool, b, &mut w); w.push('E');
+            println!("CAND\t{}\t{}\t{}\t{}", targets[ti].id, k, if fl { 1 } else { 0 }, w);
+        }
+        println!("MITM done t={:.1}s", started.elapsed().as_secs_f64());
     }
 }
