@@ -190,6 +190,18 @@ export function isUnverified(node: Node): boolean {
   return unverifiedNodes.has(node);
 }
 
+/** Exact mode cannot certify this node's value; float mode still shows its own. */
+const exactUnsureNodes = new WeakSet<Node>();
+
+export function markExactUnsure(node: Node): Node {
+  exactUnsureNodes.add(node);
+  return node;
+}
+
+export function isExactUnsure(node: Node): boolean {
+  return exactUnsureNodes.has(node);
+}
+
 export function markSeriesShortcut(node: Node): Node {
   seriesShortcuts.add(node);
   return node;

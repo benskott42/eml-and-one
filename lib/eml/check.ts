@@ -75,6 +75,7 @@ import { agreementNote, compileExpression, referenceExpression } from "./parse";
 import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
+import { runCertifyChecks } from "./check-certify";
 
 let failed = 0;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -1704,6 +1705,32 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["(-inf)^3", "−∞"],
     ["(-inf)^2", "∞"],
     ["(inf*i)^0.5", "unverified"],
+    ["ln(0)-1", "unverified"],
+    ["ln(0)+i", "unverified"],
+    ["(inf*i)/2", "unverified"],
+    ["ln(ln(0)*i)", "unverified"],
+    ["ln(0)+0", "−∞"],
+    ["ln(0)-0", "−∞"],
+    ["ln(0)+1", "unverified"],
+    ["ln(0)*i+1", "unverified"],
+    ["inf+1", "unverified"],
+    ["1+inf", "unverified"],
+    ["1+2+inf", "unverified"],
+    ["inf+inf", "unverified"],
+    ["1+ln(0)", "unverified"],
+    ["ln(0)+ln(0)", "unverified"],
+    ["1+inf*i", "unverified"],
+    ["inf-ln(0)", "∞"],
+    ["inf*i+0", "∞i"],
+    ["sqrt(ln(0))+0", "∞i"],
+    ["ln(0)*i-0", "−∞i"],
+    ["sqrt(inf*i)", "unverified"],
+    ["ln(inf*i)", "unverified"],
+    ["(inf*i)/i", "unverified"],
+    ["ln(ln(0))", "∞ + 3.14159265359i"],
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
   ] as const;
   for (const [source, want] of extended) {
     const node = compileExpression(source, {});
@@ -1748,6 +1775,32 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
     ["(-inf)^3", "−∞"],
     ["(-inf)^2", "∞"],
     ["(inf*i)^0.5", "unverified"],
+    ["ln(0)-1", "unverified"],
+    ["ln(0)+i", "unverified"],
+    ["(inf*i)/2", "unverified"],
+    ["ln(ln(0)*i)", "unverified"],
+    ["ln(0)+0", "−∞"],
+    ["ln(0)-0", "−∞"],
+    ["ln(0)+1", "unverified"],
+    ["ln(0)*i+1", "unverified"],
+    ["inf+1", "unverified"],
+    ["1+inf", "unverified"],
+    ["1+2+inf", "unverified"],
+    ["inf+inf", "unverified"],
+    ["1+ln(0)", "unverified"],
+    ["ln(0)+ln(0)", "unverified"],
+    ["1+inf*i", "unverified"],
+    ["inf-ln(0)", "∞"],
+    ["inf*i+0", "∞i"],
+    ["sqrt(ln(0))+0", "∞i"],
+    ["ln(0)*i-0", "−∞i"],
+    ["sqrt(inf*i)", "unverified"],
+    ["ln(inf*i)", "unverified"],
+    ["(inf*i)/i", "unverified"],
+    ["ln(ln(0))", "∞ + 3.14159265359i"],
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
   ] as const;
   const freshJobs = [...freshAngles, ...freshDirected.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
@@ -1777,6 +1830,25 @@ if (close(c(8e-12), c(1e-12), 1e-6)) {
         failed += 1;
         console.log("FAIL fresh trig infinity", row.source, text, row.singular);
       }
+    }
+  }
+  // Direct compile is checked in `extended`. The screen packs the same circuit
+  // for the exact worker; unpack here so a packed overflow difference cannot
+  // ship a certified −∞.
+  for (const [source, want] of [
+    ["exp(800)-exp(800)", "0"],
+    ["exp(800)-exp(800)+1", "1"],
+    ["exp(1000)/exp(1000)", "1"],
+  ] as const) {
+    const packed = packCircuit(compileExpression(source, {}));
+    const rebuilt = unpackCircuit(packed.tokens, packed.root);
+    const direct = exactReport(compileExpression(source, {}), {}, { maxNodes: 200_000 });
+    const wire = exactReport(rebuilt, {}, { maxNodes: 200_000 });
+    const directText = formatExact(direct.value).replace(/\u200b/g, "");
+    const wireText = formatExact(wire.value).replace(/\u200b/g, "");
+    if (direct.unverified || wire.unverified || directText !== want || wireText !== want) {
+      failed += 1;
+      console.log("FAIL packed overflow cancel", source, directText, wireText, direct.unverified, wire.unverified);
     }
   }
   if (gap === programNode("0") || gapReport.singular !== SINGULAR_INDET) {
@@ -2602,6 +2674,8 @@ function dagTokens(root: Node): RebuildTok[] {
 }
 
 failed += runPropertyChecks();
+// Wrong values that exact mode certified (lib/eml/check-certify.ts).
+failed += runCertifyChecks();
 
 // Inverse-function regressions. Reference values are mpmath 1.3.0 at 30 digits.
 // arcsin: principal value, counter-clockwise continuity on the real cut (as mpmath):
@@ -3307,6 +3381,95 @@ failed += runPropertyChecks();
 }
 
 {
+  // Identities that are exactly 0. A rounding residue, including one that
+  // holds still while the precision climbs, must come out 0 or unverified.
+  // A nearby difference, and a sum that does not cancel, stays a certified
+  // value. Both the packed worker and a fresh process.
+  const cancelRows = [
+    "exp(ln(1e-400))-1e-400",
+    "1e-400*1.5/1.5-1e-400",
+    "(1e-400)/2*2-(1e-400)",
+    "1e-400/0.5/2-1e-400",
+    "1e-400*(2^0.5)^2-2e-400",
+    "1e-450*e/e-1e-450",
+    "1e-500*e/e-1e-500",
+    "1e-600*e/e-1e-600",
+    "1e-200*(2^0.5)^2-2*1e-200",
+    "1e-100*1.5/1.5-1e-100",
+    "1e-50*1.5/1.5-1e-50",
+    "1e-150*1.5/1.5-1e-150",
+    "1e-320*pi/pi-1e-320",
+    "1e-320*e/e-1e-320",
+    "1e-320*3/3-1e-320",
+    "exp(ln(1e-320))-1e-320",
+    "1e-318*pi/pi-1e-318",
+  ];
+  const keptRows: Array<[string, string]> = [
+    ["1e-400-1e-400*(1+1e-50)", "−1×10^−450"],
+    ["(1e-400)*3/3-(1e-400)*(1+1e-50)", "−1×10^−450"],
+    ["1e-400*(1+1e-100)-1e-400", "1×10^−500"],
+    ["1e-400*pi+1e-400", "4.14159265359×10^−400"],
+    ["exp(-1000)-exp(-1001)", "3.20861797491×10^−435"],
+  ];
+  const packedReport = (source: string) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 400_000 });
+  };
+  const shownText = (report: ReturnType<typeof exactReport>) => formatExact(report.value).replace(/\u200b/g, "");
+  const honestZero = (report: ReturnType<typeof exactReport>) => {
+    if (report.unverified) return true;
+    const text = shownText(report);
+    return text === "0" || text === "−0";
+  };
+  for (const source of cancelRows) {
+    const report = packedReport(source);
+    if (!honestZero(report)) {
+      failed += 1;
+      console.log("FAIL certified tiny cancel", source, shownText(report));
+    } else {
+      console.log("cancel", source, report.unverified ? "couldn't verify" : shownText(report));
+    }
+  }
+  for (const [source, want] of keptRows) {
+    const report = packedReport(source);
+    const text = shownText(report);
+    if (report.unverified || text !== want) {
+      failed += 1;
+      console.log("FAIL tiny kept value", source, report.unverified ? "unverified" : text);
+    } else {
+      console.log("kept", source, text);
+    }
+  }
+  const cancelJobs = [...cancelRows, ...keptRows.map(([source]) => source)].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const cancelFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(cancelJobs), 300_000);
+  if (cancelFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh tiny cancel", cancelFresh.status, cancelFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(cancelFresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
+    rows.forEach((row, index) => {
+      const text = row.text.replace(/\u200b/g, "");
+      if (index < cancelRows.length) {
+        const ok = row.unverified || text === "0" || text === "−0";
+        if (!ok) {
+          failed += 1;
+          console.log("FAIL fresh certified tiny cancel", row.source, text);
+        }
+        return;
+      }
+      const want = keptRows[index - cancelRows.length]?.[1];
+      if (!want || row.unverified || text !== want) {
+        failed += 1;
+        console.log("FAIL fresh tiny kept value", row.source, row.unverified ? "unverified" : text, want);
+      }
+    });
+  }
+}
+
+{
   // Marked infinities. mpmath dps 50: ln(0) is -inf and 0/0 raises ZeroDivisionError.
   // tan(pi/2) there is the finite -1.9788349012695708716820519525808990497221781173111e+51,
   // because a 50-digit pi/2 is not the symbolic pole. The self-differences below are undefined,
@@ -3664,6 +3827,214 @@ failed += runPropertyChecks();
         console.log("FAIL fresh huge pair", row.source, `${row.ms}ms`, row.unverified ? "unverified" : text, row.singular, row.close);
       } else {
         console.log("fresh", row.source, wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
+      }
+    }
+  }
+}
+
+{
+  // Outside review, section A. Each row fails while its claim holds.
+  // A1: an angle within the snap tolerance of 0 is not the axis. sin(6.103e-120) is not 0,
+  // so the doubled tiny imaginary sum keeps both halves (or says it could not verify).
+  const tinyTwice = exactReport(compileExpression("6.103e-120*i + 6.103e-120*i", {}));
+  const tinyTwiceText = formatExact(tinyTwice.value);
+  if (!tinyTwice.unverified && tinyTwiceText !== "1.2206×10^−119i") {
+    failed += 1;
+    console.log("FAIL review A1 tiny imaginary sum", tinyTwiceText);
+  } else {
+    console.log("review A1 tiny imaginary sum", tinyTwice.unverified ? "couldn't verify" : tinyTwiceText);
+  }
+  // exp of a tiny imaginary angle. Float gives 1 + 6.1e-120i, so an exact 1 with no note drops a component.
+  const tinyTurn = exactReport(compileExpression("exp(6.103515625e-120*i)", {}));
+  const tinyTurnText = formatExact(tinyTurn.value);
+  if (!tinyTurn.unverified && !tinyTurn.singular && tinyTurn.value.im.isZero()) {
+    failed += 1;
+    console.log("FAIL review A1 tiny turn", tinyTurnText);
+  } else {
+    console.log("review A1 tiny turn", tinyTurn.unverified ? "couldn't verify" : tinyTurnText, tinyTurn.singular ?? "");
+  }
+  // A tiny real part beside an imaginary one. The real part is a known 10^(−130) or
+  // 10^(−136), so 0.5i or 1.5i alone drops it. Direct here, and packed in a fresh process
+  // below in both orders, so cache hits and misses are both covered.
+  const tinyBesideRows: Array<[string, string]> = [
+    ["((1+10^(-130))-1)+i/2", "1×10^−130 + 0.5i"],
+    ["(i*(1+10^-130)-i)*i+i/2", "−1×10^−130 + 0.5i"],
+    ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"],
+  ];
+  for (const [source, want] of tinyBesideRows) {
+    const report = exactReport(compileExpression(source, {}));
+    const text = report.unverified ? "unverified" : formatExact(report.value);
+    if (text !== want && text !== "unverified") {
+      failed += 1;
+      console.log("FAIL tiny real beside imaginary", source, text);
+    } else {
+      console.log("tiny real beside imaginary", source, text);
+    }
+  }
+  const besideJobs = tinyBesideRows.map(([source]) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root, again: true as const };
+  });
+  for (const jobs of [besideJobs, [...besideJobs].reverse()]) {
+    const run = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs));
+    if (run.status !== 0) {
+      failed += 1;
+      console.log("FAIL fresh tiny real beside imaginary", run.status, run.stderr?.slice(0, 400));
+      continue;
+    }
+    for (const row of JSON.parse(run.stdout) as Array<{ source: string; text: string; unverified: boolean; again?: string }>) {
+      const want = tinyBesideRows.find(([source]) => source === row.source)?.[1];
+      const first = row.unverified ? "unverified" : row.text;
+      const ok = (text: string | undefined) => text === want || text === "unverified";
+      if (!ok(first) || !ok(row.again)) {
+        failed += 1;
+        console.log("FAIL fresh tiny real beside imaginary", row.source, first, row.again);
+      }
+    }
+  }
+  // A2: a word built with no lowering notes, evaluated twice on the same node in a
+  // fresh process. The second pass reads the var-free cache and must still find the
+  // cancellation that the first pass recovered.
+  const lossSource = "exp(10^(-115))-1";
+  const lossWord = rpnTokens(compileExpression(lossSource, {}), 100_000);
+  // A4: the worker receives a packed circuit. Its singular note must match the main thread.
+  const noteRows: Array<[string, Record<string, { re: number; im: number }>]> = [
+    ["asinh(x)", { x: c(1e-13) }],
+    ["x+y", { x: c(1e-20), y: c(1e-20) }],
+  ];
+  const noteMain = noteRows.map(([source, env]) => exactReport(compileExpression(source, { x: V("x"), y: V("y") }), env).singular);
+  const reviewJobs = [
+    ...(lossWord ? [{ source: lossSource, word: lossWord, again: true }] : []),
+    ...noteRows.map(([source, env]) => {
+      const packed = packCircuit(compileExpression(source, { x: V("x"), y: V("y") }));
+      return { source, tokens: packed.tokens, root: packed.root, env };
+    }),
+  ];
+  const reviewFresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(reviewJobs));
+  if (!lossWord || reviewFresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL review A fresh run", lossWord ? lossWord.length : "no word", reviewFresh.status, reviewFresh.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(reviewFresh.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; again?: string }>;
+    const [loss, ...notes] = rows;
+    const shown = (text: string, unverified: boolean) => (unverified ? "unverified" : text);
+    const first = loss ? shown(loss.text, loss.unverified) : "missing";
+    const second = loss?.again ?? "missing";
+    const honest = (text: string) => text === "1×10^−115" || text === "unverified";
+    if (!honest(first) || !honest(second)) {
+      failed += 1;
+      console.log("FAIL review A2 cached word", lossSource, "first", first, "second", second);
+    } else {
+      console.log("review A2 cached word", lossSource, first, second);
+    }
+    notes.forEach((row, index) => {
+      const want = noteMain[index] ?? null;
+      if (row.singular !== want) {
+        failed += 1;
+        console.log("FAIL review A4 worker note", row.source, "worker", row.singular, "main", want);
+      } else {
+        console.log("review A4 worker note", row.source, row.singular);
+      }
+    });
+  }
+}
+
+{
+  // Release refusals: a large trig argument below the root, a part cancelled to 0
+  // beside a nonzero part after a value below the precision, a finite overflow
+  // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
+  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+1/10^130)-1)+i/2", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i"];
+  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "undefined"], ["(1-1)^0", "undefined"], ["0^(1-1)", "undefined"]];
+  for (const source of refused) {
+    const node = compileExpression(source, {});
+    const packed = packCircuit(node);
+    const seen = [exactReport(node), exactReport(node), exactReport(unpackCircuit(packed.tokens, packed.root))];
+    if (seen.some((report) => !report.unverified)) {
+      failed += 1;
+      console.log("FAIL release refusal", source, seen.map((report) => formatExact(report.value)).join(" | "));
+    } else console.log("release refusal", source);
+  }
+  // A subtree shared through both inputs at every level: its cancellation records
+  // are kept once, so 40 levels finish quickly instead of doubling per level.
+  {
+    let deep = E(ONE, ONE);
+    for (let level = 0; level < 40; level += 1) deep = E(deep, deep);
+    const started = Date.now();
+    exactReport(deep, {}, { maxNodes: 80_000 });
+    const took = Date.now() - started;
+    if (took > 5000) {
+      failed += 1;
+      console.log("FAIL deep shared circuit", took, "ms");
+    } else console.log("deep shared circuit", took, "ms");
+  }
+  for (const [source, want] of kept) {
+    const report = exactReport(compileExpression(source, {}));
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL release kept", source, got, "want", want);
+    } else console.log("release kept", source, got);
+  }
+}
+
+{
+  // A repeat evaluation in one process (the exact worker is reused across jobs) must
+  // match an evaluation with the pure cache off: same text, same note, same verdict.
+  // Large trig arguments: each certified a wrong value on a repeat before (cos(1e119) → −0.98499,
+  // true −0.37226; cos(1e125/1e130/1e200) → 1; sin(1e150/1e300) → −0; tan(1e140) → −2.306, true −3.307).
+  const bigTrig = [
+    "cos(1e119)", "cos(1e125)", "cos(1e130)", "cos(1e200)", "sin(1e150)", "sin(1e300)", "tan(1e140)",
+    "sin(10^22)", "tan(10^22)", "cos(10^7)", "cos(2^60)",
+    "sin(1e23)", "cos(1e23)", "tan(1e23)", "sin(1e60)", "cos(1e60)", "tan(1e60)", "sin(1e250)", "cos(1e250)", "tan(1e300)",
+  ];
+  const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)", ...bigTrig];
+  const warmRows = ["1e100", "1e22", "1e7", "1e119", "1e300", "sqrt(1/10^130)", "6*i", "pi/2"];
+  const verdict = (report: ReturnType<typeof exactReport>) =>
+    `${report.unverified ? "unverified" : formatExact(report.value)} [${report.singular ?? ""}]`;
+  const saved = process.env.EML_NOCACHE;
+  process.env.EML_NOCACHE = "1";
+  const cold = repeatRows.map((source) => verdict(exactReport(compileExpression(source, {}))));
+  if (saved === undefined) delete process.env.EML_NOCACHE;
+  else process.env.EML_NOCACHE = saved;
+  bigTrig.forEach((source) => {
+    const want = cold[repeatRows.indexOf(source)];
+    if (!want?.includes("argument too large to reduce")) {
+      failed += 1;
+      console.log("FAIL large trig argument not flagged", source, want);
+    }
+  });
+  for (const source of warmRows) exactReport(compileExpression(source, {}));
+  repeatRows.forEach((source, index) => {
+    const node = compileExpression(source, {});
+    const first = verdict(exactReport(node));
+    const second = verdict(exactReport(node));
+    const packed = packCircuit(node);
+    const trip = verdict(exactReport(unpackCircuit(packed.tokens, packed.root)));
+    if (first !== cold[index] || second !== cold[index] || trip !== cold[index]) {
+      failed += 1;
+      console.log("FAIL repeat evaluation", source, "cold", cold[index], "first", first, "second", second, "round trip", trip);
+    } else {
+      console.log("repeat evaluation", source, cold[index]);
+    }
+  });
+  // The same rows in one shared fresh child after earlier jobs, each evaluated twice.
+  const shared = [...warmRows, ...repeatRows].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root, again: true as const };
+  });
+  const run = runTsx("scripts/fresh-exact.ts", JSON.stringify(shared));
+  if (run.status !== 0) {
+    failed += 1;
+    console.log("FAIL shared child repeat", run.status, run.stderr?.slice(0, 400));
+  } else {
+    const rows = JSON.parse(run.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; again?: string; againSingular?: string | null }>;
+    for (const row of rows.slice(warmRows.length)) {
+      const want = cold[repeatRows.indexOf(row.source)];
+      const first = `${row.unverified ? "unverified" : row.text} [${row.singular ?? ""}]`;
+      const second = `${row.again} [${row.againSingular ?? ""}]`;
+      if (first !== want || second !== want) {
+        failed += 1;
+        console.log("FAIL shared child repeat", row.source, "cold", want, "first", first, "second", second);
       }
     }
   }

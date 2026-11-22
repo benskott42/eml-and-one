@@ -25,7 +25,7 @@ import {
   chypot,
 } from "./complex";
 import {
-  tAdd,
+  builtHugeAngle,
   tAvg,
   tDiv,
   tE,
@@ -38,12 +38,13 @@ import {
   tPi,
   tPow,
   tSqrt,
-  tSub,
   literalNode,
+  userAdd,
+  userSub,
   unaryBuilders,
 } from "./library";
 import { formatC, isUsable } from "./format";
-import { EmlError, isolateCircuit, type Node } from "./node";
+import { EmlError, isolateCircuit, markExactUnsure, precisionNoteOf, type Node } from "./node";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
@@ -329,7 +330,7 @@ function balanced(op: "+" | "*", nodes: Node[]): Node {
   const mid = Math.floor(nodes.length / 2);
   const left = balanced(op, nodes.slice(0, mid));
   const right = balanced(op, nodes.slice(mid));
-  return op === "+" ? tAdd(left, right) : tMul(left, right);
+  return op === "+" ? userAdd(left, right) : tMul(left, right);
 }
 
 /** True when a sum contains the negation of another sum or difference. Iterative: a sum of many terms is a deep spine. */
@@ -356,7 +357,7 @@ function foldAst(ast: Ast): Node {
     const parts = ast.args.map(foldAst);
     const first = parts[0];
     if (!first) throw new EmlError("The expression ended early.");
-    return parts.slice(1).reduce((sum, part) => tAdd(sum, part), first);
+    return parts.slice(1).reduce((sum, part) => userAdd(sum, part), first);
   }
   if (ast.k === "+" || ast.k === "*") {
     const flat: Ast[] = [];
@@ -380,13 +381,21 @@ function foldAst(ast: Ast): Node {
   if (ast.k === "call") return applyNode(ast.name, ast.args.map(foldAst));
   const left = foldAst(ast.args[0]);
   const right = foldAst(ast.args[1]);
-  if (ast.name === "-") return tSub(left, right);
+  if (ast.name === "-") return userSub(left, right);
   if (ast.name === "/") return tDiv(left, right);
   return tPow(left, right);
 }
 
 export function compileExpression(source: string, variables: Record<string, Node>): Node {
-  return isolateCircuit(() => compileParsed(source, variables));
+  return isolateCircuit(() => {
+    const root = compileParsed(source, variables);
+    // A trig angle past 10^15 under the root is refused; the root's own trig or
+    // pole note already says the angle is too large.
+    const note = precisionNoteOf(root);
+    const own = note?.kind === "trig" || note?.kind === "pole";
+    if (builtHugeAngle() && !own && root.type === "eml") markExactUnsure(root);
+    return root;
+  });
 }
 
 function compileParsed(source: string, variables: Record<string, Node>): Node {

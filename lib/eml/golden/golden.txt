@@ -1,106 +1,117 @@
 # EML and One golden output
 # mode: in-process
-# rows: 176
+# rows: 203
 
 expr: -1 | exact: −1 | exact-notes: certified,ln0 | float: −1 | float-notes: ln0 | press: 15 | round-trip: OK
 expr: -4*i+1 | exact: 1 − 4i | exact-notes: certified,ln0 | float: 1 − 4i | float-notes: ln0 | press: 163+ | round-trip: OK
 expr: -5e-801 | exact: −5×10^−801 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 96237+ | round-trip: OK
+expr: -cos(1e119) | exact: — | exact-notes: couldn't verify | float: −0.5 | float-notes: ln0,underflowed | press: 57793+ | round-trip: OK
+expr: ((1+1/10^130)-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0 | press: 9635+ | round-trip: OK
+expr: ((1+10^-500)-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0,underflowed | press: 1405+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3029+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2847+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2977+ | round-trip: OK
-expr: ((1+10^(-110))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5993+ | round-trip: OK
+expr: ((1+10^(-110))-1)+i*10^10/3 | exact: 1×10^−110 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5993+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3211+ | round-trip: OK
-expr: ((1+10^(-124))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2819+ | round-trip: OK
-expr: ((1+10^(-124))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2637+ | round-trip: OK
-expr: ((1+10^(-124))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2767+ | round-trip: OK
-expr: ((1+10^(-124))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5783+ | round-trip: OK
-expr: ((1+10^(-124))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3001+ | round-trip: OK
-expr: ((1+10^(-126))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3101+ | round-trip: OK
-expr: ((1+10^(-126))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2919+ | round-trip: OK
-expr: ((1+10^(-126))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3049+ | round-trip: OK
-expr: ((1+10^(-126))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6065+ | round-trip: OK
-expr: ((1+10^(-126))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3283+ | round-trip: OK
-expr: ((1+10^(-128))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2579+ | round-trip: OK
-expr: ((1+10^(-128))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2397+ | round-trip: OK
-expr: ((1+10^(-128))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2527+ | round-trip: OK
-expr: ((1+10^(-128))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5543+ | round-trip: OK
-expr: ((1+10^(-128))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2761+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2861+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i*(1+10^(-130))/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 11311+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer
-expr: ((1+10^(-130))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2679+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2809+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5825+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3043+ | round-trip: OK
-expr: ((1+10^(-130))-1)+i/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i | float-notes: ln0 | press: 755+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer
-expr: ((1+10^(-132))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2807+ | round-trip: OK
-expr: ((1+10^(-132))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2625+ | round-trip: OK
-expr: ((1+10^(-132))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2755+ | round-trip: OK
-expr: ((1+10^(-132))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5771+ | round-trip: OK
-expr: ((1+10^(-132))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2989+ | round-trip: OK
-expr: ((1+10^(-136))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2597+ | round-trip: OK
-expr: ((1+10^(-136))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2415+ | round-trip: OK
-expr: ((1+10^(-136))-1)+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2545+ | round-trip: OK
-expr: ((1+10^(-136))-1)+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5561+ | round-trip: OK
-expr: ((1+10^(-136))-1)+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2779+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-136 dropped; fix owned by bigfixer
+expr: ((1+10^(-124))-1)+i*-1/2 | exact: 1×10^−124 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2819+ | round-trip: OK
+expr: ((1+10^(-124))-1)+i*1/2 | exact: 1×10^−124 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2637+ | round-trip: OK
+expr: ((1+10^(-124))-1)+i*1/3 | exact: 1×10^−124 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2767+ | round-trip: OK
+expr: ((1+10^(-124))-1)+i*10^10/3 | exact: 1×10^−124 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5783+ | round-trip: OK
+expr: ((1+10^(-124))-1)+i*3/2 | exact: 1×10^−124 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3001+ | round-trip: OK
+expr: ((1+10^(-126))-1)+i*-1/2 | exact: 1×10^−126 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3101+ | round-trip: OK
+expr: ((1+10^(-126))-1)+i*1/2 | exact: 1×10^−126 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2919+ | round-trip: OK
+expr: ((1+10^(-126))-1)+i*1/3 | exact: 1×10^−126 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3049+ | round-trip: OK
+expr: ((1+10^(-126))-1)+i*10^10/3 | exact: 1×10^−126 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6065+ | round-trip: OK
+expr: ((1+10^(-126))-1)+i*3/2 | exact: 1×10^−126 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3283+ | round-trip: OK
+expr: ((1+10^(-128))-1)+i*-1/2 | exact: 1×10^−128 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2579+ | round-trip: OK
+expr: ((1+10^(-128))-1)+i*1/2 | exact: 1×10^−128 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2397+ | round-trip: OK
+expr: ((1+10^(-128))-1)+i*1/3 | exact: 1×10^−128 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2527+ | round-trip: OK
+expr: ((1+10^(-128))-1)+i*10^10/3 | exact: 1×10^−128 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5543+ | round-trip: OK
+expr: ((1+10^(-128))-1)+i*3/2 | exact: 1×10^−128 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2761+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i*-1/2 | exact: 1×10^−130 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2861+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i*(1+10^(-130))/2 | exact: 1×10^−130 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 11311+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer
+expr: ((1+10^(-130))-1)+i*1/2 | exact: 1×10^−130 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2679+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i*1/3 | exact: 1×10^−130 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2809+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i*10^10/3 | exact: 1×10^−130 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5825+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i*3/2 | exact: 1×10^−130 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3043+ | round-trip: OK
+expr: ((1+10^(-130))-1)+i/2 | exact: 1×10^−130 + 0.5i | exact-notes: certified,ln0 | float: 0.5i | float-notes: ln0,differs-from-exact | press: 755+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-130 dropped; fix owned by bigfixer
+expr: ((1+10^(-132))-1)+i*-1/2 | exact: 1×10^−132 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2807+ | round-trip: OK
+expr: ((1+10^(-132))-1)+i*1/2 | exact: 1×10^−132 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2625+ | round-trip: OK
+expr: ((1+10^(-132))-1)+i*1/3 | exact: 1×10^−132 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2755+ | round-trip: OK
+expr: ((1+10^(-132))-1)+i*10^10/3 | exact: 1×10^−132 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5771+ | round-trip: OK
+expr: ((1+10^(-132))-1)+i*3/2 | exact: 1×10^−132 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2989+ | round-trip: OK
+expr: ((1+10^(-136))-1)+i*-1/2 | exact: 1×10^−136 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2597+ | round-trip: OK
+expr: ((1+10^(-136))-1)+i*1/2 | exact: 1×10^−136 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2415+ | round-trip: OK
+expr: ((1+10^(-136))-1)+i*1/3 | exact: 1×10^−136 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2545+ | round-trip: OK
+expr: ((1+10^(-136))-1)+i*10^10/3 | exact: 1×10^−136 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5561+ | round-trip: OK
+expr: ((1+10^(-136))-1)+i*3/2 | exact: 1×10^−136 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 2779+ | round-trip: OK | # KNOWN-BUG wire-real-drop: real part ~1e-136 dropped; fix owned by bigfixer
+expr: ((1+exp(-299.3))-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0 | press: 1807+ | round-trip: OK
+expr: ((1+exp(-300))-1)*i+1/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5 ≈ | float-notes: ln0 | press: 925+ | round-trip: OK
+expr: (1-1)^0 | exact: undefined | exact-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0 | float: undefined | float-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0,overflowed | press: 37+ | round-trip: OK
 expr: (1e-400)*3/3-(1e-400)*(1+1e-50) | exact: −1×10^−450 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 751527+ | round-trip: OK
 expr: (2+3*i)+(-1+0.2*i) | exact: 1 + 3.2i | exact-notes: certified,ln0 | float: 1 + 3.2i | float-notes: ln0 | press: 1083+ | round-trip: OK
+expr: (exp(800)+1)-exp(800) | exact: — | exact-notes: couldn't verify,ln0 | float: undefined | float-notes: singular:out of float range / overflow,ln0,overflowed | press: 8149+ | round-trip: OK
+expr: (exp(exp(-300))-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0 | press: 921+ | round-trip: OK
 expr: (i*(1+10^(-110))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3473+ | round-trip: OK
 expr: (i*(1+10^(-110))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3291+ | round-trip: OK
 expr: (i*(1+10^(-110))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3421+ | round-trip: OK
-expr: (i*(1+10^(-110))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6437+ | round-trip: OK
+expr: (i*(1+10^(-110))-i)*i+i*10^10/3 | exact: −1×10^−110 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6437+ | round-trip: OK
 expr: (i*(1+10^(-110))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3655+ | round-trip: OK
-expr: (i*(1+10^(-124))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3263+ | round-trip: OK
-expr: (i*(1+10^(-124))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3081+ | round-trip: OK
-expr: (i*(1+10^(-124))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3211+ | round-trip: OK
-expr: (i*(1+10^(-124))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6227+ | round-trip: OK | # KNOWN-BUG A1-real-drop: real part dropped
-expr: (i*(1+10^(-124))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3445+ | round-trip: OK
-expr: (i*(1+10^(-126))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3545+ | round-trip: OK
-expr: (i*(1+10^(-126))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3363+ | round-trip: OK
-expr: (i*(1+10^(-126))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3493+ | round-trip: OK
-expr: (i*(1+10^(-126))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6509+ | round-trip: OK
-expr: (i*(1+10^(-126))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3727+ | round-trip: OK
-expr: (i*(1+10^(-128))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3023+ | round-trip: OK
-expr: (i*(1+10^(-128))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2841+ | round-trip: OK
-expr: (i*(1+10^(-128))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2971+ | round-trip: OK
-expr: (i*(1+10^(-128))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5987+ | round-trip: OK
-expr: (i*(1+10^(-128))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3205+ | round-trip: OK
-expr: (i*(1+10^(-130))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3305+ | round-trip: OK
-expr: (i*(1+10^(-130))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3123+ | round-trip: OK
-expr: (i*(1+10^(-130))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3253+ | round-trip: OK
-expr: (i*(1+10^(-130))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6269+ | round-trip: OK
-expr: (i*(1+10^(-130))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3487+ | round-trip: OK
-expr: (i*(1+10^(-132))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3251+ | round-trip: OK
-expr: (i*(1+10^(-132))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3069+ | round-trip: OK
-expr: (i*(1+10^(-132))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3199+ | round-trip: OK
-expr: (i*(1+10^(-132))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6215+ | round-trip: OK
-expr: (i*(1+10^(-132))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3433+ | round-trip: OK
-expr: (i*(1+10^(-136))-i)*i+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3041+ | round-trip: OK
-expr: (i*(1+10^(-136))-i)*i+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2859+ | round-trip: OK
-expr: (i*(1+10^(-136))-i)*i+i*1/3 | exact: 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2989+ | round-trip: OK
-expr: (i*(1+10^(-136))-i)*i+i*10^10/3 | exact: 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6005+ | round-trip: OK
-expr: (i*(1+10^(-136))-i)*i+i*3/2 | exact: 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3223+ | round-trip: OK
-expr: (inf*i)/2 | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: N/A | round-trip: OK | # KNOWN-BUG inf-finite: ∞, singular:uses ln 0 = −∞
+expr: (i*(1+10^(-124))-i)*i+i*-1/2 | exact: −1×10^−124 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3263+ | round-trip: OK
+expr: (i*(1+10^(-124))-i)*i+i*1/2 | exact: −1×10^−124 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3081+ | round-trip: OK
+expr: (i*(1+10^(-124))-i)*i+i*1/3 | exact: −1×10^−124 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3211+ | round-trip: OK
+expr: (i*(1+10^(-124))-i)*i+i*10^10/3 | exact: −1×10^−124 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6227+ | round-trip: OK | # KNOWN-BUG A1-real-drop: real part dropped
+expr: (i*(1+10^(-124))-i)*i+i*3/2 | exact: −1×10^−124 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3445+ | round-trip: OK
+expr: (i*(1+10^(-126))-i)*i+i*-1/2 | exact: −1×10^−126 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3545+ | round-trip: OK
+expr: (i*(1+10^(-126))-i)*i+i*1/2 | exact: −1×10^−126 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3363+ | round-trip: OK
+expr: (i*(1+10^(-126))-i)*i+i*1/3 | exact: −1×10^−126 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3493+ | round-trip: OK
+expr: (i*(1+10^(-126))-i)*i+i*10^10/3 | exact: −1×10^−126 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6509+ | round-trip: OK
+expr: (i*(1+10^(-126))-i)*i+i*3/2 | exact: −1×10^−126 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3727+ | round-trip: OK
+expr: (i*(1+10^(-128))-i)*i+i*-1/2 | exact: −1×10^−128 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3023+ | round-trip: OK
+expr: (i*(1+10^(-128))-i)*i+i*1/2 | exact: −1×10^−128 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2841+ | round-trip: OK
+expr: (i*(1+10^(-128))-i)*i+i*1/3 | exact: −1×10^−128 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2971+ | round-trip: OK
+expr: (i*(1+10^(-128))-i)*i+i*10^10/3 | exact: −1×10^−128 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 5987+ | round-trip: OK
+expr: (i*(1+10^(-128))-i)*i+i*3/2 | exact: −1×10^−128 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3205+ | round-trip: OK
+expr: (i*(1+10^(-130))-i)*i+i*-1/2 | exact: −1×10^−130 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3305+ | round-trip: OK
+expr: (i*(1+10^(-130))-i)*i+i*1/2 | exact: −1×10^−130 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3123+ | round-trip: OK
+expr: (i*(1+10^(-130))-i)*i+i*1/3 | exact: −1×10^−130 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3253+ | round-trip: OK
+expr: (i*(1+10^(-130))-i)*i+i*10^10/3 | exact: −1×10^−130 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6269+ | round-trip: OK
+expr: (i*(1+10^(-130))-i)*i+i*3/2 | exact: −1×10^−130 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3487+ | round-trip: OK
+expr: (i*(1+10^(-132))-i)*i+i*-1/2 | exact: −1×10^−132 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3251+ | round-trip: OK
+expr: (i*(1+10^(-132))-i)*i+i*1/2 | exact: −1×10^−132 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3069+ | round-trip: OK
+expr: (i*(1+10^(-132))-i)*i+i*1/3 | exact: −1×10^−132 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 3199+ | round-trip: OK
+expr: (i*(1+10^(-132))-i)*i+i*10^10/3 | exact: −1×10^−132 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6215+ | round-trip: OK
+expr: (i*(1+10^(-132))-i)*i+i*3/2 | exact: −1×10^−132 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3433+ | round-trip: OK
+expr: (i*(1+10^(-136))-i)*i+i*-1/2 | exact: −1×10^−136 − 0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3041+ | round-trip: OK
+expr: (i*(1+10^(-136))-i)*i+i*1/2 | exact: −1×10^−136 + 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2859+ | round-trip: OK
+expr: (i*(1+10^(-136))-i)*i+i*1/3 | exact: −1×10^−136 + 0.333333333333i | exact-notes: certified,ln0 | float: 0.333333333333i ≈ | float-notes: ln0,differs-from-exact | press: 2989+ | round-trip: OK
+expr: (i*(1+10^(-136))-i)*i+i*10^10/3 | exact: −1×10^−136 + 3333333333.333333333333i | exact-notes: certified,ln0 | float: 3333333333i ≈ | float-notes: ln0,differs-from-exact | press: 6005+ | round-trip: OK
+expr: (i*(1+10^(-136))-i)*i+i*3/2 | exact: −1×10^−136 + 1.5i | exact-notes: certified,ln0 | float: 1.5i ≈ | float-notes: ln0,differs-from-exact | press: 3223+ | round-trip: OK
+expr: (inf*i)/2 | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: N/A | round-trip: OK | # KNOWN-BUG inf-finite: ∞, singular:uses ln 0 = −∞
 expr: (ln(0)*i)^(-1) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK
 expr: (ln(0)*i)^2 | exact: −∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: −∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 61+ | round-trip: OK
 expr: (ln(0)*i)^3 | exact: ∞i | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞i | float-notes: singular:uses ln 0 = −∞,ln0 | press: 117+ | round-trip: OK
 expr: (sqrt(1+1e-50)-1)-5e-51 | exact: −1.25×10^−101 | exact-notes: certified,ln0 | float: −5×10^−51 | float-notes: ln0,differs-from-exact | press: 24931+ | round-trip: OK
 expr: 0 | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK
-expr: 0.00005*i+0.00005*i | exact: 0.0001i | exact-notes: certified,ln0 | float: 0.0001i ≈ | float-notes: ln0,differs-from-exact | press: 3197+ | round-trip: OK
+expr: 0.00005*i+0.00005*i | exact: 0.0001i | exact-notes: certified,ln0 | float: 0.0001i | float-notes: ln0 | press: 2975+ | round-trip: OK
 expr: 0.00005*i+4*i | exact: 4.00005i | exact-notes: certified,ln0 | float: 4.00005i ≈ | float-notes: ln0,differs-from-exact | press: 1335+ | round-trip: OK
-expr: 0.00006103*i+0.00006103*i | exact: 0.00012206i | exact-notes: certified,ln0 | float: 0.00012206i ≈ | float-notes: ln0,differs-from-exact | press: 14445+ | round-trip: OK
-expr: 1-cos(sqrt(1/10^130)) | exact: 5×10^−131 | exact-notes: certified,ln0 | float: 5×10^−66i | float-notes: ln0,differs-from-exact | press: 153757+ | round-trip: FAIL:text-mismatch | # KNOWN-BUG roundtrip+cache-second: pack/unpack text mismatch, and a repeat eval certifies 0
+expr: 0.00006103*i+0.00006103*i | exact: 0.00012206i | exact-notes: certified,ln0 | float: 0.00012206i | float-notes: ln0 | press: 8599+ | round-trip: OK
+expr: 0^(1-1) | exact: undefined | exact-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0 | float: undefined | float-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0,overflowed | press: 37+ | round-trip: OK
+expr: 0^0 | exact: undefined | exact-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0 | float: undefined | float-notes: singular:indeterminate (∞ − ∞ or 0 · ∞),ln0,overflowed | press: 37+ | round-trip: OK
+expr: 1-cos(sqrt(1/10^130)) | exact: 5×10^−131 | exact-notes: certified,ln0 | float: 5×10^−66i | float-notes: ln0,differs-from-exact | press: 153757+ | round-trip: OK | # KNOWN-BUG roundtrip+cache-second: pack/unpack text mismatch, and a repeat eval certifies 0
 expr: 1/0 | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 23 | round-trip: OK
 expr: 1/2 | exact: 0.5 | exact-notes: certified | float: 0.5 | float-notes:  | press: 35+ | round-trip: OK
 expr: 1+1 | exact: 2 | exact-notes: certified | float: 2 | float-notes:  | press: 19 | round-trip: OK
-expr: 1e-100*1.5/1.5-1e-100 | exact: 5×10^−201 | exact-notes: certified,ln0 | float: −2.843639×10^−114 | float-notes: ln0,differs-from-exact | press: 48747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
+expr: 1e-100*1.5/1.5-1e-100 | exact: 0 | exact-notes: certified,ln0 | float: −2.843639×10^−114 | float-notes: ln0,differs-from-exact | press: 48747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
 expr: 1e-120*(2+i) | exact: 2×10^−120 + 1×10^−120i | exact-notes: certified,ln0 | float: 2×10^−120 + 1×10^−120i | float-notes: ln0 | press: 14525+ | round-trip: OK
-expr: 1e-320*(1+1e-100)-1e-320 | exact: 1.00000012726×10^−420 | exact-notes: certified | float: 0 | float-notes: ln0,overflowed,underflowed | press: 199413+ | round-trip: OK | # KNOWN-BUG jimmy1: certified residue, true value is 1e-420
+expr: 1e-320*(1+1e-100)-1e-320 | exact: 1×10^−420 | exact-notes: certified | float: 0 | float-notes: ln0,overflowed,underflowed | press: 204453+ | round-trip: OK | # KNOWN-BUG jimmy1: certified residue, true value is 1e-420
+expr: 1e-320*e/e-1e-320*(1+1e-100) | exact: −1×10^−420 | exact-notes: certified | float: 0 | float-notes: ln0,overflowed,underflowed | press: 204489+ | round-trip: OK
 expr: 1e-400-1e-400*(1+1e-50) | exact: −1×10^−450 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 751439+ | round-trip: OK
 expr: 1e-400*(1+1e-100)-1e-400 | exact: 1×10^−500 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 684839+ | round-trip: OK
-expr: 1e-400*1.5/1.5-1e-400 | exact: −5×10^−801 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 673357+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
+expr: 1e-400*1.5/1.5-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 673357+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
 expr: 1e-400*pi+1e-400 | exact: 4.14159265359×10^−400 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672987+ | round-trip: OK
-expr: 1e-400/2*2-1e-400 | exact: −5×10^−801 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672857+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
-expr: 1e-50*1.5/1.5-1e-50 | exact: 1.666666666667×10^−151 | exact-notes: certified,ln0 | float: −2.841181×10^−64 | float-notes: ln0,differs-from-exact | press: 24747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
+expr: 1e-400/2*2-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672857+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
+expr: 1e-50*1.5/1.5-1e-50 | exact: — | exact-notes: couldn't verify,ln0 | float: −2.841181×10^−64 | float-notes: ln0 | press: 24747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
 expr: 1e-500 | exact: 1×10^−500 | exact-notes: certified | float: 0 | float-notes: ln0,underflowed | press: 60017+ | round-trip: OK
 expr: 1e-500*e/e-1e-500 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 840825+ | round-trip: OK
 expr: 2 | exact: 2 | exact-notes: certified | float: 2 | float-notes:  | press: 19 | round-trip: OK
@@ -109,34 +120,42 @@ expr: 2/3 | exact: 0.666666666667 | exact-notes: certified | float: 0.6666666666
 expr: 3.1*i+0.04 | exact: 0.04 + 3.1i | exact-notes: certified,ln0 | float: 0.04 + 3.1i | float-notes: ln0 | press: 929+ | round-trip: OK
 expr: 3*((1e-120*i)-(2e-120)) | exact: −6×10^−120 + 3×10^−120i | exact-notes: certified,ln0 | float: −6×10^−120 + 3×10^−120i | float-notes: ln0 | press: 72177+ | round-trip: OK
 expr: 4*i+0.5*i | exact: 4.5i | exact-notes: certified,ln0 | float: 4.5i | float-notes: ln0 | press: 1123+ | round-trip: OK
-expr: 6.103e-120*i+6.103e-120*i | exact: 6.103×10^−120i | exact-notes: certified,ln0 | float: 1.2206×10^−119i | float-notes: ln0,differs-from-exact | press: 69645+ | round-trip: OK | # KNOWN-BUG v1.1-complex-half: exact mode shows half the sum
-expr: 6*i+(-6*i) | exact: 0 | exact-notes: certified,ln0 | float: −5.58059×10^−15 | float-notes: ln0,differs-from-exact | press: 783+ | round-trip: FAIL:text-mismatch | # KNOWN-BUG roundtrip: pack/unpack text mismatch
+expr: 6.103e-120*i+6.103e-120*i | exact: 1.2206×10^−119i | exact-notes: certified,ln0 | float: 1.2206×10^−119i ≈ | float-notes: ln0,differs-from-exact | press: 77599+ | round-trip: OK | # KNOWN-BUG v1.1-complex-half: exact mode shows half the sum
+expr: 6*i+(-6*i) | exact: 0 | exact-notes: certified,ln0 | float: −5.58059×10^−15 | float-notes: ln0,differs-from-exact | press: 783+ | round-trip: OK | # KNOWN-BUG roundtrip: pack/unpack text mismatch
 expr: arcsin(-2*i) | exact: −1.443635475179i | exact-notes: certified,ln0 | float: −1.44363547518i ≈ | float-notes: ln0,differs-from-exact | press: 5369+ | round-trip: OK
+expr: arcsin(1e-300)-1e-300 | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK
 expr: arcsin(1e-5)-1e-5 | exact: 1.666666666742×10^−16 | exact-notes: certified,ln0 | float: 1.666571×10^−16 | float-notes: ln0,differs-from-exact | press: 607733+ | round-trip: OK
 expr: arcsin(2) | exact: 1.570796326795 − 1.316957896925i | exact-notes: certified,ln0 | float: 1.57079632679 − 1.31695789692i | float-notes: ln0 | press: 1073+ | round-trip: OK
 expr: arctan(10^(-45))-10^(-45) | exact: −3.333333333333×10^−136 | exact-notes: certified,ln0,series-shortcut | float: −6.310887×10^−74i | float-notes: ln0,differs-from-exact | press: 118965+ | round-trip: OK
 expr: arctan(3*10^(-45))-3*10^(-45) | exact: −9×10^−135 | exact-notes: certified,ln0,series-shortcut | float: −2.208811×10^−73i | float-notes: ln0,differs-from-exact | press: 120593+ | round-trip: OK
-expr: artanh(1e-7)-1e-7 | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK | # KNOWN-BUG folded-zero: certified 0
+expr: artanh(1e-7)-1e-7 | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK | # KNOWN-BUG folded-zero: certified 0
 expr: asinh(1e200) | exact: 461.210165779369 | exact-notes: certified,ln0 | float: 461.210165779 ≈ | float-notes: ln0,differs-from-exact | press: 315177+ | round-trip: OK
 expr: cos(10^(-200)) | exact: 1 | exact-notes: certified,ln0 | float: 1 | float-notes: ln0 | press: 3003+ | round-trip: OK
 expr: cos(10^(-50)) | exact: 1 | exact-notes: certified,ln0 | float: 1 | float-notes: ln0 | press: 2731+ | round-trip: OK
 expr: cos(10^(-50))-1 | exact: −5×10^−101 | exact-notes: certified,ln0,series-shortcut | float: −5×10^−101 ≈ | float-notes: ln0,differs-from-exact | press: 166113+ | round-trip: OK
-expr: cos(1e100) | exact: −0.928081905075 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 48659+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
-expr: cos(1e119) | exact: −0.9849923936 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 57779+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG repeat-cache: eval2 certifies −0.9849923936; true value is −0.37226
-expr: cos(1e7) | exact: −0.907270386182 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.907270368419 + 2.335×10^−9i ≈ | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 4019+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: cos(10^119)+1 | exact: — | exact-notes: couldn't verify | float: 1.5 | float-notes: ln0,underflowed | press: 5303+ | round-trip: OK
+expr: cos(1e100) | exact: −0.928081905075 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 48659+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: cos(1e119) | exact: −0.9849923936 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 57779+ | round-trip: OK | # KNOWN-BUG repeat-cache: eval2 certifies −0.9849923936; true value is −0.37226
+expr: cos(1e119)+1 | exact: — | exact-notes: couldn't verify | float: 1.5 | float-notes: ln0,underflowed | press: 57943+ | round-trip: OK
+expr: cos(1e125)*cos(1e130) | exact: — | exact-notes: couldn't verify | float: 0.0367719106406 + 0.247280865794i | float-notes: ln0,underflowed | press: 123733+ | round-trip: OK
+expr: cos(1e7) | exact: −0.907270386182 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.907270368419 + 2.335×10^−9i ≈ | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 4019+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: cos(2^400)+1 | exact: — | exact-notes: couldn't verify | float: 1.5 | float-notes: ln0,underflowed | press: 2903+ | round-trip: OK
+expr: cos(2^60) | exact: −0.556796082277 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 1563+ | round-trip: OK
 expr: cos(3*10^(-50))-1 | exact: −4.5×10^−100 | exact-notes: certified,ln0,series-shortcut | float: −4.5×10^−100 ≈ | float-notes: ln0,differs-from-exact | press: 167433+ | round-trip: OK
 expr: e | exact: 2.718281828459 | exact-notes: certified | float: 2.71828182846 | float-notes:  | press: 3 | round-trip: OK
-expr: exp(-1000)-exp(-1001) | exact: 3.20861797491×10^−435 | exact-notes: certified,ln0 | float: 0 | float-notes: ln0,underflowed | press: 112599+ | round-trip: OK
+expr: exp(-1000)-exp(-1001) | exact: 3.20861797491×10^−435 | exact-notes: certified,ln0 | float: 0 | float-notes: ln0,underflowed | press: 118719+ | round-trip: OK
 expr: exp(-1200) | exact: 7.024601888177×10^−522 | exact-notes: certified,ln0 | float: 0 | float-notes: ln0,underflowed | press: 885+ | round-trip: OK
+expr: exp(((1+10^-500)-1)*i) | exact: — | exact-notes: couldn't verify,ln0 | float: 1 | float-notes: ln0,underflowed | press: 1045+ | round-trip: OK
 expr: exp(1) | exact: 2.718281828459 | exact-notes: certified | float: 2.71828182846 | float-notes:  | press: 3 | round-trip: OK
 expr: exp(10^(-1000))-1 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 1129+ | round-trip: OK
 expr: exp(1e-432)-1 | exact: 1×10^−432 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 51981+ | round-trip: OK
 expr: exp(1e-50)-1 | exact: 1×10^−50 | exact-notes: certified | float: 0 | float-notes: differs-from-exact | press: 6029+ | round-trip: OK
-expr: exp(800)-exp(800) | exact: −∞ | exact-notes: singular:passed through a non-finite value | float: undefined | float-notes: singular:out of float range / overflow,ln0,overflowed | press: 1071+ | round-trip: OK | # KNOWN-BUG jimmy1: −∞, singular:passed through a non-finite value, true value is 0
-expr: exp(ln(1e-400))-1e-400 | exact: −5×10^−801 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672797+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
-expr: exp(ln(ln(0))*i) | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 93+ | round-trip: OK | # KNOWN-BUG jimmy1: ∞, singular:uses ln 0 = −∞
+expr: exp(800)-exp(800) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK | # KNOWN-BUG jimmy1: −∞, singular:passed through a non-finite value, true value is 0
+expr: exp(800)*0 | exact: — | exact-notes: couldn't verify | float: undefined | float-notes: singular:out of float range / overflow,ln0,overflowed | press: 1071+ | round-trip: OK
+expr: exp(ln(1e-400))-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672797+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
+expr: exp(ln(ln(0))*i) | exact: — | exact-notes: couldn't verify,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 93+ | round-trip: OK | # KNOWN-BUG jimmy1: ∞, singular:uses ln 0 = −∞
 expr: i | exact: i | exact-notes: certified,ln0 | float: i | float-notes: ln0 | press: 57+ | round-trip: OK
-expr: inf+1 | exact: −∞i | exact-notes: singular:uses ln 0 = −∞,ln0 | float: −∞i | float-notes: singular:uses ln 0 = −∞,ln0,overflowed | press: N/A | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
+expr: inf+1 | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: N/A | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
 expr: ln(-1) | exact: 3.14159265359i | exact-notes: certified,ln0 | float: 3.14159265359i | float-notes: ln0,near-cut | press: 21 | round-trip: OK
 expr: ln(-2-10^(-110)*i) | exact: 0.69314718056 − 3.14159265359i | exact-notes: certified,ln0 | float: 0.69314718056 + 3.14159265359i | float-notes: ln0,near-cut,differs-from-exact | press: 935+ | round-trip: OK
 expr: ln(-2-10^(-112)*i) | exact: 0.69314718056 − 3.14159265359i | exact-notes: certified,ln0 | float: 0.69314718056 + 3.14159265359i | float-notes: ln0,near-cut,differs-from-exact | press: 479+ | round-trip: OK
@@ -144,37 +163,45 @@ expr: ln(-2-10^(-115)*i) | exact: 0.69314718056 − 3.14159265359i | exact-notes
 expr: ln(-2-10^(-130)*i) | exact: 0.69314718056 − 3.14159265359i | exact-notes: certified,ln0 | float: 0.69314718056 + 3.14159265359i | float-notes: ln0,near-cut,differs-from-exact | press: 767+ | round-trip: OK
 expr: ln(-2-10^(-20)*i) | exact: 0.69314718056 − 3.14159265359i | exact-notes: certified,ln0 | float: 0.69314718056 + 3.14159265359i | float-notes: ln0,near-cut,differs-from-exact | press: 401+ | round-trip: OK
 expr: ln(0) | exact: −∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: −∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 13 | round-trip: OK
-expr: ln(0)-1 | exact: −∞i | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞i | float-notes: singular:uses ln 0 = −∞,ln0 | press: 143+ | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
+expr: ln(0)-1 | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: 143+ | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
 expr: ln(0)^(-1) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK
 expr: ln(0)^(-2) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK
 expr: ln(0)^2 | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 47+ | round-trip: OK
 expr: ln(0)^3 | exact: −∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: −∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 61+ | round-trip: OK
 expr: ln(0)+0 | exact: −∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: −∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 13 | round-trip: OK
-expr: ln(0)+i | exact: −∞i | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞i | float-notes: singular:uses ln 0 = −∞,ln0 | press: 353+ | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
+expr: ln(0)+i | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: 353+ | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
 expr: ln(1+10^-130) | exact: 1×10^−130 | exact-notes: certified,ln0 | float: −3.987957×10^−143i | float-notes: ln0,differs-from-exact | press: 671+ | round-trip: OK
 expr: ln(1+1e-50)-1e-50 | exact: −5×10^−101 | exact-notes: certified,ln0 | float: −1×10^−50 | float-notes: ln0,differs-from-exact | press: 24211+ | round-trip: OK
 expr: ln(1+3*10^(-130)) | exact: 3×10^−130 | exact-notes: certified,ln0 | float: −1.196387×10^−142i | float-notes: ln0,differs-from-exact | press: 715+ | round-trip: OK
-expr: ln(ln(0)*i) | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ + 3.14159265359i | float-notes: singular:uses ln 0 = −∞,ln0,differs-from-exact | press: 109+ | round-trip: OK | # KNOWN-BUG inf-finite: ∞, singular:uses ln 0 = −∞
+expr: ln(ln(0)*i) | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: 109+ | round-trip: OK | # KNOWN-BUG inf-finite: ∞, singular:uses ln 0 = −∞
 expr: pi | exact: 3.14159265359 | exact-notes: certified,ln0 | float: 3.14159265359 | float-notes: ln0 | press: 93+ | round-trip: OK
+expr: sin(10^22) | exact: −0.852200849767 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.5i ≈ | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 1743+ | round-trip: OK
 expr: sin(1e-18+1e-120*i) | exact: 1×10^−18 + 1×10^−120i | exact-notes: certified,ln0 | float: 1×10^−18 ≈ | float-notes: ln0,differs-from-exact | press: 93255+ | round-trip: OK
 expr: sin(1e-200) | exact: 1×10^−200 | exact-notes: certified,series-shortcut | float: 1×10^−200 | float-notes: ln0,overflowed | press: 168249+ | round-trip: OK
 expr: sin(1e-300)-1e-300 | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK
-expr: sin(1e150) | exact: −0.950743876833 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.5i ≈ | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 72671+ | round-trip: FAIL:text-mismatch+singular-mismatch | # KNOWN-BUG repeat-cache: eval2 certifies −0
-expr: sin(1e22) | exact: −0.852200849767 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.5i ≈ | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 11231+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: sin(1e150) | exact: −0.950743876833 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.5i ≈ | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 72671+ | round-trip: OK | # KNOWN-BUG repeat-cache: eval2 certifies −0
+expr: sin(1e22) | exact: −0.852200849767 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.5i ≈ | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 11231+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: sin(1e22)+1 | exact: — | exact-notes: couldn't verify | float: 1 − 0.5i | float-notes: ln0,underflowed | press: 11395+ | round-trip: OK
 expr: sin(9e-13+1e-120*i) | exact: 9×10^−13 + 1×10^−120i | exact-notes: certified,ln0 | float: 9×10^−13 ≈ | float-notes: ln0,differs-from-exact | press: 84071+ | round-trip: OK
-expr: sinh(0.00005*i) | exact: 0.00005i | exact-notes: certified,ln0 | float: 0.0000499999999792i ≈ | float-notes: ln0,differs-from-exact | press: 10579+ | round-trip: OK
-expr: sinh(1e-7)-1e-7 | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK | # KNOWN-BUG folded-zero: certified 0
+expr: sinh(0.00005*i) | exact: 0.00005i | exact-notes: certified,ln0 | float: 0.0000499999999792i ≈ | float-notes: ln0,differs-from-exact | press: 9913+ | round-trip: OK
+expr: sinh(1e-7)-1e-7 | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK | # KNOWN-BUG folded-zero: certified 0
+expr: sinh(1e-7*i)-1e-7*i | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK
+expr: sinh(5e-7)-5e-7 | exact: — | exact-notes: couldn't verify | float: 0 | float-notes:  | press: 11 | round-trip: OK
 expr: sqrt(-0) | exact: −0 | exact-notes: certified | float: −0 | float-notes:  | press: N/A | round-trip: OK
 expr: sqrt(2) | exact: 1.414213562373 | exact-notes: certified | float: 1.41421356237 | float-notes:  | press: 61+ | round-trip: OK
 expr: tan(10^(-20)) | exact: 1×10^−20 | exact-notes: certified,ln0,series-shortcut | float: 1×10^−20 ≈ | float-notes: ln0,differs-from-exact | press: 269443+ | round-trip: OK
 expr: tan(10^(-40)) | exact: 1×10^−40 | exact-notes: certified,ln0,series-shortcut | float: 1×10^−40 ≈ | float-notes: ln0,differs-from-exact | press: 115501+ | round-trip: OK
 expr: tan(10^(-5000)) | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 19267+ | round-trip: OK
 expr: tan(1e-5000) | exact: 1×10^−5000 | exact-notes: certified,series-shortcut | float: 0 | float-notes: ln0,underflowed | press: 600017+ | round-trip: OK
-expr: tan(1e100) | exact: 0.401231961991 | exact-notes: singular:argument too large to reduce,ln0 | float: −0 | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 160837+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
-expr: tan(1e22) | exact: −1.628778225607 | exact-notes: singular:argument too large to reduce,ln0 | float: −0 | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 39157+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
-expr: tan(3*pi/2) | exact: undefined | exact-notes: singular:near a pole,ln0 | float: undefined | float-notes: singular:near a pole,ln0 | press: 6861+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)
-expr: tan(pi/2) | exact: undefined | exact-notes: singular:near a pole,ln0 | float: ∞ | float-notes: singular:near a pole,ln0 | press: 6289+ | round-trip: FAIL:singular-mismatch | # KNOWN-BUG pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)
+expr: tan(1e100) | exact: 0.401231961991 | exact-notes: singular:argument too large to reduce,ln0 | float: −0 | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 160837+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: tan(1e140)+1 | exact: — | exact-notes: couldn't verify | float: 1 | float-notes: ln0 | press: 223401+ | round-trip: OK
+expr: tan(1e22) | exact: −1.628778225607 | exact-notes: singular:argument too large to reduce,ln0 | float: −0 | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 39157+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
+expr: tan(3*pi/2) | exact: undefined | exact-notes: singular:near a pole,ln0 | float: undefined | float-notes: singular:near a pole,ln0 | press: 6861+ | round-trip: OK | # KNOWN-BUG pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)
+expr: tan(pi/2) | exact: undefined | exact-notes: singular:near a pole,ln0 | float: ∞ | float-notes: singular:near a pole,ln0 | press: 6289+ | round-trip: OK | # KNOWN-BUG pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)
 expr: tanh(10^(-45))-10^(-45) | exact: −3.333333333333×10^−136 | exact-notes: certified,ln0,series-shortcut | float: −6.310887×10^−74i | float-notes: ln0,differs-from-exact | press: 125041+ | round-trip: OK
+expr: tanh(130) | exact: — | exact-notes: couldn't verify | float: 1 | float-notes: ln0 | press: 5971+ | round-trip: OK
 expr: tanh(1e-10*i) | exact: 1×10^−10i | exact-notes: certified,ln0 | float: 1×10^−20 + 1×10^−10i ≈ | float-notes: ln0,differs-from-exact | press: 12695+ | round-trip: OK
 expr: tanh(1e-16*i) | exact: 1×10^−16i | exact-notes: certified,ln0 | float: 1×10^−16i | float-notes: ln0 | press: 19895+ | round-trip: OK
+expr: tanh(200) | exact: — | exact-notes: couldn't verify | float: 1 | float-notes: ln0 | press: 5483+ | round-trip: OK
 expr: tanh(3*10^(-45))-3*10^(-45) | exact: −9×10^−135 | exact-notes: certified,ln0,series-shortcut | float: −2.208811×10^−73i | float-notes: ln0,differs-from-exact | press: 126669+ | round-trip: OK
+expr: tanh(354) | exact: — | exact-notes: couldn't verify | float: 1 | float-notes: ln0 | press: 6383+ | round-trip: OK

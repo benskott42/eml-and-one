@@ -10,8 +10,10 @@ import {
   hiddenUnderflow,
   integerQuotient,
   isLostTiny,
+  isNegationPair,
   isNonfiniteNode,
   knownValue,
+  mayBeInfinite,
   markInfiniteSource,
   markMaybeInfinite,
   noteDecade,
@@ -24,6 +26,7 @@ import {
   noteExp,
   noteLn,
   noteNonfinite,
+  noteOverflow,
   rangeOf,
   sumOfNegation,
   tagInteger,
@@ -33,7 +36,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, isolateCircuit, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -61,6 +64,7 @@ function memo(build: () => Node): () => Node {
 }
 
 onCircuitIsolate(() => {
+  hugeAngleBuilt = false;
   for (const reset of memoResets) reset();
   intCache.clear();
   unaryCache.clear();
@@ -187,13 +191,14 @@ export function tExp(t: Node): Node {
   expArg.set(node, t);
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
   // exp(−∞) stays a zero: exp(−∞) − exp(−∞) is 0.
-  // A finite real past about 709 overflows float to +∞. The range stays
-  // unknown, so the node has to be marked or exp(exp(800)) − itself folds to 0.
+  // A finite real past about 709 overflows float to +∞. Mark it as overflow,
+  // not a pole, so exp(800) − exp(800) folds to 0. exp of that overflow is a
+  // pole, or exp(exp(800)) − itself would also fold to 0.
   if (t.type === "input" && t.value.re === Infinity && imagZero(t.value)) return noteNonfinite(node, 1);
   const known = knownValue(t);
   if (known && known.re === Infinity && imagZero(known)) return noteNonfinite(node, 1);
   if (known && known.re < 0 && !Number.isFinite(known.re)) return node;
-  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteNonfinite(node, 1);
+  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteOverflow(node);
   if (isNonfiniteNode(t) && !(known && known.re < 0)) return noteNonfinite(node, 1);
   return node;
 }
@@ -206,6 +211,8 @@ export function tLn(t: Node): Node {
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
   if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
+  // ln of an imaginary infinity is not the real infinity the log word prints.
+  if (oddDirection(t)) return markUnverified(markMaybeInfinite(node, t));
   const inner = plus ?? minus;
   if (inner) {
     const decade = decadeOf(inner);
@@ -246,6 +253,7 @@ const SERIES_WIDE = -20;
 const SERIES_REL = -480;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
+const SMALL_NOTE = "series shortcut: the leading term z, for a small |z|";
 const seriesNotes = new WeakMap<Node, string>();
 
 function markSeries(node: Node, note: string): Node {
@@ -430,6 +438,52 @@ export function tAdd(a: Node, b: Node): Node {
   return tagPi(node, piAdd(a, b));
 }
 
+/**
+ * The user's a + b. The add word rotates through ln, so ±∞ beside a finite term
+ * can print a pure imaginary infinity. When that number is not the real infinity
+ * the sum must be, exact mode says it could not verify. A float NaN stays undefined.
+ */
+export function userAdd(a: Node, b: Node): Node {
+  return userSum(a, b, false);
+}
+
+/** The user's a − b. Same refusal as userAdd. */
+export function userSub(a: Node, b: Node): Node {
+  return userSum(a, b, true);
+}
+
+/**
+ * Classify, then build. The add circuit is the same node as ln of a zero argument,
+ * and building it overwrites that range. Reading ln(0) afterwards would miss −∞.
+ */
+function userSum(a: Node, b: Node, sub: boolean): Node {
+  const same = a === b;
+  const negation = !sub && isNegationPair(a, b);
+  // Classify before any sum or negation is built. Adding 0 reuses the ln(0)
+  // node and would clear its range, so the sign must be read first.
+  // Identical addends such as ln(0)+ln(0) still need a class: skipping that
+  // would leave the indeterminate label on a same-direction sum.
+  const left = negation ? null : infinityClass(a);
+  const right = negation ? null : infinityClass(b);
+  // Exact 0 is an identity. Passing the other operand through keeps a
+  // directed infinity such as ∞i + 0, which the refusal path would drop.
+  if (!same && !negation) {
+    if (exactZero(b)) return a;
+    if (!sub && exactZero(a)) return b;
+    if (sub && exactZero(a)) return tNeg(b);
+  }
+  const node = sub ? tSub(a, b) : tAdd(a, b);
+  // Identical subtraction stays on the circuit so ∞ − ∞ is undefined, not 0.
+  if (same && sub) return node;
+  if (negation || !left || !right || (!left.inf && !right.inf)) {
+    // 1+(2+∞) must not drop the inner refusal and certify a NaN as ∞−∞.
+    if (isUnverified(a) || isUnverified(b)) return markUnverified(node);
+    if (isExactUnsure(a) || isExactUnsure(b)) return markExactUnsure(node);
+    return node;
+  }
+  return refuseInfiniteSum(node, left, right, sub);
+}
+
 export function tInv(b: Node): Node {
   return rawDiv(ONE, b);
 }
@@ -532,6 +586,90 @@ function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
   return null;
 }
 
+/** Quarter 1 is +∞i and quarter 3 is −∞i. */
+function oddDirection(node: Node): boolean {
+  const dir = directionOf(node);
+  if (!dir) return false;
+  const quarter = ((dir.quarter % 4) + 4) % 4;
+  return quarter === 1 || quarter === 3;
+}
+
+/** A real ±∞, or a directed infinity. A float overflow such as exp(800) is not this. */
+function infinityClass(node: Node): { inf: boolean; sign: -1 | 1 | undefined } {
+  const real = realSignedInfinity(node);
+  if (real !== null) return { inf: true, sign: real };
+  const dir = directionOf(node);
+  if (dir) {
+    const quarter = ((dir.quarter % 4) + 4) % 4;
+    if (quarter === 0) return { inf: true, sign: 1 };
+    if (quarter === 2) return { inf: true, sign: -1 };
+    return { inf: true, sign: undefined };
+  }
+  if (mayBeInfinite(node)) return { inf: true, sign: undefined };
+  return { inf: false, sign: undefined };
+}
+
+function floatOf(node: Node): { re: number; im: number } | null {
+  try {
+    const report = evaluateReport(node, {}, { maxNodes: 50_000 });
+    if (report.unverified) return null;
+    return report.value;
+  } catch {
+    return null;
+  }
+}
+
+function floatIsNaN(value: { re: number; im: number } | null): boolean {
+  return value !== null && Number.isNaN(value.re) && Number.isNaN(value.im);
+}
+
+function floatIsRealInfinity(value: { re: number; im: number } | null, sign: -1 | 1): boolean {
+  if (!value) return false;
+  return value.re === sign * Infinity && (value.im === 0 || Object.is(value.im, -0));
+}
+
+function oppositeSign(sign: -1 | 1): -1 | 1 {
+  return sign === 1 ? -1 : 1;
+}
+
+/**
+ * ±∞ beside a finite term, when the add or sub word does not already show that
+ * real infinity. A NaN float stays indeterminate only when both sides are
+ * infinite and not proven to point the same way, so 1 + ∞ is refused and
+ * ∞ − ∞ stays undefined. Two infinities that do point the same way keep the
+ * circuit when it already shows that real infinity, so ∞ − (−∞) stays ∞.
+ * The operands were classified before the sum was built.
+ */
+function refuseInfiniteSum(
+  node: Node,
+  left: { inf: boolean; sign: -1 | 1 | undefined },
+  right: { inf: boolean; sign: -1 | 1 | undefined },
+  sub: boolean,
+): Node {
+  const value = floatOf(node);
+  const leftEff = left.sign;
+  const rightEff = right.sign === undefined ? undefined : sub ? oppositeSign(right.sign) : right.sign;
+  const bothInf = left.inf && right.inf;
+  const knownPair = bothInf && leftEff !== undefined && rightEff !== undefined;
+  if (knownPair && leftEff !== rightEff) return floatIsNaN(value) ? node : markUnverified(node);
+  if (knownPair && leftEff === rightEff) {
+    if (floatIsRealInfinity(value, leftEff)) return node;
+    return markUnverified(node);
+  }
+  if (left.inf !== right.inf) {
+    const known = left.inf ? left.sign : right.sign;
+    const sign = known === undefined ? undefined : !left.inf && sub ? oppositeSign(known) : known;
+    if (sign !== undefined) {
+      if (floatIsRealInfinity(value, sign)) return node;
+      return markUnverified(node);
+    }
+  }
+  // Both infinite, but the directions are not proven. A NaN float is the
+  // indeterminate cancellation; anything else is refused.
+  if (bothInf && floatIsNaN(value)) return node;
+  return markUnverified(node);
+}
+
 /** Quarter turns to add for a finite factor on one axis. */
 function factorQuarter(node: Node): number | null {
   const real = realDirection(node);
@@ -613,6 +751,8 @@ export function tDiv(a: Node, b: Node): Node {
   // A finite numerator over a directed infinity is 0. The quotient word can
   // leave a signed zero in the opposite direction.
   if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
+  // (∞i)/2 is not the real infinity the quotient word prints.
+  if (oddDirection(a) && !directionOf(b) && provenFinite(b)) return markUnverified(rawDiv(a, b));
   // exp(u)/exp(v) = exp(u − v) when the exponents are integers or small,
   // so exp(800)/exp(799) is e and not ∞/∞. A large complex exponent keeps
   // the quotient: rewriting it overflows.
@@ -699,6 +839,8 @@ export function tSqrt(t: Node): Node {
   if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return rememberDirection(t, 1);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
+  // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
+  if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
   const inner = onePlus.get(t);
   if (inner && tinyScale(inner, SERIES_REL) !== null) sqrtArg.set(node, inner);
@@ -732,7 +874,9 @@ export function tSigmoid(t: Node): Node {
 export function tSinh(t: Node): Node {
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  // The dropped cubic is not exact, so z is marked as a series shortcut: a later
+  // sinh(z) − z is a series zero and is not certified.
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   // exp(t)/2 · (1 − exp(−2t)). Subtracting the real 1 keeps exp(t) out of the exponent.
   const em2 = tExp(tNeg(tAdd(t, t)));
   return tHalfOf(tMul(tExp(t), tSub(ONE, em2)));
@@ -750,7 +894,11 @@ export function tTanh(t: Node): Node {
   if (series) return series;
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
-  return tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  const out = tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  // Past |Re t| ≈ 100 the distance from ±1, 2e^(−2|t|), is below the working precision
+  // and the quotient rounds to an exact ±1. Not certified.
+  const known = knownValue(t);
+  return known && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
 }
 
 /**
@@ -759,7 +907,28 @@ export function tTanh(t: Node): Node {
  */
 function flagAngle(node: Node, arg: Node, tan: boolean): Node {
   notePrecision(node, { kind: tan ? "pole" : "trig", arg });
+  let known = knownValue(arg);
+  if (!known) {
+    try {
+      known = evaluateReport(arg).value;
+    } catch {
+      known = null;
+    }
+  }
+  if (known && Number.isFinite(known.re) && Math.abs(known.im) <= 1 && Math.abs(known.re) > HUGE_ANGLE) hugeAngleBuilt = true;
   return node;
+}
+
+/** Past this a 120-digit π no longer reduces the angle reliably. */
+const HUGE_ANGLE = 1e15;
+let hugeAngleBuilt = false;
+
+/**
+ * Whether the expression being compiled took sin, cos, or tan of an angle past
+ * 10^15. A later sum can rebuild the trig node away, so its note is not enough.
+ */
+export function builtHugeAngle(): boolean {
+  return hugeAngleBuilt;
 }
 
 /**
@@ -984,13 +1153,17 @@ function arcsinSeries(t: Node): Node {
  */
 export function tArcsin(t: Node): Node {
   const known = knownValue(t);
+  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
+  const tiny = known ? Math.hypot(known.re, known.im) : Number.NaN;
+  if (tiny > 0 && tiny < 1e-60) return markSeries(t, SMALL_NOTE);
   if (known && (known.im === 0 || Object.is(known.im, -0)) && (known.re === 1 || known.re === -1)) {
     const half = tHalfOf(tPi());
     return known.re < 0 ? tNeg(half) : half;
   }
   if (rangeOf(t).int === BigInt(0)) return tZero();
   const box = asinhBox(t);
-  if (box !== null && box < 1e-4) return arcsinSeries(t);
+  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
+  if (box !== null && box < 1e-4) return box < 1e-60 ? markUnverified(arcsinSeries(t)) : arcsinSeries(t);
   const re = realBounds(t);
   const side = provenImagSign(t);
   const lower = side === 1 || (side === 0 && !!re && re.hi < 0);
@@ -1085,7 +1258,8 @@ function artanhAboveOne(t: Node): Node {
 
 export function tArtanh(t: Node): Node {
   const known = tightValue(t);
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);
   if (known && imagZero(known) && known.re < -1) return tNeg(artanhAboveOne(tNeg(t)));
   return tHalfOf(tLn(tDiv(tAdd(ONE, t), tSub(ONE, t))));
@@ -1263,8 +1437,8 @@ export const unaryBuilders: Record<string, (t: Node) => Node> = {
 };
 
 export const binaryBuilders: Record<string, (a: Node, b: Node) => Node> = {
-  add: tAdd,
-  sub: tSub,
+  add: userAdd,
+  sub: userSub,
   mul: tMul,
   div: tDiv,
   pow: tPow,
