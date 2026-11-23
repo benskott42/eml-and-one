@@ -197,6 +197,22 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 
 /** Decades cancelled inside one subtraction. A later pass may raise precision. */
 let lossGap = 0;
+/**
+ * Decades between an imaginary sum and a nonzero term it rounded away. An angle
+ * is an imaginary part, and exp turns it back into a value: −π + 2.9×10^(−303)
+ * rounds to −π at 120 digits, exp snaps to the axis, and (10^300 + 2i)^(−1) lost
+ * its −2×10^(−600) i. recoverTinyPart evaluates again where that term fits.
+ */
+let absorbIm = 0;
+
+function noteAbsorb(left: Decimal, right: Decimal, out: Decimal): void {
+  if (!out.isFinite() || out.isZero() || !left.isFinite() || !right.isFinite()) return;
+  for (const term of [left, right]) {
+    if (term.isZero()) continue;
+    const gap = out.e - term.e;
+    if (gap > D.precision - 8 && gap > absorbIm) absorbIm = gap;
+  }
+}
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
 /**
@@ -360,6 +376,7 @@ function exactEml(x: Z, y: Z): Z {
   if (sameInfinity(a.re, b.re) || sameInfinity(a.im, b.im)) return { re: NAN, im: NAN };
   const re = cancelled(a.re.sub(b.re), a.re, b.re, "re");
   const im = cancelled(a.im.sub(b.im), a.im, b.im, "im");
+  noteAbsorb(a.im, b.im, im);
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
   return { re, im };
 }
@@ -408,6 +425,25 @@ function liftedGap(x: Z, y: Z, out: Z): number {
     // The words also carry terms near 1 (exp y ≈ 1 in the sub word, e in the add word), so
     // terms below 1 still leave noise near 10^(−precision): count from 1 at least.
     gap = Math.max(gap, Math.max(scale.e, 0) - diff.abs().e);
+  }
+  return gap;
+}
+
+/**
+ * Decades exp(x) loses in a component where cos or sin of x.im is small beside
+ * the angle: an angle near a nonzero multiple of π/2. The angle carries absolute
+ * rounding near 10^(e(θ) − precision), so cos(π/2 + 10^(−108)) at 120 digits keeps
+ * 12 digits, and (10^108 − i)·sin(atanh(−i)) printed a wrong real part. A small
+ * angle has no such loss: sin θ ≈ θ keeps θ's relative accuracy. An angle within
+ * the snap tolerance is that axis and loses nothing.
+ */
+function trigGap(x: Z): number {
+  if (!x.re.isFinite() || !x.im.isFinite() || x.im.isZero() || x.im.e < 0) return 0;
+  const trig = cosSin(x.im);
+  let gap = 0;
+  for (const part of [trig.c, trig.s]) {
+    if (!part.isFinite() || part.isZero()) continue;
+    gap = Math.max(gap, x.im.e - part.e);
   }
   return gap;
 }
@@ -500,6 +536,8 @@ export type ExactReport = {
   sawLead?: boolean;
   /** Decades cancelled between a 10^k lift and its drop. */
   liftGap?: number;
+  /** Largest imaginary term rounded away beside its sum, in decades. */
+  absorbIm?: number;
 };
 
 type Work = { all: number; re: number; im: number; hits: CancelHit[] };
@@ -536,7 +574,7 @@ function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): nu
   return best;
 }
 /** `loss`, `tiniest` and `lead` are the subtree's share of the pass state, restored on a hit. */
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; tinyParts: TinyParts; lead: boolean; big: number };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; tiniest: number; tinyParts: TinyParts; lead: boolean; big: number; absorb: number };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -717,7 +755,9 @@ function recoverTinyPart(report: ExactReport, root: Node, env: Record<string, C 
   if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() === v.im.isZero()) return null;
   const which: "re" | "im" = v.re.isZero() ? "re" : "im";
   const digits = report.digits ?? D.precision;
-  const hinted = demandedTinyDigits(root, env);
+  const absorbed = report.absorbIm ?? 0;
+  const leafHint = demandedTinyDigits(root, env);
+  const hinted = Math.max(leafHint, absorbed > 0 ? absorbed + 48 : 0);
   if (hinted <= digits) return null;
   if (hinted > PRECISION_CAP) return null;
   let first: ExactReport;
@@ -731,8 +771,10 @@ function recoverTinyPart(report: ExactReport, root: Node, env: Record<string, C 
   }
   // A part under the noise of the terms that cancelled at that precision is a
   // rounding residue even when it holds still: sin(−10^(−400)) leaves ~10^(−801) i.
+  // An absorbed angle alone is not a cancellation: (10^300 + 2i)^(−1) rotates its
+  // −2×10^(−600) i out of −π + 2.9×10^(−303), under a work tally of size 1.
   const work = which === "re" ? first.workRe : first.workIm;
-  if (work !== undefined && Number.isFinite(work) && first.value[which].abs().lt(residueFloor(work, first.digits ?? hinted))) return null;
+  if (leafHint > digits && work !== undefined && Number.isFinite(work) && first.value[which].abs().lt(residueFloor(work, first.digits ?? hinted))) return null;
   // A part that moves with the precision is dust, and the scrubbed value stands.
   if (second.unverified || residueMoved(first.value[which], second.value[which])) return null;
   return first;
@@ -1112,6 +1154,7 @@ function exactReportOnce(
   const work = new Map<Node, Work>();
   // Per subtree: largest cancellation, smallest exponent seen, and a series shortcut below.
   const lossOf = new Map<Node, number>();
+  const absorbOf = new Map<Node, number>();
   const tinyOf = new Map<Node, number>();
   const tinyPartsOf = new Map<Node, TinyParts>();
   const leadOf = new Map<Node, boolean>();
@@ -1120,6 +1163,7 @@ function exactReportOnce(
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let sawLead = false;
   tiniest = 0;
+  absorbIm = 0;
   tinyRe = 0;
   tinyIm = 0;
   biggest = Number.NEGATIVE_INFINITY;
@@ -1208,6 +1252,8 @@ function exactReportOnce(
       work.set(n, hit.work);
       // exactEml did not run below this node, so take its recorded share of the pass state.
       if (hit.loss > lossGap) lossGap = hit.loss;
+      if (hit.absorb > absorbIm) absorbIm = hit.absorb;
+      absorbOf.set(n, hit.absorb);
       if (hit.tiniest < tiniest) tiniest = hit.tiniest;
       if (hit.tinyParts.re < tinyRe) tinyRe = hit.tinyParts.re;
       if (hit.tinyParts.im < tinyIm) tinyIm = hit.tinyParts.im;
@@ -1247,12 +1293,17 @@ function exactReportOnce(
     const angleInfinite = !!angleValue && (!angleValue.re.isFinite() || !angleValue.im.isFinite());
     const outerLoss = lossGap;
     lossGap = 0;
+    const outerAbsorb = absorbIm;
+    absorbIm = 0;
     // An angle under the rounding noise of the gates that produced it is that
     // noise, and turns as 0 (cosSin no longer snaps a tiny angle to the axis).
     const turn = angleNoise(a, work.get(n.a)) ? { re: a.re, im: ZERO } : a;
     const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b);
     const ownLoss = lossGap;
     lossGap = Math.max(outerLoss, ownLoss);
+    const subAbsorb = Math.max(absorbIm, absorbOf.get(n.a) ?? 0, absorbOf.get(n.b) ?? 0);
+    absorbIm = Math.max(outerAbsorb, absorbIm);
+    absorbOf.set(n, subAbsorb);
     const subLoss = Math.max(ownLoss, lossOf.get(n.a) ?? 0, lossOf.get(n.b) ?? 0);
     const subTiny = Math.min(exponentFloor(value), tinyOf.get(n.a) ?? exponentFloor(a), tinyOf.get(n.b) ?? exponentFloor(b));
     const subLead = isSeriesShortcut(n) || leadOf.get(n.a) === true || leadOf.get(n.b) === true;
@@ -1291,14 +1342,14 @@ function exactReportOnce(
     const store = gateRiskStore();
     const gate: GateRisk = {
       ...carriesLoss(!angleInfinite && gateLosesPart(a, b, value), riskOf(n.a, risk, store), riskOf(n.b, risk, store), value),
-      liftGap: isLiftedCombine(n) && !angleInfinite ? liftedGap(a, b, value) : 0,
+      liftGap: angleInfinite ? 0 : Math.max(isLiftedCombine(n) ? liftedGap(a, b, value) : 0, trigGap(turn)),
     };
     risk.set(n, gate);
     if (!(n.a.type === "var" || hasVarOf.get(n.a) === true || n.b.type === "var" || hasVarOf.get(n.b) === true)) store.set(n, gate);
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, tinyParts: subTinyParts, lead: subLead, big: subBig });
+    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, tiniest: subTiny, tinyParts: subTinyParts, lead: subLead, big: subBig, absorb: subAbsorb });
   }
 
   const out = memo.get(root);
@@ -1329,6 +1380,7 @@ function exactReportOnce(
     prodIm: componentProd("im", out.im, hits),
     digits: D.precision,
     sawLead,
+    absorbIm,
     ...riskReport(out, riskBelow(root, out, risk)),
   };
 }

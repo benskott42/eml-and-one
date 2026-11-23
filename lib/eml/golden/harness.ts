@@ -49,7 +49,6 @@ const BUGS: Record<string, string> = {
   "cos(1e7)": "cache-second: fresh eval is argument too large; the repeat certifies it",
   "tan(1e100)": "cache-second: fresh eval is argument too large; the repeat certifies it",
   "tan(1e22)": "cache-second: fresh eval is argument too large; the repeat certifies it",
-  "cos(1e119)": "repeat-cache: eval2 certifies −0.9849923936; true value is −0.37226",
   "sin(1e150)": "repeat-cache: eval2 certifies −0",
   "tan(pi/2)": "pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)",
   "tan(3*pi/2)": "pole-wording: fresh eval is near a pole; the repeat says indeterminate (∞ − ∞ or 0 · ∞)",
