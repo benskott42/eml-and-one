@@ -224,6 +224,13 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 
 /** Decades cancelled inside one subtraction. A later pass may raise precision. */
 let lossGap = 0;
+/**
+ * Largest cancellation (decades) at a gate inside a scaled shell in this pass. Shell gates
+ * carry no work, so a lifted tiny sum's cancellation was invisible: 1e−320·(1+1e−100) −
+ * 1e−320 cancelled 100 decades at 120 digits and certified 1.00000003×10^(−420).
+ * Ported from main 1.0.1 (6704f98, 2c5db2f).
+ */
+let shellLoss = 0;
 /** Most negative exponent of a nonzero finite value computed in this pass. */
 let tiniest = 0;
 /**
@@ -438,7 +445,7 @@ export type ExactReport = {
  * pass-wide lossGap, tiniest and sawLead. A pureCache hit skips the subtree, so it must
  * replay these, or a repeat compute certifies a 0 the first compute escalated away.
  */
-type Work = { all: number; re: number; im: number; ab?: number; abE?: number; kept?: number; loss?: number; tiny?: number; tinyIm?: number; lead?: boolean; cut?: boolean };
+type Work = { all: number; re: number; im: number; ab?: number; abE?: number; kept?: number; loss?: number; sh?: number; tiny?: number; tinyIm?: number; lead?: boolean; cut?: boolean };
 type Cached = { value: Z; why: string | null; logged: boolean; work: Work; cutHits: number };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
@@ -701,24 +708,35 @@ function settleResidue(
  * That mul is not the sum: exact evaluation would certify the bare integer.
  * The leaf sits next to the root, so this does not walk the power.
  */
+/**
+ * Whether the circuit uses a remembered huge sum (rememberHugeReal) anywhere. That
+ * node's gates hold only the bare integer, so any circuit built on it drops the
+ * small term. The walk covers the whole DAG: a depth-8 / 64-step cap missed the
+ * marker under the product word, and (10^400+i)·2 was certified as 2×10^400.
+ */
 function hidesBeside(root: Node): boolean {
-  const stack: { n: Node; depth: number }[] = [{ n: root, depth: 0 }];
-  let steps = 0;
-  while (stack.length && steps < 64) {
-    const frame = stack.pop();
-    if (!frame) break;
-    steps += 1;
-    const node = frame.n;
+  const known = besideMemo.get(root);
+  if (known !== undefined) return known;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  let found = false;
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
     if (node.type === "input") {
-      if (node.label.startsWith("beside:")) return true;
+      if (node.label.startsWith("beside:")) {
+        found = true;
+        break;
+      }
       continue;
     }
-    if (node.type === "eml" && frame.depth < 8) {
-      stack.push({ n: node.a, depth: frame.depth + 1 }, { n: node.b, depth: frame.depth + 1 });
-    }
+    if (node.type === "eml") stack.push(node.a, node.b);
   }
-  return false;
+  besideMemo.set(root, found);
+  return found;
 }
+const besideMemo = new WeakMap<Node, boolean>();
 
 /**
  * v1.1 prototype: absorbed-term policy. One decision, no loop: a gap that fits
@@ -842,9 +860,11 @@ function exactReportCore(
     }
   }
   lossGap = 0;
+  shellLoss = 0;
   const report = exactReportOnce(root, env, budget);
   if (pass !== 0) return present(report);
   firstPassGap = Math.max(lossGap, report.absorbedGap ?? 0);
+  const firstShell = shellLoss;
   if (vanished(report.value)) {
     if (report.sawLead) {
       // v1.1: an odd series that kept a term below the working digits (seriesKept) is
@@ -902,6 +922,14 @@ function exactReportCore(
   }
   settled = settleResidue(settled, root, env, budget);
   if (settled.unverified) return settled;
+  // A lifted tiny sum keeps (digits − gap) digits: raise until 24 spare digits remain, or
+  // say it is not certified past the cap (see shellLoss).
+  if (!vanished(settled.value) && firstShell > (settled.digits ?? D.precision) - 24) {
+    const need = firstShell + 48;
+    if (need > PRECISION_CAP) return { ...settled, notCertified: { reason: "absorbed", termDecade: report.tiniestExp ?? Number.NEGATIVE_INFINITY, gap: firstShell } };
+    settled = atPrecision(need, root, env, budget);
+    if (settled.unverified) return settled;
+  }
   // Finding 4 (v1.1): a Log argument on the cut side of the negative real axis with a tiny
   // value in the circuit. The bank is decided by whether that tiny value reaches the Log, so
   // evaluate once where it fits (the same k + 48 rule), or refuse to certify past the cap.
@@ -1081,6 +1109,7 @@ function exactReportOnce(
       noteSeen(hit.value);
       // Replay what the skipped subtree told the pass (Finding 1: repeat compute → 0).
       if (hit.work.loss !== undefined && hit.work.loss > lossGap) lossGap = hit.work.loss;
+      if (hit.work.sh !== undefined && hit.work.sh > shellLoss) shellLoss = hit.work.sh;
       if (hit.work.tiny !== undefined && hit.work.tiny < tiniest) tiniest = hit.work.tiny;
       if (hit.work.tinyIm !== undefined && hit.work.tinyIm < tiniestIm) tiniestIm = hit.work.tinyIm;
       if (hit.work.lead) sawLead = true;
@@ -1120,6 +1149,8 @@ function exactReportOnce(
     const cutHits = (cuts.get(n.a) ?? 0) + (cuts.get(n.b) ?? 0) + (loggedCut ? 1 : 0);
     cuts.set(n, cutHits);
     const shell = inScaledShell(n);
+    const ownShell = shell ? nodeLoss : 0;
+    if (ownShell > shellLoss) shellLoss = ownShell;
     const own: Work = shell
       ? { all: Number.NEGATIVE_INFINITY, re: Number.NEGATIVE_INFINITY, im: Number.NEGATIVE_INFINITY }
       : { all: emlWork, re: emlWorkRe, im: emlWorkIm };
@@ -1135,6 +1166,7 @@ function exactReportOnce(
       re: Math.max(own.re, left?.re ?? Number.NEGATIVE_INFINITY, right?.re ?? Number.NEGATIVE_INFINITY),
       im: Math.max(own.im, left?.im ?? Number.NEGATIVE_INFINITY, right?.im ?? Number.NEGATIVE_INFINITY),
       loss: Math.max(nodeLoss, left?.loss ?? 0, right?.loss ?? 0),
+      sh: Math.max(ownShell, left?.sh ?? 0, right?.sh ?? 0),
       tiny: Math.min(partExp(value), left?.tiny ?? leafTiny(n.a), right?.tiny ?? leafTiny(n.b)),
       tinyIm: Math.min(imExp(value), left?.tinyIm ?? leafTinyIm(n.a), right?.tinyIm ?? leafTinyIm(n.b)),
       kept: Math.max(left?.kept ?? Number.NEGATIVE_INFINITY, right?.kept ?? Number.NEGATIVE_INFINITY),

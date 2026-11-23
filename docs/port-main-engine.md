@@ -12,3 +12,23 @@ Not yet active on v1.1:
 - **Float trig of ±∞ = undefined.** v1.1 expects "couldn't verify" (E3 item 6). Reconcile before porting.
 - **Display rule (1.0.2).** A small component no longer prints extra digits when places 13–14 are 0 (formatDec hiddenTail looksRound).
 - **eml:golden.** The harness and corpus came over, but golden.txt was recorded on main's engine. Regenerate it on v1.1 (`npm run eml:golden -- --update`, a reason per changed line) before wiring it into v1.1's CI.
+
+## Status after the 2026-11-23 audit
+
+main's 47 release rows were run on v1.1 and every disputed value was checked against mpmath (200 digits).
+
+**Ported** (rows in `lib/eml/check-port.ts`, isolate shard):
+- The huge-sum marker walk covers the whole DAG: (10^400+i)·2 and 2·(10^400+π) are refused.
+- 0 × a finite value past float range is exactly 0. exp(800)·0 was certified −∞; there is a new `isFiniteOverflow` mark in lowering.ts.
+- A lifted tiny sum sizes its cancellation. 1e−320·(1+1e−100) − 1e−320 was certified 1.00000003×10^−420. `shellLoss` in exact.ts now raises precision to gap + 48, or marks the result not certified past the cap.
+
+**Not needed on v1.1**, because v1.1's engine already returns the mpmath value, so main's refusal would only lose a correct answer:
+- Huge trig angles: −cos(1e119), cos(1e119)+1, cos(1e125)·cos(1e130), tan(1e140)+1, cos(2^400)+1, sin(1e22)+1.
+- Tiny parts beside i/2: ((1+1/10^130)−1)+i/2, ((1+exp(−299.3))−1)+i/2, (exp(exp(−300))−1)+i/2, ((1+exp(−300))−1)·i+1/2.
+- Series differences: sinh(1e−7)−1e−7, artanh(1e−7)−1e−7, sinh(5e−7)−5e−7, sinh(1e−7·i)−1e−7·i.
+
+**Already flagged by v1.1** (`notCertified: absorbed`, shown as not certified, not a wrong value): ((1+10^−500)−1)+i/2, and ((1+10^−136)−1)+i·3/2. An improvement would be to raise precision for the 10^−136 case, which is inside the 480-digit cap, instead of only flagging it. 10^−130 beside i·3/2 already resolves.
+
+**Open decisions, not bugs:** 0^0, (1−1)^0 and 0^(1−1) give 1 on v1.1 (the IEEE pow convention); main says undefined. tanh(130) displays 1, which is right to 12 digits (1 − 2.4×10^−113); main refuses it. exp(800)−exp(800) is unverified on v1.1, where main gives 0.
+
+**Formatting only:** v1.1 shows 12 significant digits (1.57079632679), main 12 decimals (1.570796326795). The values agree.

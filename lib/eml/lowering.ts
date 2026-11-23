@@ -532,6 +532,22 @@ export function negativeZero(): Node {
   return negZero;
 }
 
+/**
+ * A value that is finite but past float64, such as exp(800). It is non-finite in
+ * float and still a pole for exp, but 0 times it is exactly 0: exp(800)·0 was
+ * certified as −∞ when only the pole mark was set.
+ */
+const finiteOverflow = new WeakSet<Node>();
+
+export function noteFiniteOverflow(node: Node): Node {
+  finiteOverflow.add(node);
+  return node;
+}
+
+export function isFiniteOverflow(node: Node): boolean {
+  return finiteOverflow.has(node);
+}
+
 export function isNonfiniteNode(node: Node): boolean {
   return nonfiniteNode.has(node);
 }
