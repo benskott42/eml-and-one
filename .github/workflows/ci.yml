@@ -392,10 +392,13 @@ jobs:
             if (/matches the usual value/.test(lne.note || "")) fail(`ln(e)-1 note was ${JSON.stringify(lne.note)}`);
 
             // v1.1 (E6): a slow exact job shows its progress, then the value (not "—").
-            const slow = await compute("arctan(1/10^130)", "(shown) => shown.text === \"1\u00d710^\u2212130\"", 60000, false);
-            console.log("arctan(1/10^130)", JSON.stringify({ text: slow.text, notes: slow.notes, ms: slow.ms }));
-            if (slow.text !== "1×10^−130") fail(`arctan(1/10^130) result was ${JSON.stringify(slow.text)}`);
-            if (!(slow.notes || []).some((note) => /(^| · )computing · \d+ digits/.test(note))) fail(`arctan(1/10^130) showed no progress note: ${JSON.stringify(slow.notes)}`);
+            // arctan(1/10^130) is no longer slow: its odd series keeps enough terms now (review B2)
+            // and finishes before a progress note. 1−cos(√(10^−130)) still raises precision
+            // (120, then 202 digits) and takes about a second.
+            const slow = await compute("1-cos(sqrt(1/10^130))", "(shown) => shown.text === \"5\u00d710^\u2212131\"", 60000, false);
+            console.log("1-cos(sqrt(1/10^130))", JSON.stringify({ text: slow.text, notes: slow.notes, ms: slow.ms }));
+            if (slow.text !== "5×10^−131") fail(`1-cos(sqrt(1/10^130)) result was ${JSON.stringify(slow.text)}`);
+            if (!(slow.notes || []).some((note) => /(^| · )computing · \d+ digits/.test(note))) fail(`1-cos(sqrt(1/10^130)) showed no progress note: ${JSON.stringify(slow.notes)}`);
 
             // v1.1 (reviewbot B1/B2): a − a and a + (−a) on a maybe-infinite node is not 0.
             for (const source of ["tan(pi/2)-tan(pi/2)", "(0/0)+(-(0/0))"]) {

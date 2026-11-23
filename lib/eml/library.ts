@@ -22,6 +22,7 @@ import {
   isNonfiniteNode,
   knownValue,
   markInfiniteSource,
+  markExactInt,
   markMaybeInfinite,
   noteDecade,
   noteTinyReal,
@@ -698,6 +699,9 @@ function intRatioDecade(a: bigint, b: bigint): number {
   return below ? d - 1 : d;
 }
 
+/** Integer powers up to this many digits are exact integers in exact mode (2^10000 has 3011). */
+const INT_POW_DIGITS = 20_000;
+
 export function tPow(a: Node, b: Node): Node {
   // v1.1 (#11 review C): x^1 is x for a marked x (ln(0)^1 was +∞).
   if (mayBeInfinite(a) && isOneNode(b)) return a;
@@ -713,7 +717,12 @@ function tPowBuild(a: Node, b: Node): Node {
   const ia = rangeOf(a).int;
   const ib = rangeOf(b).int;
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
-    return tagInteger(node, ia ** ib);
+    // Review R4: mark the integer so exact mode reads it, as lowering does for huge sums.
+    // A tag alone left 2^10000 as a 120-digit decimal, shown as 1.995063116881×10^3010.
+    // Past INT_POW_DIGITS the power keeps the tag and the rounded value.
+    const value = ia ** ib;
+    const digits = (value < BigInt(0) ? -value : value).toString().length;
+    return digits <= INT_POW_DIGITS ? markExactInt(node, value) : tagInteger(node, value);
   }
   const va = knownValue(a);
   const vb = knownValue(b);
@@ -801,7 +810,20 @@ export function tHalfOf(t: Node): Node {
   return rawMul(t, tHalf());
 }
 
+/** |Re t| from which tanh and sigmoid take the overflow-free tails (review R3). */
+const TAIL_FROM = 20;
+
 export function tSigmoid(t: Node): Node {
+  // Review R3: for Re t ≤ −1 use e^t/(1 + e^t). In 1/(1 + e^(−t)) the exponential
+  // overflows for t ≤ −710, and the float circuit came out NaN instead of an underflow to 0.
+  // Only where the short form is at risk: e^(−t) is finite and exact enough up to −t ≈ 700,
+  // so the tail starts at Re t ≤ −20, well clear of it. A tail for every Re t ≤ −1
+  // made ordinary keys several times longer.
+  const re = rangeOf(t).re;
+  if (re && re.hi <= -TAIL_FROM) {
+    const e = tExp(t);
+    return tDiv(e, tAdd(ONE, e));
+  }
   return tInv(tAdd(ONE, tExp(tNeg(t))));
 }
 
@@ -813,8 +835,11 @@ export function tSinh(t: Node): Node {
   const series = oddSeries(t, SINH_ODD, SERIES_POLY);
   if (series) return series;
   const known = tightValue(t);
-  // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  if (known && known.re === 0 && known.im === 0) return t;
+  // Review B1: returning z for |z| < 10^(−6) dropped z³/6, and sinh(5·10^(−7)) − 5·10^(−7)
+  // folded to a certified 0. Below 10^(−6) the exp formula loses the float digits, so keep
+  // a polynomial with terms until the remainder is past the 480-digit cap, marked.
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return hornerOddSeries(t, Math.hypot(known.re, known.im), (k) => [1, 2 * k * (2 * k + 1)]);
   // exp(t)/2 · (1 − exp(−2t)). Subtracting the real 1 keeps exp(t) out of the exponent.
   const em2 = tExp(tNeg(tAdd(t, t)));
   return tHalfOf(tMul(tExp(t), tSub(ONE, em2)));
@@ -830,6 +855,18 @@ export function tTanh(t: Node): Node {
   if (small) return small;
   const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
   if (series) return series;
+  // Review R3: for Re t ≥ 1 exponentiate −2t, which cannot overflow:
+  // 1 − 2e^(−2t)/(1 + e^(−2t)). The form below is ∞/∞ = NaN in float for t ≥ 355,
+  // and gave 1.000000000000341 at t = 354. Re t ≤ −1 already has e^(2t) → 0.
+  // (1 − e^(−2t))/(1 + e^(−2t)) is the same value but left float dust in Im near t = 354.
+  // Only for Re t ≥ 20: e^(2t) overflows near t ≈ 355, and the short form is exact
+  // enough far below that. Taking the tail for every Re t ≥ 1 made tanh(π) K 7117
+  // instead of K 1047 (smoke key-cost snapshot).
+  const re = rangeOf(t).re;
+  if (re && re.lo >= TAIL_FROM) {
+    const em2 = tExp(tNeg(tAdd(t, t)));
+    return tSub(ONE, tMul(tTwo(), tDiv(em2, tAdd(ONE, em2))));
+  }
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
   return tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
@@ -887,6 +924,40 @@ function retainSum(acc: Node, term: Node, leadDecade: number, subtract: boolean)
   const liftedB = rawMul(term, scale);
   const mixed = subtract ? naiveSub(liftedA, liftedB) : naiveSub(liftedA, rawMul(tMinusOne(), liftedB));
   return shieldLift(rawDiv(mixed, scale), [acc, term]);
+}
+
+/**
+ * Review B1/B2: t·(1 + r₁t²(1 + r₂t²(1 + …))) for a small t that oddSeries does not
+ * take (complex, or above its decade limit). `ratio(k)` is c_k/c_(k−1) as [num, den].
+ * |t| ≤ bound < 1, and the terms run until bound^(2K) is past the 480-digit cap, so
+ * the polynomial agrees with the function to that cap. It is still a series: the
+ * result is marked, so a zero that comes out of it is not certified.
+ */
+function hornerOddSeries(t: Node, bound: number, ratio: (k: number) => [number, number]): Node {
+  // An exact 0 is its own value for sinh, arcsin, and artanh: no series, no mark.
+  // markSeries(t) below marks the argument node itself, and nodes are shared: the
+  // arcsin key preview on a 0 stack top marked that 0, and the next ln(e)−1 (the
+  // same node) said "couldn't verify" (CI headless Chrome).
+  if (bound === 0) return t;
+  // Count terms from the coefficient ratios: sinh's factorials need fewer than arcsin's.
+  // Every ratio here is at most 1, so the next term bounds the remainder.
+  const step = 2 * Math.log10(bound);
+  let count = 1;
+  let logCoeff = 0;
+  while (Number.isFinite(step) && count < 200) {
+    const [num, den] = ratio(count);
+    logCoeff += Math.log10(num / den);
+    if (logCoeff + count * step < -480) break;
+    count += 1;
+  }
+  if (count <= 1) return markSeries(t, LEAD_NOTE);
+  const t2 = tSqr(t);
+  let acc: Node = ONE;
+  for (let k = count - 1; k >= 1; k -= 1) {
+    const [num, den] = ratio(k);
+    acc = tAdd(ONE, tMul(tMul(t2, rationalNode(String(num), String(den))), acc));
+  }
+  return markSeries(tMul(t, acc), POLY_NOTE);
 }
 
 /**
@@ -961,6 +1032,9 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
 
 /** sinh x = x + x³/6 + x⁵/120 + x⁷/5040 + … */
 const SINH_ODD: SignedRatio[] = SIN_ODD.map((coeff) => ({ ...coeff, sign: 1 }));
+
+/** artanh x = x + x³/3 + x⁵/5 + … through x²⁵. */
+const ARTANH_ODD: SignedRatio[] = ARCTAN_ODD.map((coeff) => ({ ...coeff, sign: 1 }));
 
 export function tSin(t: Node): Node {
   const small = tinyRealArgument(t);
@@ -1062,13 +1136,34 @@ function sqrtOnePlus(t: Node): Node {
   return tSqrt(naiveSub(t, tMinusOne()));
 }
 
-/** z + z³/6 + 3z⁵/40. */
-function arcsinSeries(t: Node): Node {
-  const z2 = tSqr(t);
-  const z3 = tMul(z2, t);
-  const z5 = tMul(z3, z2);
-  return tAdd(t, tAdd(tDiv(z3, integerNode(6)), tDiv(tMul(tThree(), z5), integerNode(40))));
+/**
+ * Review B2: arcsin z = z + z³/6 + 3z⁵/40 + … for |z| < 10^(−4). The old three terms
+ * dropped 5z⁷/112, a relative 10^(−30), unmarked. The ratio of consecutive
+ * coefficients is (2k − 1)²/(2k(2k + 1)).
+ */
+function arcsinSeries(t: Node, bound: number): Node {
+  return hornerOddSeries(t, bound, (k) => [(2 * k - 1) * (2 * k - 1), 2 * k * (2 * k + 1)]);
 }
+
+/**
+ * Review B2: arcosh-type tail for |t| > 10^10. arcsin t = −i(ln 2 + ln(it) − S) on the
+ * upper side and i(ln 2 + ln(−it) − S) on the lower side, with
+ * S = Σ_{k≥1} a_k t^(−2k), a_k = C(2k, k)/(4^k · 2k) = 1/4, 3/32, 5/96, … .
+ * Dropping S left an error of 1/(4t²), about 10^(−21) at t = 10^(11). The terms run until
+ * the remainder is below |t|^(−2(K+1)) < 10^(−480), so the value is exact to the cap.
+ */
+function arcsinTail(t: Node, magnitude: number): Node {
+  const depth = Math.log10(magnitude);
+  const count = Math.max(1, Math.floor(240 / depth));
+  const u = tInv(tSqr(t));
+  let acc: Node = ONE;
+  for (let k = count - 1; k >= 1; k -= 1) {
+    acc = tAdd(ONE, tMul(tMul(u, rationalNode(String((2 * k + 1) * k), String(2 * (k + 1) * (k + 1)))), acc));
+  }
+  return tMul(tMul(u, rationalNode("1", "4")), acc);
+}
+
+const ARCSIN_TAIL_NOTE = "series shortcut: ln(2t) and the 1/t² tail, kept until the remainder is past the 480-digit cap";
 
 /**
  * Principal arcsin, the same circuit in both modes.
@@ -1092,13 +1187,15 @@ export function tArcsin(t: Node): Node {
   const series = oddSeries(t, ARCSIN_ODD, SERIES_WIDE);
   if (series) return series;
   const box = asinhBox(t);
-  if (box !== null && box < 1e-4) return arcsinSeries(t);
+  if (box !== null && box < 1e-4) return arcsinSeries(t, box);
   const re = realBounds(t);
   const side = provenImagSign(t);
   const lower = side === 1 || (side === 0 && !!re && re.hi < 0);
-  if (side !== null && minMagnitude(t) > 1e10) {
-    if (lower) return tMul(tI(), tAdd(tLn(tTwo()), tLn(tMul(tNeg(tI()), t))));
-    return tMul(tNeg(tI()), tAdd(tLn(tTwo()), tLn(tMul(tI(), t))));
+  const far = side !== null ? minMagnitude(t) : 0;
+  if (far > 1e10) {
+    const tail = arcsinTail(t, far);
+    if (lower) return markSeries(tMul(tI(), tSub(tAdd(tLn(tTwo()), tLn(tMul(tNeg(tI()), t))), tail)), ARCSIN_TAIL_NOTE);
+    return markSeries(tMul(tNeg(tI()), tSub(tAdd(tLn(tTwo()), tLn(tMul(tI(), t))), tail)), ARCSIN_TAIL_NOTE);
   }
   const rad = tMul(sqrtOneMinus(t), sqrtOnePlus(t));
   const it = tMul(tI(), t);
@@ -1208,8 +1305,14 @@ function artanhAboveOne(t: Node): Node {
 }
 
 export function tArtanh(t: Node): Node {
+  // Review B1: the same discipline as sinh. Returning x dropped x³/3 and certified the zero.
+  const small = tinyRealArgument(t);
+  if (small) return small;
+  const series = oddSeries(t, ARTANH_ODD, SERIES_WIDE);
+  if (series) return series;
   const known = tightValue(t);
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return t;
+  if (known && known.re === 0 && known.im === 0) return t;
+  if (known && Math.hypot(known.re, known.im) < 1e-6) return hornerOddSeries(t, Math.hypot(known.re, known.im), (k) => [2 * k - 1, 2 * k + 1]);
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);
   if (known && imagZero(known) && known.re < -1) return tNeg(artanhAboveOne(tNeg(t)));
   // Finding 7: the float 1 (1 + 10^(−16), 1.0000000000000001) may still be above 1.
