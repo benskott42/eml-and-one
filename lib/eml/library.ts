@@ -23,8 +23,13 @@ import {
   knownValue,
   markInfiniteSource,
   markExactInt,
+  hiddenUnderflow,
+  isLostTiny,
+  isNegationPair,
   markMaybeInfinite,
   noteDecade,
+  noteLostTiny,
+  provenFinite,
   noteTinyReal,
   naiveSub,
   negativeZero,
@@ -34,7 +39,6 @@ import {
   noteNonfinite,
   rangeOf,
   sumOfNegation,
-  isNegationPair,
   tagInteger,
   rawDiv,
   rawMul,
@@ -42,7 +46,7 @@ import {
   tagValue,
   installIntegerBuilder,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesShortcut, markMaybeUnverified, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision, markExactUnsure } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -70,6 +74,7 @@ function memo(build: () => Node): () => Node {
 }
 
 onCircuitIsolate(() => {
+  hugeAngleBuilt = false;
   for (const reset of memoResets) reset();
   intCache.clear();
   unaryCache.clear();
@@ -243,8 +248,9 @@ function tExpBuild(t: Node): Node {
   expArg.set(node, t);
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
   // exp(−∞) stays a zero: exp(−∞) − exp(−∞) is 0.
-  // A finite real past about 709 overflows float to +∞. The range stays
-  // unknown, so the node has to be marked or exp(exp(800)) − itself folds to 0.
+  // A finite real past about 709 overflows float to +∞. Mark it as overflow,
+  // not a pole, so exp(800) − exp(800) folds to 0. exp of that overflow is a
+  // pole, or exp(exp(800)) − itself would also fold to 0.
   if (t.type === "input" && t.value.re === Infinity && imagZero(t.value)) return noteNonfinite(node, 1);
   const known = knownValue(t);
   if (known && known.re === Infinity && imagZero(known)) return noteNonfinite(node, 1);
@@ -260,19 +266,29 @@ function tExpBuild(t: Node): Node {
 }
 
 export function tLn(t: Node): Node {
-  const inner = onePlus.get(t);
+  const plus = onePlus.get(t);
+  const minus = oneMinus.get(t);
   // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
-  if (inner && tinyScale(inner, SERIES_REL) !== null) return markSeries(inner, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   // v1.1 prototype: x − x²/2 leaves x³/3, below the 480-digit cap. Used only for
   // 10^(−480) < |x| ≤ 10^(−432), where k + 48 digits is past the cap.
-  const two = inner ? tinyScale(inner, LN_TWO_TERM) : null;
-  if (inner && two !== null) {
+  const two = plus ? tinyScale(plus, LN_TWO_TERM) : null;
+  if (plus && two !== null) {
     // x·(1 − x/2): one product of the argument, about 2× its presses. x − x²/2 subtracted
     // two tiny values through the scaled path and cost ~100× (88k–113k presses).
-    return markSeries(noteDecade(tMul(inner, tSub(ONE, tHalfOf(inner))), two), "series shortcut: x(1 − x/2), for |x| ≤ 10^(−432)");
+    return markSeries(noteDecade(tMul(plus, tSub(ONE, tHalfOf(plus))), two), "series shortcut: x(1 − x/2), for |x| ≤ 10^(−432)");
   }
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
   if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
+  const inner = plus ?? minus;
+  if (inner) {
+    const decade = decadeOf(inner);
+    // ln(1±x) shares x's decade when that decade still fits. Past the cap, or an
+    // underflow with no decade, the circuit prints 0 and that 0 is not certified.
+    if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
+    else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
+  }
   markMaybeInfinite(node, t);
   // v1.1: ln 0 = −∞ (real); ln of Re → ±∞ (finite imaginary) has Re → +∞.
   if (rangeOf(t).int === BigInt(0)) return markInfiniteSign(node, -1);
@@ -287,6 +303,7 @@ const cosArg = new WeakMap<Node, Node>();
 const expArg = new WeakMap<Node, Node>();
 const sqrtArg = new WeakMap<Node, Node>();
 const onePlus = new WeakMap<Node, Node>();
+const oneMinus = new WeakMap<Node, Node>();
 
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
@@ -314,6 +331,7 @@ const SERIES_REL = -480;
 const LN_TWO_TERM = -432;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
+const SMALL_NOTE = "series shortcut: the leading term z, for a small |z|";
 const seriesNotes = new WeakMap<Node, string>();
 
 function markSeries(node: Node, note: string): Node {
@@ -566,7 +584,10 @@ export function floatText(node: Node, value: C): string {
 
 
 export function tSub(a: Node, b: Node): Node {
-  const node = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b) ?? domainSub(a, b);
+  const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
+  const node = series ?? domainSub(a, b);
+  // ln(1 − x) reads x back: 1 − x is recorded when the subtrahend is the integer 1.
+  if (!series && isOneNode(a)) oneMinus.set(node, b);
   return markInfiniteSign(tagPi(markMaybeInfinite(node, a, b), piSub(a, b)), sumInfiniteSign(a, b, true));
 }
 
@@ -606,14 +627,53 @@ export function tInv(b: Node): Node {
 }
 
 function exactZero(node: Node): boolean {
-  return rangeOf(node).int === BigInt(0);
+  if (rangeOf(node).int === BigInt(0)) return true;
+  const known = knownValue(node);
+  return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
 }
 
 function negativeFactor(node: Node): boolean {
   const v = knownValue(node);
   if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
+  if (!Number.isFinite(v.re)) return false;
   return v.re < 0 || Object.is(v.re, -0);
 }
+
+/** A known real ±∞, including a typed infinity and ln(0). */
+function realSignedInfinity(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (!v || !imagZero(v)) return null;
+  if (v.re === Infinity) return 1;
+  if (v.re === -Infinity) return -1;
+  return null;
+}
+
+/**
+ * An infinity's angle, in quarter turns. 0 is +∞, 1 is +∞i, 2 is −∞, 3 is −∞i.
+ * The turn is the finite node whose log cancels that angle: exp(+∞ − ln(turn)).
+ * Mul, sqr, and neg add to this count. The product and square words would drop it,
+ * and a product of two turns is only approximately on the axis in float.
+ */
+const directedInfinity = new WeakMap<Node, { magnitude: Node; quarter: number }>();
+
+function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
+  const hit = directedInfinity.get(node);
+  if (hit) return hit;
+  const sign = realSignedInfinity(node);
+  if (sign === 1) return { magnitude: node, quarter: 0 };
+  if (sign === -1) return { magnitude: domainNeg(node), quarter: 2 };
+  return null;
+}
+
+/** Quarter 1 is +∞i and quarter 3 is −∞i. */
+function oddDirection(node: Node): boolean {
+  const dir = directionOf(node);
+  if (!dir) return false;
+  const quarter = ((dir.quarter % 4) + 4) % 4;
+  return quarter === 1 || quarter === 3;
+}
+
+
 
 export function tMul(a: Node, b: Node): Node {
   // v1.1 (#11 review C): x · 1 is x for a marked x. The product gates turned ln(0) · 1 into +∞.
@@ -638,6 +698,10 @@ function tMulBuild(a: Node, b: Node): Node {
   if (wa && wb) return noteWide(rawMul(a, b), normWide(wa.m * wb.m, wa.e + wb.e));
   if (exactZero(a) && negativeFactor(b) && !isWideTiny(a)) return negativeZero();
   if (exactZero(b) && negativeFactor(a) && !isWideTiny(b)) return negativeZero();
+  // 0 times a finite value is exactly 0. The other factor's cap mark stops here,
+  // so 0·10^(−500) stays a certified 0.
+  if (exactZero(a) && provenFinite(b)) return tZero();
+  if (exactZero(b) && provenFinite(a)) return tZero();
   return tagPi(rawMul(a, b), piMul(a, b));
 }
 
@@ -784,6 +848,8 @@ function tSqrtBuild(t: Node): Node {
   const v = knownValue(t);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
   if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
+  // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
+  if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
   const inner = onePlus.get(t);
   if (inner && tinyScale(inner, SERIES_REL) !== null) sqrtArg.set(node, inner);
@@ -869,7 +935,11 @@ export function tTanh(t: Node): Node {
   }
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
-  return tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  const out = tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
+  // Past |Re t| ≈ 100 the distance from ±1, 2e^(−2|t|), is below the working precision
+  // and the quotient rounds to an exact ±1. Not certified.
+  const known = knownValue(t);
+  return known && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
 }
 
 /**
@@ -878,7 +948,28 @@ export function tTanh(t: Node): Node {
  */
 function flagAngle(node: Node, arg: Node, tan: boolean): Node {
   notePrecision(node, { kind: tan ? "pole" : "trig", arg });
+  let known = knownValue(arg);
+  if (!known) {
+    try {
+      known = evaluateReport(arg).value;
+    } catch {
+      known = null;
+    }
+  }
+  if (known && Number.isFinite(known.re) && Math.abs(known.im) <= 1 && Math.abs(known.re) > HUGE_ANGLE) hugeAngleBuilt = true;
   return node;
+}
+
+/** Past this a 120-digit π no longer reduces the angle reliably. */
+const HUGE_ANGLE = 1e15;
+let hugeAngleBuilt = false;
+
+/**
+ * Whether the expression being compiled took sin, cos, or tan of an angle past
+ * 10^15. A later sum can rebuild the trig node away, so its note is not enough.
+ */
+export function builtHugeAngle(): boolean {
+  return hugeAngleBuilt;
 }
 
 /**
@@ -1176,6 +1267,9 @@ const ARCSIN_TAIL_NOTE = "series shortcut: ln(2t) and the 1/t² tail, kept until
  */
 export function tArcsin(t: Node): Node {
   const known = knownValue(t);
+  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
+  const tiny = known ? Math.hypot(known.re, known.im) : Number.NaN;
+  if (tiny > 0 && tiny < 1e-60) return markSeries(t, SMALL_NOTE);
   if (known && (known.im === 0 || Object.is(known.im, -0)) && (known.re === 1 || known.re === -1)) {
     const half = tHalfOf(tPi());
     return known.re < 0 ? tNeg(half) : half;
@@ -1227,8 +1321,11 @@ export function tArctan(t: Node): Node {
   if (range.re && range.im && Math.abs(range.re.lo) < 1e-6 && Math.abs(range.re.hi) < 1e-6 && (range.im.lo > 1 || range.im.hi < -1)) {
     return tMul(tI(), tArtanh(tMul(tNeg(tI()), t)));
   }
-  const it = tMul(tI(), t);
-  return tDiv(tLn(tDiv(tAdd(ONE, it), tSub(ONE, it))), tMul(tTwo(), tI()));
+  // arctan z = −i·artanh(iz), which holds on both cuts because tArtanh is
+  // mpmath's atanh. (1/2i)·Log((1+iz)/(1−iz)) put iy with y < −1 on the +π/2
+  // bank whenever the range table above could not see that z was imaginary:
+  // atan(−2i·asinh 9) was certified as +π/2 − 0.1746i (mpmath: −π/2 − 0.1746i).
+  return tMul(tNeg(tI()), tArtanh(tMul(tI(), t)));
 }
 
 function asinhBox(t: Node): number | null {
@@ -1319,7 +1416,12 @@ export function tArtanh(t: Node): Node {
   const side = exactSideOfOne(t);
   if (side === 1) return artanhAboveOne(t);
   if (side === -1) return tNeg(artanhAboveOne(tNeg(t)));
-  return tHalfOf(tLn(tDiv(tAdd(ONE, t), tSub(ONE, t))));
+  // Log(√(1+z) / √(1−z)) with the principal √ and Log. It equals ½(ln(1+z) − ln(1−z))
+  // (DLMF 4.37.24, mpmath's atanh) exactly: half a difference of two Args in (−π, π]
+  // stays inside (−π, π), so no 2πi is lost. ½·Log((1+z)/(1−z)) put a real above 1 on
+  // the other bank (+iπ/2) whenever the range table had no point for it, so
+  // atanh(1.694^3) was +iπ/2 while atanh(4.861) was −iπ/2, both certified.
+  return tLn(tDiv(tSqrt(tAdd(ONE, t)), tSqrt(tSub(ONE, t))));
 }
 
 export function tLogBase(base: Node, value: Node): Node {
@@ -1509,8 +1611,8 @@ export const unaryBuilders: Record<string, (t: Node) => Node> = {
 };
 
 export const binaryBuilders: Record<string, (a: Node, b: Node) => Node> = {
-  add: tAdd,
-  sub: tSub,
+  add: userAdd,
+  sub: userSub,
   mul: tMul,
   div: tDiv,
   pow: tPow,

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { captionName } from "@/lib/eml/format";
 import { FLOAT_DIFFERS, withholdZeroName } from "@/lib/eml/history";
 import { BINARY_KEYS, CONSTANT_KEYS, UNARY_KEYS, constantNode } from "@/lib/eml/library";
@@ -10,6 +10,9 @@ import { programIndexDigits } from "@/lib/eml/programIndex";
 import { recordLine } from "@/lib/eml/recordLabel";
 import { CopyNumber, GolfPanel, KeyButton, PressLine } from "./chrome";
 import { ProgramIdPanel } from "./ProgramIdPanel";
+
+/** False in the static HTML and during hydration, true once React owns the keys. */
+const subscribeNothing = () => () => {};
 import { shownSingular } from "./screen";
 import type { CalculatorModel } from "./useCalculatorModel";
 
@@ -47,8 +50,11 @@ export function CalculatorView(props: CalculatorModel) {
   // v1.1 (C3): a new number owns a new copy button, so "Copied" from the last one never sticks.
   const copyKey = `${top?.watch ?? 0}:${top?.node.id ?? 0}:${fullNumber ?? ""}`;
 
+  // Presses on the static HTML before hydration do nothing; tests and scripts wait for data-ready.
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+
   return (
-    <main className="ti-stage">
+    <main className="ti-stage" data-ready={hydrated ? "1" : undefined}>
       <div className={twoButtons ? "ti-device ti-device-two" : "ti-device"}>
         <div className="ti-top">
           <div>

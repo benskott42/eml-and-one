@@ -10,7 +10,7 @@ eml(x, y) = exp(x) − ln(y)
 
 with the constant 1. EML is the operator introduced in arXiv:2603.21852, [https://arxiv.org/abs/2603.21852](https://arxiv.org/abs/2603.21852). An expression such as `3+4` or `2^3-1` compiles into presses of those two keys. The screen shows the sequence and its length.
 
-Exact mode is the default. It evaluates the circuit you see with 120-digit decimal arithmetic, raised up to 480 digits when a cancellation would otherwise hide a value. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That is not a fixed snap at 10^(−112), and it is not symbolic mathematics or an interval proof. When the spelling stores the exponent, as in 1e-432, a known magnitude of 10^(−432) still resolves. 1e-433 is past the cap, and the screen says it could not verify. That does not hold for ln(1+10^(−k)) or log(1+10^(−k)); see [docs/known-limitations.md](docs/known-limitations.md). Float mode is a hardware view of the same gates. When the two disagree beyond what float can claim, the float stays on screen and the exact value is shown beside it.
+Exact mode is the default. It evaluates the circuit you see with 120-digit decimal arithmetic, raised up to 480 digits when a cancellation would otherwise hide a value. Within one working precision, a residual smaller than about 10^(−(digits−8)) relative to its operands is treated as 0. That is not a fixed snap at 10^(−112), and it is not symbolic mathematics or an interval proof. When the spelling stores the exponent, as in 1e-432, a known magnitude of 10^(−432) still resolves. 1e-433 is past the cap, and the screen says it could not verify. A power such as 10^(−400) records its decade when that still fits in 480 digits, and division carries that decade, so ln(1+10^(−400)), 0−10^(−400), and 0−1/10^400 keep the small term. Past that cap, 0−10^(−500) is negation and still prints the value. A logarithm the circuit collapses, such as ln(1−10^(−500)) or ln(1±exp(−1000)), says it could not verify instead of a confident 0. An exact 0 times a finite factor stays a certified 0. See [docs/known-limitations.md](docs/known-limitations.md). Float mode is a hardware view of the same gates. When the two disagree beyond what float can claim, the float stays on screen and the exact value is shown beside it.
 
 ## Branch
 
@@ -26,7 +26,7 @@ K is the RPN length: one token for each leaf and each eml. Every record below is
 
 These lengths were already public. They are not claimed as first discoveries. The search in this project also finds them, under the ln 0 policy named with each one.
 
-- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is shortest known at K 21, and without ln 0, +iπ on this cut is shortest known at K 23. Unresolved tower trees remain, so neither length is proven minimal.
+- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is proved minimal at K 21: `python tools/minimality/decide.py --open` excludes all 6918 programs with K ≤ 19 (2026-11-22). Without ln 0, +iπ on this cut is shortest known at K 23; 16 K 21 programs are still undecided, so that length is not proven minimal.
 - 3 at K 29 ties Kaseorg's code-golf answer.
 - 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proven minimal on the lower cut, Arg in [−π, π), towers included, with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proven minimal and uses ln 0. Without ln 0, −1 is proven minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17.
 
@@ -38,7 +38,7 @@ Ours, labelled as above:
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
 | −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
-| −iπ on the lower cut | 55 | shortest known, not proven minimal, without ln 0. The word lies on the negative axis and comes out as +iπ under the principal Log at some precisions. |
+| −iπ on the lower cut | 47 | shortest known, not proven minimal, without ln 0. Found by inverting the last gate against every value with K ≤ 35 (2026-11-22); it replaces K 55. |
 | 4 | 39 | shortest known, not proven minimal |
 | 2/3 | 39 | shortest known, not proven minimal |
 | −1/3 | 41 | shortest known, not proven minimal |
@@ -48,7 +48,7 @@ Ours, labelled as above:
 | scaled subtraction | 565 | shortest known construction, with ln 0 = −∞ |
 | scaled addition | 655 | shortest known construction, with ln 0 = −∞ |
 
-The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 55 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
+The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 47 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
 
 ## Encoding
 
@@ -87,7 +87,11 @@ npm run eml:check
 npm run eml:smoke
 ```
 
-`npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. `npm run build` writes a static site to `out/`.
+`npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. [tools/emlsearch](tools/emlsearch) is a much faster independent search in Rust, with an mpmath checker. It reaches K 41 in about five minutes on 16 cores, and its results are in [docs/search-k41.md](docs/search-k41.md). `npm run build` writes a static site to `out/`.
+
+`EML_SHARD=i/N npm run eml:check` runs shard i (from 0) of N. CI runs 6 shards in parallel. `EML_BLOCK_TIMES=1` prints each block's time. Copy those times into `lib/eml/check-shards.json` to rebalance the shards.
+
+`npm run eml:golden` checks the recorded exact output. `GOLDEN_SHARD=i/N` checks every Nth row from row i; shard 0 also checks for rows that were removed. `npm run eml:golden -- --update` rewrites it. An update needs a PR note that explains every changed line. See [docs/golden.md](docs/golden.md).
 
 ## Publish
 

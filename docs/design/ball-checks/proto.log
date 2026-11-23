@@ -1,0 +1,15 @@
+cexp, B3 point set: 3010 inputs, 0 refused (cut/0/overflow), 0 with a sample outside the ball, worst err/radius 1.101e-1 
+cexp, random rectangles: 405 inputs, 0 refused (cut/0/overflow), 0 with a sample outside the ball, worst err/radius 1.000e+0 
+cln, B6 point set: 2004 inputs, 0 refused (cut/0/overflow), 0 with a sample outside the ball, worst err/radius 2.496e-1 
+cln, random rectangles: 605 inputs, 3 refused (cut/0/overflow), 0 with a sample outside the ball, worst err/radius 1.000e+0 
+  cln B4 imLo=0: cut
+  cln imHi=0: im=-3.14159265349 ± 1.01e-10
+  cln on ray, ir=0: im=-3.14159265359 ± 1.01e-30
+  cln crosses ray: cut
+  cln contains 0: undecided (contains 0)
+e^rho-1 <= rho(1+rho) on samples in (0,1]: true
+cos(1e6) abs err 1.98e-301 vs u=1e-299
+cos(1e22) abs err 2.47e-301 vs u=1e-299
+cos(1e100) abs err 1.65e-301 vs u=1e-299
+cos(1e600) abs err 4.74e-301 vs u=1e-299
+ALL CONTAINED

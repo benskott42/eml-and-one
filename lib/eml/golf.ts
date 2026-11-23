@@ -113,10 +113,16 @@ export function acceptsConstantProgram(node: Node, targetRe: number, targetIm: n
   const ball = enclose(node);
   const verdict = ballVerdict(ball, targetRe, targetIm);
   if (verdict === "unequal") return false;
-  if (verdict === "equal") return true;
-  if (ball.overflow && !ball.cut && !floated.touchedLn0) return false;
-  // Guard digits past 240, so the last place of a 240-digit target is stable.
-  return acceptsConstantValue(exactValueAt(node, 280), targetRe, targetIm);
+  if (verdict !== "equal") {
+    if (ball.overflow && !ball.cut && !floated.touchedLn0) return false;
+    // Guard digits past 240, so the last place of a 240-digit target is stable.
+    if (!acceptsConstantValue(exactValueAt(node, 280), targetRe, targetIm)) return false;
+  }
+  // Both checks above stop at about 10^(−240): the K 35 word
+  // 11111111E11E1EE1EEEEEE1E1E11E1E1EEE is −9×10^(−307) − i(π − 4×10^(−307)),
+  // and a ball or a 280-digit compare reads it as exactly −iπ. Exact mode raises
+  // its precision for the 10^(−306) part it passes through and refuses it.
+  return exactReport(node).unverified !== true;
 }
 
 function near(re: number, im: number, target: Target): boolean {

@@ -1,6 +1,6 @@
 {
   "name": "eml-and-one",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "description": "EML and One, a two-button calculator",
   "scripts": {
@@ -13,6 +13,7 @@
     "eml:check:isolate": "tsx lib/eml/check.ts --shard=isolate",
     "eml:check:props": "tsx lib/eml/check.ts --shard=props",
     "count:e2e": "node scripts/count-e2e.mjs",
+    "eml:golden": "tsx lib/eml/golden/harness.ts",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
     "eml:golf": "tsx scripts/eml-golf-slow.ts",
     "program-id:check": "tsx scripts/program-id-check.ts",
@@ -29,6 +30,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "jsdom": "^31.0.1",

@@ -277,8 +277,10 @@ jobs:
                   one: !!document.querySelector(".ti-btn-one"),
                   eml: !!document.querySelector(".ti-btn-eml"),
                   result: document.querySelector(".ti-lcd-result")?.textContent?.trim() ?? "",
+                  // The keys exist in the static HTML before hydration; a click then is lost.
+                  ready: document.querySelector(".ti-stage")?.getAttribute("data-ready") === "1",
                 })`);
-                if (boot?.screen && boot.one && boot.eml) break;
+                if (boot?.screen && boot.one && boot.eml && boot.ready) break;
               } catch {
                 /* the document is still navigating */
               }
@@ -288,6 +290,7 @@ jobs:
             if (!boot?.path?.startsWith("/eml-and-one")) fail(`page loaded at ${JSON.stringify(boot?.path)}`);
             if (!boot?.screen) fail("calculator screen is missing");
             if (!boot?.one || !boot?.eml) fail("1 or EML key is missing");
+            if (!boot?.ready) fail("the calculator did not hydrate within 30 s");
 
             const field = `document.querySelector("#expression") || [...document.querySelectorAll("label")].find((label) => /^\\s*Expression/i.test(label.textContent || ""))?.querySelector("input")`;
 
