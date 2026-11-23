@@ -178,6 +178,20 @@ function popUntil(ops: Mark[], out: Out[], untilLowerThan: number, right: boolea
  * Unary minus binds looser than power, so −2^2 is −(2^2) and 2^−2 is 2^(−2).
  * √ binds to the next atom, so √2^2 is (√2)^2.
  */
+/** Two values side by side, such as 2pi or 2(3). Multiplication is written with *. */
+function missingTimes(tokens: Tok[], i: number): EmlError {
+  const prev = tokens[i - 1]?.text;
+  const next = tokens[i]?.text;
+  if (!prev || !next) return new EmlError("The expression has an extra symbol.");
+  return new EmlError(`Put * between “${prev}” and “${next}”.`);
+}
+
+/** An operator where a value belongs, as the second ^ in 2^^3. */
+function missingValue(tokens: Tok[], i: number): EmlError {
+  const op = tokens[i]?.text;
+  return new EmlError(op ? `A value is missing before “${op}”.` : "The expression ended early.");
+}
+
 function toRpn(tokens: Tok[]): Out[] {
   if (tokens.length === 0) throw new EmlError("Enter an expression.");
   const out: Out[] = [];
@@ -187,7 +201,7 @@ function toRpn(tokens: Tok[]): Out[] {
     const tok = tokens[i];
     if (!tok) break;
     if (tok.k === "num") {
-      if (!wantValue) throw new EmlError("The expression has an extra symbol.");
+      if (!wantValue) throw missingTimes(tokens, i);
       out.push({ k: "num", text: tok.text });
       wantValue = false;
       continue;
@@ -201,7 +215,7 @@ function toRpn(tokens: Tok[]): Out[] {
         wantValue = false;
         continue;
       }
-      if (!wantValue) throw new EmlError("The expression has an extra symbol.");
+      if (!wantValue) throw missingTimes(tokens, i);
       const next = tokens[i + 1];
       if (next?.k === "op" && next.text === "(") {
         i += 1;
@@ -217,13 +231,14 @@ function toRpn(tokens: Tok[]): Out[] {
       }
       if (name === "pi" || name === "e" || name === "i") out.push({ k: "const", name });
       else if (name === "x" || name === "y") out.push({ k: "var", name });
+      else if (knownCall(name)) throw new EmlError(`Write ${name} with parentheses, as ${name}(1).`);
       else throw new EmlError(`Unknown name “${tok.text}”. Use x, y, pi, e, i, or inf.`);
       wantValue = false;
       continue;
     }
     const text = tok.text;
     if (text === "(") {
-      if (!wantValue) throw new EmlError("The expression has an extra symbol.");
+      if (!wantValue) throw missingTimes(tokens, i);
       ops.push({ k: "lp", argc: 0, call: null });
       wantValue = true;
       continue;
@@ -279,7 +294,7 @@ function toRpn(tokens: Tok[]): Out[] {
       continue;
     }
     if (text === "+" || text === "-" || text === "*" || text === "/" || text === "^") {
-      if (wantValue) throw new EmlError("The expression ended early.");
+      if (wantValue) throw missingValue(tokens, i);
       const right = text === "^";
       popUntil(ops, out, PREC[text] ?? 1, right);
       ops.push({ k: "bin", name: text, prec: PREC[text] ?? 1, right });
@@ -298,7 +313,7 @@ function toRpn(tokens: Tok[]): Out[] {
 }
 
 function assertCall(name: string, count: number): void {
-  if (!knownCall(name)) throw new EmlError(`Unknown name “${name}”. Use x, y, pi, e, or i.`);
+  if (!knownCall(name)) throw new EmlError(`Unknown function “${name}”.`);
   const ok = (count === 1 && Object.hasOwn(UNARY, name)) || (count === 2 && Object.hasOwn(BINARY_CALL, name));
   if (!ok) throw new EmlError(`${name} does not take ${count} argument${count === 1 ? "" : "s"}.`);
 }

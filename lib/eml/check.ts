@@ -4000,6 +4000,29 @@ if (shardTurn(53)) {
 }
 
 if (shardTurn(54)) {
+  // Parser messages say what to type: implicit products, a function without
+  // parentheses, an unknown function, and a doubled operator.
+  const messages: [string, string][] = [
+    ["2pi", "Put * between “2” and “pi”."],
+    ["2(3)", "Put * between “2” and “(”."],
+    ["sin 1", "Write sin with parentheses, as sin(1)."],
+    ["abs(-2)", "Unknown function “abs”."],
+    ["2^^3", "A value is missing before “^”."],
+    ["foo", "Unknown name “foo”. Use x, y, pi, e, i, or inf."],
+  ];
+  for (const [source, want] of messages) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : String(err);
+    }
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL parser message", source, got, "want", want);
+    } else console.log("parser message", source, got);
+  }
+
   // Release refusals: a large trig argument below the root, a part cancelled to 0
   // beside a nonzero part after a value below the precision, a finite overflow
   // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
