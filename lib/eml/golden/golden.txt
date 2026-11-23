@@ -6,7 +6,7 @@ expr: -1 | exact: −1 | exact-notes: certified,ln0 | float: −1 | float-notes:
 expr: -4*i+1 | exact: 1 − 4i | exact-notes: certified,ln0 | float: 1 − 4i | float-notes: ln0 | press: 163+ | round-trip: OK
 expr: -5e-801 | exact: −5×10^−801 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed | press: 96237+ | round-trip: OK
 expr: -cos(1e119) | exact: — | exact-notes: couldn't verify | float: −0.5 | float-notes: ln0,underflowed | press: 57793+ | round-trip: OK
-expr: ((1+1/10^130)-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0 | press: 9635+ | round-trip: OK
+expr: ((1+1/10^130)-1)+i/2 | exact: 1×10^−130 + 0.5i | exact-notes: certified,ln0 | float: 0.5i | float-notes: ln0,differs-from-exact | press: 9635+ | round-trip: OK
 expr: ((1+10^-500)-1)+i/2 | exact: — | exact-notes: couldn't verify,ln0 | float: 0.5i | float-notes: ln0,underflowed | press: 1405+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*-1/2 | exact: −0.5i | exact-notes: certified,ln0 | float: −0.5i ≈ | float-notes: ln0,differs-from-exact | press: 3029+ | round-trip: OK
 expr: ((1+10^(-110))-1)+i*1/2 | exact: 0.5i | exact-notes: certified,ln0 | float: 0.5i ≈ | float-notes: ln0,differs-from-exact | press: 2847+ | round-trip: OK
@@ -135,7 +135,7 @@ expr: cos(10^(-50)) | exact: 1 | exact-notes: certified,ln0 | float: 1 | float-n
 expr: cos(10^(-50))-1 | exact: −5×10^−101 | exact-notes: certified,ln0,series-shortcut | float: −5×10^−101 ≈ | float-notes: ln0,differs-from-exact | press: 166113+ | round-trip: OK
 expr: cos(10^119)+1 | exact: — | exact-notes: couldn't verify | float: 1.5 | float-notes: ln0,underflowed | press: 5303+ | round-trip: OK
 expr: cos(1e100) | exact: −0.928081905075 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 48659+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
-expr: cos(1e119) | exact: −0.9849923936 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 57779+ | round-trip: OK | # KNOWN-BUG repeat-cache: eval2 certifies −0.9849923936; true value is −0.37226
+expr: cos(1e119) | exact: −0.372261757876 | exact-notes: singular:argument too large to reduce,ln0 | float: 0.5 | float-notes: singular:argument too large to reduce,ln0,underflowed,differs-from-exact | press: 57779+ | round-trip: OK
 expr: cos(1e119)+1 | exact: — | exact-notes: couldn't verify | float: 1.5 | float-notes: ln0,underflowed | press: 57943+ | round-trip: OK
 expr: cos(1e125)*cos(1e130) | exact: — | exact-notes: couldn't verify | float: 0.0367719106406 + 0.247280865794i | float-notes: ln0,underflowed | press: 123733+ | round-trip: OK
 expr: cos(1e7) | exact: −0.907270386182 | exact-notes: singular:argument too large to reduce,ln0 | float: −0.907270368419 + 2.335×10^−9i ≈ | float-notes: singular:argument too large to reduce,ln0,differs-from-exact | press: 4019+ | round-trip: OK | # KNOWN-BUG cache-second: fresh eval is argument too large; the repeat certifies it
