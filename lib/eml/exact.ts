@@ -1213,7 +1213,24 @@ function exactReportCore(
     settled = atPrecision(need, root, env, budget, false);
     if (settled.unverified) return settled;
     const shown = scrubDust(settled.value);
-    if ((["re", "im"] as const).some((name) => !settled.value[name].isZero() && shown[name].isZero())) return certifyZero(settled);
+    const hidden = (["re", "im"] as const).filter((name) => !settled.value[name].isZero() && shown[name].isZero());
+    if (hidden.length > 0) {
+      // A true tiny part holds still on a second reading, as in recoverTinyPart:
+      // sqrt(−4 − 10^(−200) i) is 2.5×10^(−201) − 2i. Rounding moves, and is refused.
+      const first = settled;
+      const work = first.workExp !== undefined && Number.isFinite(first.workExp) ? first.workExp : 0;
+      const past = Math.max(...hidden.map((name) => work - first.value[name].e + 36));
+      const next = Math.min(PRECISION_CAP, Math.max(need + 24, past));
+      if (next <= need) return certifyZero(first);
+      let second: ExactReport;
+      try {
+        second = atPrecision(next, root, env, budget, false);
+      } catch {
+        return certifyZero(first);
+      }
+      if (second.unverified || hidden.some((name) => residueMoved(first.value[name], second.value[name]))) return certifyZero(first);
+      return first;
+    }
   }
   // A lifted tiny sum keeps (precision − gap) digits, and the work tally does not see it:
   // 10^(−300)·(1 + 10^(−110)) − 10^(−300) kept 10 digits. Raise until 24 spare digits remain.
