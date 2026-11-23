@@ -810,11 +810,17 @@ export function tHalfOf(t: Node): Node {
   return rawMul(t, tHalf());
 }
 
+/** |Re t| from which tanh and sigmoid take the overflow-free tails (review R3). */
+const TAIL_FROM = 20;
+
 export function tSigmoid(t: Node): Node {
   // Review R3: for Re t ≤ −1 use e^t/(1 + e^t). In 1/(1 + e^(−t)) the exponential
   // overflows for t ≤ −710, and the float circuit came out NaN instead of an underflow to 0.
+  // Only where the short form is at risk: e^(−t) is finite and exact enough up to −t ≈ 700,
+  // so the tail starts at Re t ≤ −20, well clear of it. A tail for every Re t ≤ −1
+  // made ordinary keys several times longer.
   const re = rangeOf(t).re;
-  if (re && re.hi <= -1) {
+  if (re && re.hi <= -TAIL_FROM) {
     const e = tExp(t);
     return tDiv(e, tAdd(ONE, e));
   }
@@ -853,8 +859,11 @@ export function tTanh(t: Node): Node {
   // 1 − 2e^(−2t)/(1 + e^(−2t)). The form below is ∞/∞ = NaN in float for t ≥ 355,
   // and gave 1.000000000000341 at t = 354. Re t ≤ −1 already has e^(2t) → 0.
   // (1 − e^(−2t))/(1 + e^(−2t)) is the same value but left float dust in Im near t = 354.
+  // Only for Re t ≥ 20: e^(2t) overflows near t ≈ 355, and the short form is exact
+  // enough far below that. Taking the tail for every Re t ≥ 1 made tanh(π) K 7117
+  // instead of K 1047 (smoke key-cost snapshot).
   const re = rangeOf(t).re;
-  if (re && re.lo >= 1) {
+  if (re && re.lo >= TAIL_FROM) {
     const em2 = tExp(tNeg(tAdd(t, t)));
     return tSub(ONE, tMul(tTwo(), tDiv(em2, tAdd(ONE, em2))));
   }
