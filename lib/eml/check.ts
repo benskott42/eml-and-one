@@ -1,3 +1,4 @@
+import { runPortChecks } from "./check-port";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import DecimalValue from "decimal.js";
 import { spawnSync } from "node:child_process";
@@ -4155,6 +4156,8 @@ if (inShard("core")) failed += runExprChecks();
 if (inShard("props")) failed += runReviewChecks();
 // Ball containment for enclose.ts (a prefix of scripts/enclose-containment.ts).
 if (inShard("props")) failed += runEncloseChecks();
+// Fixes ported from main's exact engine (docs/port-main-engine.md).
+if (inShard("isolate")) failed += runPortChecks();
 
 if (failed) {
   console.log(`\n${failed} failed`);

@@ -20,6 +20,8 @@ import {
   noteOddSeries,
   type SeriesCoeff,
   isNonfiniteNode,
+  isFiniteOverflow,
+  noteFiniteOverflow,
   knownValue,
   markInfiniteSource,
   markExactInt,
@@ -260,7 +262,7 @@ function tExpBuild(t: Node): Node {
     const e = Math.floor(L);
     noteWide(node, normWide(10 ** (L - e), e));
   }
-  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteNonfinite(node, 1);
+  if (known && Number.isFinite(known.re) && known.re > 709 && Math.abs(known.im) < 1e-6) return noteFiniteOverflow(noteNonfinite(node, 1));
   if (isNonfiniteNode(t) && !(known && known.re < 0)) return noteNonfinite(node, 1);
   return node;
 }
@@ -683,6 +685,9 @@ export function tMul(a: Node, b: Node): Node {
 }
 
 function tMulBuild(a: Node, b: Node): Node {
+  // 0 times a finite value past float range (exp(800)) is exactly 0, not 0 · ∞.
+  if (exactZero(a) && isFiniteOverflow(b) && !mayBeInfinite(b)) return tZero();
+  if (exactZero(b) && isFiniteOverflow(a) && !mayBeInfinite(a)) return tZero();
   // 0 · ∞ is indeterminate. Typed infinity and division by the integer 0 are both non-finite.
   if ((exactZero(a) && (isNonfiniteNode(b) || mayBeInfinite(b))) || (exactZero(b) && (isNonfiniteNode(a) || mayBeInfinite(a)))) {
     // v1.1: ln 0 is a marked source, not a typed infinity here, so 0 · ln(0) needs mayBeInfinite too.
