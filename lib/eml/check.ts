@@ -24,6 +24,7 @@ import {
   integerNode,
   floatText,
   literalNode,
+  scalarNode,
   seriesShortcutNote,
   X,
   Y,
@@ -79,7 +80,7 @@ import {
   unrankRpn,
 } from "./programIndex";
 import { encodePresses, previewPresses, pressPreviewForNode } from "./presses";
-import { runNode } from "../../components/calculator/screen";
+import { entry, noteFor, runNode } from "../../components/calculator/screen";
 import { agreementNote, compileExpression, referenceExpression, referenceLostTerm } from "./parse";
 import { packCircuit, readWireNum, unpackCircuit, wireNum, type WireNum } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
@@ -3288,6 +3289,30 @@ if (inShard("core")) {
   if (atanNote !== "matches the usual value" || !(atanValue.re < 0)) {
     failed += 1;
     console.log("FAIL arctan usual value", atanNote, atanValue);
+  }
+  // v1.1 (N1): the float-differs flag removes only "matches the usual value". Other agreement caveats stay.
+  {
+    const underNode = compileExpression("ln(1+10^(-130))", {});
+    const underItem = { ...entry(underNode, "ln(1+10^(-130))", "float"), floatDiffers: true, exactBeside: "1×10^−130" };
+    const underAgreement = agreementNote(underItem.caption, underItem.value, underItem.bound ?? {}, underItem.text, {
+      cancelledZero: underItem.cancelledZero,
+      notCertified: underItem.notCertified,
+    });
+    const underNote = noteFor(underItem);
+    if (underAgreement !== "float underflows" || !underNote?.includes("float underflows")) {
+      failed += 1;
+      console.log("FAIL N1 float-differs keeps float underflows", underAgreement, underNote);
+    }
+    const tiny = { ...entry(scalarNode("1e-400"), "1e-400", "float"), floatDiffers: true, exactBeside: "1×10^−400" };
+    const tinyAgreement = agreementNote(tiny.caption, tiny.value, tiny.bound ?? {}, tiny.text, {
+      cancelledZero: tiny.cancelledZero,
+      notCertified: tiny.notCertified,
+    });
+    const tinyNote = noteFor(tiny);
+    if (tinyAgreement !== "matches the usual value" || tinyNote?.includes("matches the usual value")) {
+      failed += 1;
+      console.log("FAIL N1 float-differs drops matches the usual value", tinyAgreement, tinyNote);
+    }
   }
   // v1.1 (reviewbot E3): no "matches the usual value" / "· 0" for a 0 the float lost or exact cancelled.
   {
