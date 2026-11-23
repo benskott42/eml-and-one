@@ -1,0 +1,30 @@
+sinh N=1       worst |tail|/bound = 1.0
+sin  N=1       worst |tail|/bound = 1.0
+exp  N=1       worst |tail|/bound = 1.0
+artanh N=1     worst |tail|/bound = 1.0
+arctan N=1     worst |tail|/bound = 1.0
+arcsin N=1     worst |tail|/bound = 0.5
+log1p N=1      worst |tail|/bound = 1.0
+sinh N=3       worst |tail|/bound = 1.0
+sin  N=3       worst |tail|/bound = 1.0
+exp  N=3       worst |tail|/bound = 1.0
+artanh N=3     worst |tail|/bound = 1.0
+arctan N=3     worst |tail|/bound = 1.0
+arcsin N=3     worst |tail|/bound = 0.375
+log1p N=3      worst |tail|/bound = 1.0
+sinh N=7       worst |tail|/bound = 1.0
+sin  N=7       worst |tail|/bound = 1.0
+exp  N=7       worst |tail|/bound = 1.0
+artanh N=7     worst |tail|/bound = 1.0
+arctan N=7     worst |tail|/bound = 1.0
+arcsin N=7     worst |tail|/bound = 0.2734
+log1p N=7      worst |tail|/bound = 1.0
+sinh N=11      worst |tail|/bound = 1.0
+sin  N=11      worst |tail|/bound = 1.0
+exp  N=11      worst |tail|/bound = 1.0
+artanh N=11    worst |tail|/bound = 1.0
+arctan N=11    worst |tail|/bound = 1.0
+arcsin N=11    worst |tail|/bound = 0.2256
+log1p N=11     worst |tail|/bound = 1.0
+ALL WITHIN BOUND
+arctan, z=0.9i, N=1: |tail|=0.572219 vs |next term|=0.24300000000000002 -> next-term rule FAILS

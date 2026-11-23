@@ -1,8 +1,8 @@
-import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf } from "./lowering";
+import { decadeOf, inScaledShell, noteOddSeries, oddSeriesOf, type SeriesCoeff, isMarkedExactInt, isTwoScaled, isWideTiny, knownValue, markExactInt, markTwoScaled, noteDecade, noteScaledShell, noteWide, normWide, tagValue, wideOf, isLiftedCombine, isLostTiny, noteLiftedCombine, noteLostTiny } from "./lowering";
 
 /** v1.1: bump when a field changes meaning. The worker echoes it; a mismatch is a stale worker. */
 export const WIRE_VERSION = 2;
-import { E, ONE, V, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isMaybeUnverified, isSeriesShortcut, isUnverified, markMaybeUnverified, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node, isExactUnsure, markExactUnsure } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -16,10 +16,18 @@ export type Wire =
       b: number;
       pole?: number;
       trig?: number;
+      /** asinh argument, or the two terms of an add whose range is unknown. */
+      asinh?: number;
+      addL?: number;
+      addR?: number;
       lift?: 1;
       dec?: number;
       lead?: 1;
       shell?: 1;
+      /** The add or sub gate between a 10^k lift and its drop; exact mode sizes its cancellation. */
+      lc?: 1;
+      /** A past-cap power, or a sum of two float underflows. A vanished result is not certified. */
+      cap?: 1;
       /** A known point too small for 120 digits. Float64 still holds it; the range table does not survive the worker. */
       kr?: WireNum;
       ki?: WireNum;
@@ -33,6 +41,8 @@ export type Wire =
       unver?: 1;
       /** v1.1 (item 6): a sum beside a possible infinity; only a NaN result stands. */
       mu?: 1;
+      /** Exact mode cannot certify this value; float keeps its own. */
+      xu?: 1;
     };
 
 function exactIntDigits(node: Node): string | undefined {
@@ -85,9 +95,16 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     const token: Wire = { i, k: "E", a, b };
     if (note?.kind === "pole") token.pole = idOf.get(note.arg);
     else if (note?.kind === "trig") token.trig = idOf.get(note.arg);
+    else if (note?.kind === "asinh") token.asinh = idOf.get(note.arg);
+    else if (note?.kind === "add") {
+      token.addL = idOf.get(note.left);
+      token.addR = idOf.get(note.right);
+    }
     if (isTwoScaled(frame.n)) token.lift = 1;
     if (inScaledShell(frame.n)) token.shell = 1;
+    if (isLiftedCombine(frame.n)) token.lc = 1;
     if (isSeriesShortcut(frame.n)) token.lead = 1;
+    if (isLostTiny(frame.n)) token.cap = 1;
     const decade = decadeOf(frame.n);
     if (decade !== undefined) token.dec = decade;
     const known = knownValue(frame.n);
@@ -106,6 +123,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     if (isUnverified(frame.n)) token.unver = 1;
     if (isMaybeUnverified(frame.n)) token.mu = 1;
+    if (isExactUnsure(frame.n)) token.xu = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -144,9 +162,15 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       nodes[tok.i] = node;
       if (tok.pole !== undefined && nodes[tok.pole]) notePrecision(node, { kind: "pole", arg: nodes[tok.pole] });
       else if (tok.trig !== undefined && nodes[tok.trig]) notePrecision(node, { kind: "trig", arg: nodes[tok.trig] });
+      else if (tok.asinh !== undefined && nodes[tok.asinh]) notePrecision(node, { kind: "asinh", arg: nodes[tok.asinh] });
+      else if (tok.addL !== undefined && tok.addR !== undefined && nodes[tok.addL] && nodes[tok.addR]) {
+        notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
+      }
       if (tok.lift) markTwoScaled(node);
       if (tok.shell) noteScaledShell(node);
+      if (tok.lc) noteLiftedCombine(node);
       if (tok.lead) markSeriesShortcut(node);
+      if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: readWireNum(tok.kr), im: readWireNum(tok.ki) });
       if (tok.kx) noteWide(node, normWide(tok.kx[0], tok.kx[1]));
@@ -154,6 +178,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.os && nodes[tok.os[0]]) noteOddSeries(node, nodes[tok.os[0]], tok.os[1]);
       if (tok.unver) markUnverified(node);
       if (tok.mu) markMaybeUnverified(node);
+      if (tok.xu) markExactUnsure(node);
     }
   }
   const node = nodes[root];

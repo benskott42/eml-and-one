@@ -331,7 +331,8 @@ const ipi = recordLine(minimalityLine("+iπ on this cut (−iπ on the principal
 const eightCaveat = recordLine(minimalityLine("−8", 77) ?? { value: "", k: 0, label: "", note: "" });
 const half = recordLine(minimalityLine("1/2", 29) ?? { value: "", k: 0, label: "", note: "" });
 const schanuel = recordLine(minimalityLine("−2", 27) ?? { value: "", k: 0, label: "", note: "" });
-if (!ipi.includes("unresolved tower trees remain")) fail(`+iπ caveat ${ipi}`);
+// +iπ at K 21 is proven minimal (tools/minimality/decide.py --open), so the caveat names the proof.
+if (!ipi.includes("6918")) fail(`+iπ caveat ${ipi}`);
 if (!eightCaveat.includes("depends on ln 0")) fail(`−8 caveat ${eightCaveat}`);
 if (!half.includes("depends on ln 0")) fail(`1/2 caveat ${half}`);
 if (!schanuel.includes("Schanuel")) fail(`−2 K 27 caveat ${schanuel}`);

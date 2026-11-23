@@ -176,6 +176,13 @@ export function precisionNoteOf(node: Node): PrecisionNote | undefined {
   return precisionNotes.get(node);
 }
 
+/** Argument of sin, cos, or tan. tan is stored as a pole note. */
+export function trigArg(node: Node): Node | null {
+  const note = precisionNotes.get(node);
+  if (!note || (note.kind !== "trig" && note.kind !== "pole")) return null;
+  return note.arg;
+}
+
 /**
  * A function the library replaced by a short series. The next term is past
  * the 480-digit cap. A later cancellation that makes the whole result 0 is
@@ -229,6 +236,18 @@ export function unverifiedKind(n: Node): 0 | 1 | 2 {
 function carryUnverified(node: Node, a: Node, b: Node): void {
   const kind = Math.max(unverifiedKind(a), unverifiedKind(b));
   if (kind > 0) markedBelow.set(node, kind as 1 | 2);
+}
+
+/** Exact mode cannot certify this node's value; float mode still shows its own. */
+const exactUnsureNodes = new WeakSet<Node>();
+
+export function markExactUnsure(node: Node): Node {
+  exactUnsureNodes.add(node);
+  return node;
+}
+
+export function isExactUnsure(node: Node): boolean {
+  return exactUnsureNodes.has(node);
 }
 
 export function markSeriesShortcut(node: Node): Node {
@@ -421,7 +440,7 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
       // argument. Real ∞ − ∞ of two poles stays indeterminate.
       const messy = (value: C) => !finiteC(value) && Number.isFinite(value.im) && value.im !== 0 && !Object.is(value.im, -0);
       const childRange = why.get(n.a) === SINGULAR_RANGE || why.get(n.b) === SINGULAR_RANGE;
-      singular = rangeHere || childRange || messy(a) || messy(b) ? SINGULAR_RANGE : SINGULAR_INDET;
+      singular = !(rangeHere || childRange || messy(a) || messy(b)) ? SINGULAR_INDET : SINGULAR_RANGE;
     }
     // An infinity born from finite inputs is overflow, even if another gate logged 0.
     // ln 0 itself is the label only when this infinity was not that overflow.

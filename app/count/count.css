@@ -289,6 +289,27 @@
   margin-top: 8px;
 }
 
+/* With the system font (--font-sans is now defined) the two buttons no longer fit
+   side by side at 320px and wrapped onto two rows, so the phone device grew past the
+   screen before the panels (count-e2e). Share the row, and tighten text on narrow phones. */
+.count-actions > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@media (max-width: 360px) {
+  .count-actions > * {
+    font-size: 0.8rem;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .count-conv {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
