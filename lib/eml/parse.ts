@@ -43,8 +43,9 @@ import {
   userSub,
   unaryBuilders,
 } from "./library";
+import { mayBeInfinite } from "./lowering";
 import { formatC, isUsable } from "./format";
-import { EmlError, isolateCircuit, markExactUnsure, precisionNoteOf, type Node } from "./node";
+import { EmlError, input, isExactUnsure, isUnverified, isolateCircuit, markExactUnsure, markUnverified, precisionNoteOf, type Node } from "./node";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
@@ -350,6 +351,37 @@ function holdsNegatedGroup(root: Ast): boolean {
   return false;
 }
 
+let taintCount = 0;
+
+/**
+ * A refused operand refuses every result built on it. The library's folds read a
+ * refused leaf as its placeholder 0: 1 + (10^400 + π) is refused, and minus 2 it
+ * folded to a certified −2. A circuit still built on the operand is exact-unsure,
+ * so float mode keeps its own reading. A fold that dropped the operand becomes a
+ * fresh refused leaf, so a shared node such as 0 is not marked.
+ */
+function refuseFrom(args: Node[], out: Node): Node {
+  // An infinite operand is the library's own refusal path: (1 + ∞) − ∞ stays ∞ − ∞.
+  const refused = args.filter((arg) => isUnverified(arg) && !mayBeInfinite(arg));
+  if (!refused.length || isUnverified(out) || isExactUnsure(out)) return out;
+  if (refused.some((arg) => builtOn(out, arg))) return markExactUnsure(out);
+  taintCount += 1;
+  return markUnverified(input({ re: Number.NaN, im: Number.NaN }, `unverified-from:${taintCount}`));
+}
+
+function builtOn(root: Node, part: Node): boolean {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    if (node === part) return true;
+    seen.add(node);
+    if (node.type === "eml") stack.push(node.a, node.b);
+  }
+  return false;
+}
+
 function foldAst(ast: Ast): Node {
   if (ast.k === "n") return ast.node;
   // Flattening would split (a+b)+(-(a+b)) into a, b, and -(a+b), so the identical nodes never meet.
@@ -357,7 +389,7 @@ function foldAst(ast: Ast): Node {
     const parts = ast.args.map(foldAst);
     const first = parts[0];
     if (!first) throw new EmlError("The expression ended early.");
-    return parts.slice(1).reduce((sum, part) => userAdd(sum, part), first);
+    return parts.slice(1).reduce((sum, part) => refuseFrom([sum, part], userAdd(sum, part)), first);
   }
   if (ast.k === "+" || ast.k === "*") {
     const flat: Ast[] = [];
@@ -372,18 +404,23 @@ function foldAst(ast: Ast): Node {
         }
       } else flat.push(item);
     }
-    return balanced(ast.k, flat.map(foldAst));
+    const parts = flat.map(foldAst);
+    return refuseFrom(parts, balanced(ast.k, parts));
   }
   if (ast.k === "pre") {
     const arg = foldAst(ast.arg);
-    return ast.name === "neg" ? tNeg(arg) : tSqrt(arg);
+    return refuseFrom([arg], ast.name === "neg" ? tNeg(arg) : tSqrt(arg));
   }
-  if (ast.k === "call") return applyNode(ast.name, ast.args.map(foldAst));
+  if (ast.k === "call") {
+    const args = ast.args.map(foldAst);
+    return refuseFrom(args, applyNode(ast.name, args));
+  }
   const left = foldAst(ast.args[0]);
   const right = foldAst(ast.args[1]);
-  if (ast.name === "-") return userSub(left, right);
-  if (ast.name === "/") return tDiv(left, right);
-  return tPow(left, right);
+  const pair = [left, right];
+  if (ast.name === "-") return refuseFrom(pair, userSub(left, right));
+  if (ast.name === "/") return refuseFrom(pair, tDiv(left, right));
+  return refuseFrom(pair, tPow(left, right));
 }
 
 export function compileExpression(source: string, variables: Record<string, Node>): Node {

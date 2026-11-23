@@ -901,8 +901,19 @@ export function tTanh(t: Node): Node {
   const out = tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
   // Past |Re t| ≈ 100 the distance from ±1, 2e^(−2|t|), is below the working precision
   // and the quotient rounds to an exact ±1. Not certified.
-  const known = knownValue(t);
-  return known && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
+  // A literal 10^20 has no tagged float, and exp(800) overflows one, so the float
+  // value decides. Without it, e^(2t) overflowed and tanh(10^20) printed undefined (∞/∞).
+  const known = knownValue(t) ?? floatOrNull(t);
+  return known && !Number.isNaN(known.re) && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
+}
+
+/** The float value of a subtree, or null when it cannot be evaluated. */
+function floatOrNull(t: Node): { re: number; im: number } | null {
+  try {
+    return evaluateReport(t).value;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1186,10 +1197,23 @@ export function tArcsin(t: Node): Node {
   return tMul(tMul(tNeg(tI()), sigma), tLn(tAdd(tMul(sigma, it), rad)));
 }
 
+/** −i·Log(z + i·√(1 − z)·√(1 + z)), for z next to 1, where it does not cancel. */
+function arccosNearOne(t: Node): Node {
+  const rad = tMul(sqrtOneMinus(t), sqrtOnePlus(t));
+  return tMul(tNeg(tI()), tLn(tAdd(t, tMul(tI(), rad))));
+}
+
 export function tArccos(t: Node): Node {
+  const exact = knownValue(t);
+  if (exact && imagZero(exact) && exact.re === 1) return tZero();
+  if (exact && imagZero(exact) && exact.re === -1) return tPi();
+  // Near ±1 the range midpoint cannot tell 1 from 1 + 10^(−16): returning 0 printed
+  // 0 for arccos(1 + 10^(−16)), which is 1.414×10^(−8) i. π/2 − arcsin cancels to a
+  // zero exact mode cannot certify at 2/2, so near +1 the value is −i·Log(z + i·S),
+  // which is Log 1 = 0 there. Near −1, arccos z = π − arccos(−z).
   const known = tightValue(t);
-  if (known && imagZero(known) && known.re === 1) return tZero();
-  if (known && imagZero(known) && known.re === -1) return tPi();
+  if (known && imagZero(known) && known.re === 1) return arccosNearOne(t);
+  if (known && imagZero(known) && known.re === -1) return tSub(tPi(), arccosNearOne(tNeg(t)));
   // acos = π/2 − asin, so a real x > 1 has positive imaginary part.
   return tSub(tHalfOf(tPi()), tArcsin(t));
 }

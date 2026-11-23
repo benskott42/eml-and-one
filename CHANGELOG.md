@@ -5,6 +5,13 @@
 - x^0 is 1 for every finite x, 0^0 included (the IEEE pow convention, which v1.1 uses too). It was undefined: the power word evaluates ln(0) for a zero base. An infinite base, such as ln(0)^0, stays undefined.
 - Exact mode raises its precision when exp turns an angle near a multiple of π/2. Such an angle keeps only part of its digits in cos or sin. (10^108 − i)·sin(atanh(−i)) printed a real part of −0.868670961405; the value is −0.868670961486. The same raise fixes cos(1e119), which showed −0.98499 beside its "argument too large" note and now shows −0.372261757876, and certifies ((1 + 10^−130) − 1) + i/2 as 1×10^−130 + 0.5i where it used to refuse.
 - Exact mode keeps a tiny imaginary part that an angle sum rounded away. (10^300 − (2 − 2i))^(−1) printed 1×10^−300 without its −2×10^−600 i. Past 480 digits, as with 10^400 in place of 10^300, the result is unverified.
+- A refused subexpression refuses everything built on it. 1 + (10^400 + π) is refused, but the folds read its placeholder as an exact 0: minus 2 it was certified −2, times 2 it was 0, and a longer sum with 10^400 in it printed −1.6487 − i.
+- arccos next to ±1 no longer rounds to the endpoint. arccos(1 + 10^−16) printed 0; it is 1.414×10^−8 i. arccos(1 − 10^−200) and arccos(−1 − 10^−200) kept 0 and π the same way. Next to +1 the circuit is −i·Log(z + i√(1−z)√(1+z)), so arccos(2/2) is still a certified 0.
+- A value below the working precision that a sum absorbed is found again. atanh(2/exp(300)) printed 0; it is 1.0296×10^−130. Exact mode now raises the precision to fit the smallest value the pass computed when the result vanishes.
+- A tiny part read twice for confirmation is read where it sits above the noise, not 24 digits higher. sin(2/exp(300)) printed −5.3×10^−261 i beside its real value (a regression from the absorbed-part fix above), and sin(x) for x = 2.77×10^−87 printed x²/2 as an imaginary part.
+- An angle that lost digits in cos or sin counts those digits as noise. sinh(10^300 i) printed a real part of 4.6×10^−47; it is −0.98575042516i.
+- ∞ − ∞ that no ln 0, pole, or division by 0 of the expression produced is refused, not called undefined: asinh(1/10^−200), asin(−1/10^−200), and acosh(asinh(10^400)) are finite. tanh of any real past 100 is refused, as the release notes say; tanh(10^20) and tanh(exp(800)) printed undefined, and tanh(−10^300) printed −1.
+- A value that underflows the decimal range is not a certified 0: exp(−10^20), 1/cosh(10^50), and cosh(10^50)^(−2) are refused. 1 + exp(−10^20) is still 1.
 
 ## 1.0.2 — 2026-11-22
 

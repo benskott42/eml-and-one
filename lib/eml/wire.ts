@@ -1,11 +1,11 @@
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markInfiniteSource, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
 import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; nfr?: -1 | 1; nfi?: -1 | 1 }
+  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; nfr?: -1 | 1; nfi?: -1 | 1; inf?: 1 }
   | {
       i: number;
       k: "E";
@@ -34,6 +34,8 @@ export type Wire =
       unver?: 1;
       /** Exact mode cannot certify this value; float keeps its own. */
       xu?: 1;
+      /** Built from a ln 0, pole, or division by 0: an ∞ − ∞ here can be the value. */
+      inf?: 1;
     };
 
 function exactIntDigits(node: Node): string | undefined {
@@ -80,6 +82,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         const digits = exactIntDigits(frame.n);
         if (digits !== undefined) token.int = digits;
         if (isUnverified(frame.n)) token.unver = 1;
+        if (mayBeInfinite(frame.n)) token.inf = 1;
         tokens.push(token);
       }
       continue;
@@ -120,6 +123,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     if (digits !== undefined) token.int = digits;
     if (isUnverified(frame.n)) token.unver = 1;
     if (isExactUnsure(frame.n)) token.xu = 1;
+    if (mayBeInfinite(frame.n)) token.inf = 1;
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -135,6 +139,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : tok.im;
       const node = input({ re, im }, tok.label);
       if (tok.unver) markUnverified(node);
+      if (tok.inf) markInfiniteSource(node);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
     }
     else {
@@ -159,6 +164,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
       if (tok.unver) markUnverified(node);
       if (tok.xu) markExactUnsure(node);
+      if (tok.inf) markInfiniteSource(node);
     }
   }
   const node = nodes[root];

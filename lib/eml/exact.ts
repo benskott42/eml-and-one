@@ -14,7 +14,7 @@ import {
   provenInteger,
   trigArg,
 } from "./node";
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, knownValue } from "./lowering";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, knownValue, mayBeInfinite } from "./lowering";
 import { evaluate as floatEvaluate, isExactUnsure, isSeriesShortcut, precisionNoteOf } from "./node";
 
 /**
@@ -98,6 +98,8 @@ function axisInfinity(part: Decimal): Decimal {
   return part.isNeg() ? NEG_INF : POS_INF;
 }
 
+const LN10_APPROX = 2.302585092994046;
+
 function expZ(v: Z): Z {
   if (!v.im.isFinite()) return { re: NAN, im: NAN };
   const trig = v.im.isFinite() ? cosSin(v.im) : { c: NAN, s: NAN };
@@ -107,7 +109,13 @@ function expZ(v: Z): Z {
     return { re: NAN, im: NAN };
   }
   const mag = v.re.exp();
-  if (mag.isZero()) return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  if (mag.isZero()) {
+    // A finite exponent past the decimal range: exp(−10^20) is not 0. Record its
+    // decade, so a result that vanished here is refused rather than certified.
+    const decade = Math.floor(v.re.div(LN10_APPROX).toNumber());
+    if (Number.isFinite(decade) && decade < tiniest) tiniest = decade;
+    return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
+  }
   if (!mag.isFinite()) return { re: signedInf(trig.c), im: signedInf(trig.s) };
   return { re: mag.mul(trig.c), im: mag.mul(trig.s) };
 }
@@ -197,6 +205,12 @@ function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
 
 /** Decades cancelled inside one subtraction. A later pass may raise precision. */
 let lossGap = 0;
+/** Decades above 1 of an angle that exp turns. cos(10^300) carries 10^(300 − digits). */
+function angleDecades(x: Z): number {
+  if (!x.re.isFinite() || !x.im.isFinite() || x.im.isZero()) return 0;
+  return Math.max(0, x.im.e);
+}
+
 /**
  * Decades between an imaginary sum and a nonzero term it rounded away. An angle
  * is an imaginary part, and exp turns it back into a value: −π + 2.9×10^(−303)
@@ -450,9 +464,11 @@ function trigGap(x: Z): number {
 
 /**
  * `lost`: this node's value carries a dropped part. `inherited`: it came from an
- * operand, not from this gate's own zero. `liftGap`: this gate's lifted cancellation.
+ * operand, not from this gate's own zero. `liftGap`: this gate's lifted cancellation,
+ * or the digits its angle lost in cos and sin. `trigGap`: decades of a large angle,
+ * which raise the absolute noise of cos and sin by as many.
  */
-type GateRisk = { lost: boolean; inherited: boolean; liftGap: number };
+type GateRisk = { lost: boolean; inherited: boolean; liftGap: number; trigGap: number };
 
 /**
  * A dropped part matters only while the value is 0 or infinite: a later ln reads
@@ -487,13 +503,16 @@ function riskBelow(root: Node, out: Z, pass: Map<Node, GateRisk>): GateRisk {
   // A root zero whose own exp(−∞ + iθ) dropped θ is still 0: no later ln reads that angle.
   const top = riskOf(root, pass, store);
   const rootLost = top !== undefined && top.lost && (top.inherited || !zZero(out));
-  const total: GateRisk = { lost: rootLost, inherited: false, liftGap: 0 };
+  const total: GateRisk = { lost: rootLost, inherited: false, liftGap: 0, trigGap: 0 };
   while (stack.length) {
     const node = stack.pop();
     if (!node || node.type !== "eml" || seen.has(node)) continue;
     seen.add(node);
     const risk = riskOf(node, pass, store);
-    if (risk) total.liftGap = Math.max(total.liftGap, risk.liftGap);
+    if (risk) {
+      total.liftGap = Math.max(total.liftGap, risk.liftGap);
+      total.trigGap = Math.max(total.trigGap, risk.trigGap ?? 0);
+    }
     stack.push(node.a, node.b);
   }
   return total;
@@ -504,9 +523,10 @@ function riskOf(node: Node, pass: Map<Node, GateRisk>, store: WeakMap<Node, Gate
 }
 
 /** A lost part refuses any value but undefined. */
-function riskReport(out: Z, below: GateRisk): Pick<ExactReport, "unverified" | "liftGap"> {
+function riskReport(out: Z, below: GateRisk): Pick<ExactReport, "unverified" | "liftGap" | "trigGap"> {
   const lost = below.lost && !out.re.isNaN() && !out.im.isNaN();
-  return lost ? { unverified: true, liftGap: below.liftGap } : { liftGap: below.liftGap };
+  const gaps = { liftGap: below.liftGap, trigGap: below.trigGap };
+  return lost ? { unverified: true, ...gaps } : gaps;
 }
 
 function asZ(value: C | Z): Z {
@@ -536,6 +556,8 @@ export type ExactReport = {
   sawLead?: boolean;
   /** Decades cancelled between a 10^k lift and its drop. */
   liftGap?: number;
+  /** Decades of the largest angle turned: that many more decades of absolute noise. */
+  trigGap?: number;
   /** Largest imaginary term rounded away beside its sum, in decades. */
   absorbIm?: number;
 };
@@ -713,7 +735,10 @@ function dustPart(report: ExactReport): "re" | "im" | null {
   const { value: v, workExp } = report;
   if (workExp === undefined || !Number.isFinite(workExp)) return null;
   if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() || v.im.isZero()) return null;
-  const noise = new D(10).pow(workExp - ((report.digits ?? D.precision) - 12));
+  // An angle that lost digits in cos or sin (the lift gap) raises the noise by as
+  // many decades: sinh(10^300 i) at 348 digits cancels its real part to 4.6×10^(−47).
+  const lost = Math.max(0, report.trigGap ?? 0);
+  const noise = new D(10).pow(workExp - ((report.digits ?? D.precision) - lost - 12));
   if (v.re.abs().lt(noise) && v.im.abs().gte(noise)) return "re";
   if (v.im.abs().lt(noise) && v.re.abs().gte(noise)) return "im";
   return null;
@@ -729,9 +754,15 @@ function confirmDust(report: ExactReport, root: Node, env: Record<string, C | Z>
   const which = dustPart(report);
   if (!which) return report;
   const part = report.value[which];
+  // 24 more digits are not enough when the dust is a term the gates absorbed, not
+  // rounding: sin(x) for x = 2.77×10^(−87) left x²·i/2, which holds still until
+  // 1 + x² fits. Read again where the part sits 24 digits above the noise.
+  const digits = report.digits ?? D.precision;
+  const workExp = report.workExp ?? 0;
+  const fits = Math.min(PRECISION_CAP, Math.max(digits + 24, workExp - part.e + 36));
   let again: Decimal;
   try {
-    again = atPrecision((report.digits ?? D.precision) + 24, root, env, budget).value[which];
+    again = atPrecision(fits, root, env, budget).value[which];
   } catch {
     return report;
   }
@@ -765,7 +796,11 @@ function recoverTinyPart(report: ExactReport, root: Node, env: Record<string, C 
   try {
     first = atPrecision(hinted, root, env, budget, false);
     if (first.unverified || first.value[which].isZero()) return null;
-    second = atPrecision(Math.min(PRECISION_CAP, hinted + 24), root, env, budget, false);
+    // The second reading is where the part sits 24 digits above the noise of the
+    // terms the gates worked at. A term they absorbed holds still until it fits:
+    // sin(2/exp(300)) kept −5.3×10^(−261) i at 179 and 203 digits, and it is 0.
+    const fits = (first.workExp ?? 0) - first.value[which].e + 36;
+    second = atPrecision(Math.min(PRECISION_CAP, Math.max(hinted + 24, fits)), root, env, budget, false);
   } catch {
     return null;
   }
@@ -968,11 +1003,14 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     const which = v.re.isZero() ? "re" : "im";
     const other = which === "re" ? v.im : v.re;
     // Only a value that could reach the zero component counts: its own channel.
-    const need = other.e - firstTinyParts[which] + 30;
+    // An angle that lost digits in cos or sin leaves that much more noise:
+    // cosh(10^20 i) cancels its imaginary part to about 10^(20 − digits).
+    const lost = Math.max(0, out.trigGap ?? 0);
+    const need = other.e - firstTinyParts[which] + 30 + lost;
     if (need > digits) {
       if (need > PRECISION_CAP) return true;
       const wide = atPrecision(need, root, env, budget, false).value[which];
-      if (!wide.isFinite() || (!wide.isZero() && wide.e > other.e - need + 20)) return true;
+      if (!wide.isFinite() || (!wide.isZero() && wide.e > other.e - need + lost + 20)) return true;
     }
   }
   if (firstBig > 308) {
@@ -1022,8 +1060,41 @@ export function exactReport(
   firstTinyParts = { re: 0, im: 0 };
   firstBig = Number.NEGATIVE_INFINITY;
   const out = exactReportCore(root, env, budget, pass);
+  if (overflowNaN(root, env, out)) return { ...out, singular: null, unverified: true };
   if (out.unverified || !refusedResult(root, env, budget, out)) return out;
   return { ...out, unverified: true };
+}
+
+/**
+ * ∞ − ∞ that no ln 0, pole, or division by 0 of the expression produced. The
+ * words overflowed on the way: asinh(1/10^(−200)) is 461.2…, not undefined.
+ * Not certified either way.
+ */
+/** Any node below is an infinite source (ln 0, a pole, a division by 0) or a non-finite leaf. */
+function infinityBelow(root: Node): boolean {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    if (mayBeInfinite(node)) return true;
+    if (node.type === "input" && !(Number.isFinite(node.value.re) && Number.isFinite(node.value.im))) return true;
+    if (node.type === "eml") stack.push(node.a, node.b);
+  }
+  return false;
+}
+
+function overflowNaN(root: Node, env: Record<string, C | Z>, out: ExactReport): boolean {
+  if (out.singular !== SINGULAR_INDET) return false;
+  if (!out.value.re.isNaN() && !out.value.im.isNaN()) return false;
+  if (infinityBelow(root)) return false;
+  for (const value of Object.values(env)) {
+    const re = value.re instanceof Decimal ? value.re.isFinite() : Number.isFinite(value.re as number);
+    const im = value.im instanceof Decimal ? value.im.isFinite() : Number.isFinite(value.im as number);
+    if (!re || !im) return false;
+  }
+  return true;
 }
 
 function exactReportCore(
@@ -1073,7 +1144,11 @@ function exactReportCore(
     // Any recorded cancellation can hide the term that should have survived.
     // A structural zero such as 1−1 records no gap and stays certified.
     const fromGap = gap > 8 ? gap + 48 : 0;
-    const need = Math.max(demandedTinyDigits(root, env), fromGap);
+    // A value below the precision that no gap recorded can still be the answer:
+    // atanh(2/exp(300)) adds 1.03×10^(−130) to 1, which absorbs it, and printed 0.
+    // Raise to fit it, up to the cap.
+    const fromTiny = tiniest < -(D.precision - 24) ? Math.min(PRECISION_CAP, -tiniest + 48) : 0;
+    const need = Math.max(demandedTinyDigits(root, env), fromGap, fromTiny);
     if (need > PRECISION_CAP) return certifyZero(report);
     if (need > D.precision) {
       let digits = Math.min(PRECISION_CAP, need);
@@ -1295,6 +1370,10 @@ function exactReportOnce(
     lossGap = 0;
     const outerAbsorb = absorbIm;
     absorbIm = 0;
+    // tiniest also takes a decade past the decimal range from expZ; keep this gate's
+    // own share for the cache, so a hit still refuses exp(−10^20).
+    const outerTiny = tiniest;
+    tiniest = 0;
     // An angle under the rounding noise of the gates that produced it is that
     // noise, and turns as 0 (cosSin no longer snaps a tiny angle to the axis).
     const turn = angleNoise(a, work.get(n.a)) ? { re: a.re, im: ZERO } : a;
@@ -1305,7 +1384,9 @@ function exactReportOnce(
     absorbIm = Math.max(outerAbsorb, absorbIm);
     absorbOf.set(n, subAbsorb);
     const subLoss = Math.max(ownLoss, lossOf.get(n.a) ?? 0, lossOf.get(n.b) ?? 0);
-    const subTiny = Math.min(exponentFloor(value), tinyOf.get(n.a) ?? exponentFloor(a), tinyOf.get(n.b) ?? exponentFloor(b));
+    const gateTiny = tiniest;
+    tiniest = Math.min(outerTiny, gateTiny);
+    const subTiny = Math.min(gateTiny, exponentFloor(value), tinyOf.get(n.a) ?? exponentFloor(a), tinyOf.get(n.b) ?? exponentFloor(b));
     const subLead = isSeriesShortcut(n) || leadOf.get(n.a) === true || leadOf.get(n.b) === true;
     lossOf.set(n, subLoss);
     tinyOf.set(n, subTiny);
@@ -1343,6 +1424,7 @@ function exactReportOnce(
     const gate: GateRisk = {
       ...carriesLoss(!angleInfinite && gateLosesPart(a, b, value), riskOf(n.a, risk, store), riskOf(n.b, risk, store), value),
       liftGap: angleInfinite ? 0 : Math.max(isLiftedCombine(n) ? liftedGap(a, b, value) : 0, trigGap(turn)),
+      trigGap: angleInfinite ? 0 : angleDecades(turn),
     };
     risk.set(n, gate);
     if (!(n.a.type === "var" || hasVarOf.get(n.a) === true || n.b.type === "var" || hasVarOf.get(n.b) === true)) store.set(n, gate);
