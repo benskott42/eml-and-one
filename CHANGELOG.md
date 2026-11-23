@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- x^0 is 1 for every finite x, 0^0 included (the IEEE pow convention, which v1.1 uses too). It was undefined: the power word evaluates ln(0) for a zero base. An infinite base, such as ln(0)^0, stays undefined.
+
 ## 1.0.2 — 2026-11-22
 
 Fixes from an outside review. Each one has a check.ts or golden row.

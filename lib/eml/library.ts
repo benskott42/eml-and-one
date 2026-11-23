@@ -774,6 +774,10 @@ function integerExponent(node: Node): bigint | null {
 }
 
 export function tPow(a: Node, b: Node): Node {
+  // x^0 = 1 for every finite x, 0^0 included: the IEEE pow convention, and v1.1's.
+  // The power word evaluates ln(0) for a zero base and printed 0^0 as undefined.
+  // An infinite base (ln(0)^0) keeps the word and stays undefined.
+  if (exactZero(b) && provenFinite(a)) return tagInteger(ONE, BigInt(1));
   // An integer power multiplies the quarter turn. ^2 was the only case, so
   // (∞i)^3 stayed the power word and came out a real infinity.
   // A negative integer power is 0, the same zero as 1 over that infinity.
