@@ -934,6 +934,11 @@ function retainSum(acc: Node, term: Node, leadDecade: number, subtract: boolean)
  * result is marked, so a zero that comes out of it is not certified.
  */
 function hornerOddSeries(t: Node, bound: number, ratio: (k: number) => [number, number]): Node {
+  // An exact 0 is its own value for sinh, arcsin, and artanh: no series, no mark.
+  // markSeries(t) below marks the argument node itself, and nodes are shared: the
+  // arcsin key preview on a 0 stack top marked that 0, and the next ln(e)−1 (the
+  // same node) said "couldn't verify" (CI headless Chrome).
+  if (bound === 0) return t;
   // Count terms from the coefficient ratios: sinh's factorials need fewer than arcsin's.
   // Every ratio here is at most 1, so the next term bounds the remainder.
   const step = 2 * Math.log10(bound);

@@ -1,6 +1,7 @@
 import Decimal from "decimal.js";
 import { exactReport, formatExact } from "./exact";
-import { evaluateReport } from "./node";
+import { evaluateReport, isSeriesShortcut } from "./node";
+import { tArcsin, tArtanh, tSinh } from "./library";
 import { compileExpression } from "./parse";
 import { packCircuit, unpackCircuit } from "./wire";
 
@@ -129,6 +130,25 @@ function powChecks(): number {
 }
 
 /** Called by check.ts after the main blocks. */
+/**
+ * A series builder must not mark its argument. Nodes are shared: the arcsin key
+ * preview on a 0 stack top marked that 0, and ln(e)−1 (the same node) then said
+ * "couldn't verify" in the browser.
+ */
+function sharedArgumentChecks(): number {
+  let failed = 0;
+  const zero = compileExpression("ln(e)-1", {});
+  for (const [name, build] of [["arcsin", tArcsin], ["sinh", tSinh], ["artanh", tArtanh]] as const) {
+    build(zero);
+    const report = exactReport(zero);
+    if (isSeriesShortcut(zero) || report.unverified || formatExact(report.value) !== "0") {
+      failed += 1;
+      console.log("FAIL review shared argument", name, "marked ln(e)-1:", isSeriesShortcut(zero), report.unverified ? "unverified" : formatExact(report.value));
+    }
+  }
+  return failed;
+}
+
 export function runReviewChecks(): number {
-  return seriesChecks() + tailChecks() + powChecks();
+  return seriesChecks() + tailChecks() + powChecks() + sharedArgumentChecks();
 }
