@@ -3334,7 +3334,11 @@ if (shardTurn(65)) {
     neg15?.label !== "proven minimal (uses ln 0)" ||
     neg17?.label !== "proven minimal without ln 0" ||
     two?.label !== "proven minimal" ||
-    !two.note.includes("2056")
+    !two.note.includes("2056") ||
+    byKey.get("+iπ on this cut (−iπ on the principal log)@23")?.label !== "proven minimal without ln 0" ||
+    byKey.get("−2@25")?.label !== "proven minimal (uses ln 0)" ||
+    !byKey.get("−2@25")?.note.includes("82500") ||
+    byKey.get("−2@27")?.label !== "shortest known"
   ) {
     failed += 1;
     console.log("FAIL minimality labels", zero, neg15, neg17, two);
@@ -4411,6 +4415,157 @@ if (shardTurn(76)) {
   if (missing !== "Give y a value.") {
     failed += 1;
     console.log("FAIL submit empty y", missing);
+  }
+}
+
+if (shardTurn(81)) {
+  // π is its own token. πi read as the name "pii", so exp(πi) and iπ could not be
+  // typed. .5e3 and 1.e5 were "Cannot read the number", though .5 and 5. read.
+  const same: [string, string][] = [
+    ["πi", "pi*i"], ["exp(πi)", "exp(pi*i)"], ["π i", "pi*i"], ["2*πi", "2*pi*i"],
+    [".5e3", "500"], [".5e-3", "0.0005"], ["1.e5", "100000"], ["-.25E+2", "-25"],
+  ];
+  for (const [source, spelled] of same) {
+    let got = "error";
+    try {
+      got = formatC(evaluate(compileExpression(source, {})));
+    } catch (err) {
+      got = err instanceof Error ? err.message : String(err);
+    }
+    const want = formatC(evaluate(compileExpression(spelled, {})));
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL parser spelling", source, got, "want", want);
+    }
+  }
+  const messages: [string, string][] = [
+    ["2πi", "Put * between “2” and “pi”."],
+    ["iπ", "Put * between “i” and “pi”."],
+    ["ππ", "Put * between “pi” and “pi”."],
+  ];
+  for (const [source, want] of messages) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : String(err);
+    }
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL parser message", source, got, "want", want);
+    }
+  }
+  // Nesting past the JavaScript stack is an expression error, not the engine's RangeError.
+  for (const source of ["exp(".repeat(20000) + "0" + ")".repeat(20000), "-".repeat(50000) + "1"]) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : `${(err as Error).name}: ${(err as Error).message}`;
+    }
+    if (got !== "The expression is nested too deeply." && got !== "This circuit is too large to evaluate.") {
+      failed += 1;
+      console.log("FAIL deep nesting", source.slice(0, 8), got);
+    }
+  }
+  // The pole note reads tan(π/2) as it reads tan(pi/2).
+  const pole = evaluate(compileExpression("tan(π/2)", {}));
+  const poleNote = agreementNote("tan(π/2)", pole, {}, formatC(pole));
+  if (!poleNote?.startsWith("near a pole")) {
+    failed += 1;
+    console.log("FAIL tan(π/2) agreement note", poleNote);
+  }
+}
+
+if (shardTurn(82)) {
+  // A build-time known value is a float. A product or quotient that underflowed, two
+  // tags that cancel in float (π against 3.141592653589793e0), and a decimal or power
+  // that rounds to an integer were the exact 0 or that integer, and the folds for x·0,
+  // 0/x and x^0 used them: (10^(−170))²·10^300 was a certified 0 (it is 10^(−40)),
+  // (3.141592653589793e0 − π)·10^20 was 0, and 1.0000000000000001e0 − 1 was 0.
+  // 0^(−0) is 1, as 0^0 is.
+  const rows: [string, string][] = [
+    ["(3.141592653589793e0-pi)*1e20", "−23846.26433832795"],
+    ["5*(3.141592653589793e0-pi)", "−1.192313216916×10^−15"],
+    ["(ln(2)-0.6931471805599453e0)*1e20", "941.723212145818"],
+    ["(sqrt(2)-1.4142135623730951e0)*1e20", "−5119.83112757903"],
+    ["1.0000000000000001e0-1", "1×10^−16"],
+    ["3.0000000000000001e0*2-6", "2×10^−16"],
+    ["8^(3.3333333333333333e-1)-2", "−1.38629436112×10^−17"],
+    ["sqrt(4.0000000000000001e0)-2", "2.5×10^−17"],
+    ["0^(1.0000000000000001e0-1)", "0"],
+    ["2e3-2000", "0"],
+    ["sqrt(4)-2", "0"],
+    ["(1e-300/1e100)*1e300", "1×10^−100"],
+    ["sqr(1e-200)*5", "5×10^−400"],
+    ["sqr(1e-200)*(-3)", "−3×10^−400"],
+    ["sqr(1e-200)/5", "2×10^−401"],
+    ["(1e-300/1e100)/5", "2×10^−401"],
+    ["0^(1e-200*1e-200)", "0"],
+    ["0^(1e-300/1e100)", "0"],
+    ["2^(1e-200*1e-200)-1", "6.931471805599×10^−401"],
+    ["0^-0", "1"],
+    ["0^(0*-1)", "1"],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL build-time known value", source, got, "want", want);
+    }
+  }
+  // Refused is honest; a certified 0 is not.
+  for (const source of ["sqr(1e-170)*1e300", "sqr(1e-200)*1e300", "sqr(1e-170)*1e200*1e200"]) {
+    const report = workerReport(source);
+    if (!report.unverified && report.value.re.isZero()) {
+      failed += 1;
+      console.log("FAIL underflowed product certified 0", source, formatExact(report.value));
+    }
+  }
+}
+
+if (shardTurn(83)) {
+  // a − (a + 0) is +0. A 16-digit literal ending in 0 is (its prefix)·10 + 0, so
+  // 1234567890123456*10 − 12345678901234560 folded to −(0) = −0, and ln of it was
+  // a certified −∞ + iπ where ln(2*10 − 20) is −∞.
+  const rows: [string, string][] = [
+    ["1234567890123456*10-12345678901234560", "0"],
+    ["ln(1234567890123456*10-12345678901234560)", "−∞"],
+    ["1/(1234567890123456*10-12345678901234560)", "∞"],
+    ["12345678901234567890*10-123456789012345678900", "0"],
+    ["123456789012345678900-12345678901234567890*10", "0"],
+    ["12345678901234567891-12345678901234567890", "1"],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    const floated = formatC(evaluate(compileExpression(source, {})));
+    if (got !== want || floated !== want) {
+      failed += 1;
+      console.log("FAIL sum complement zero", source, got, floated, "want", want);
+    }
+  }
+}
+
+if (shardTurn(84)) {
+  // An odd function at an exact 0 is 0, and at −0 it is −0. tan(0), sinh(0), arctan(0)
+  // and artanh(0) were "couldn't verify", and arcsin(−0) was undefined in float.
+  // sinh(−0) marked the shared −0 leaf as a series shortcut, so a later "-0" in the
+  // same process (the exact worker is reused) was refused too.
+  const rows: [string, string][] = [];
+  for (const name of ["sin", "tan", "sinh", "tanh", "arcsin", "arctan", "arsinh", "artanh"]) {
+    rows.push([`${name}(0)`, "0"], [`${name}(-0)`, "−0"], [`${name}(2-2)`, "0"]);
+  }
+  rows.push(["-0", "−0"], ["sqrt(-0)", "−0"]);
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    const floated = formatC(evaluate(compileExpression(source, {})));
+    if (got !== want || floated !== want) {
+      failed += 1;
+      console.log("FAIL odd function at zero", source, got, floated, "want", want);
+    }
   }
 }
 

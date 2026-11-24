@@ -79,9 +79,10 @@ const BINARY_CALL: Record<string, (a: Node, b: Node) => Node> = Object.fromEntri
   Object.entries(binaryCalls).map(([name, pair]) => [name, pair.node]),
 );
 
+/** π is its own token: πi is pi i, and 2πi says to put * after 2, as 2 pi i does. */
 function preprocess(source: string): string {
   return source
-    .replace(/π/g, "pi")
+    .replace(/π/g, " pi ")
     .replace(/×/g, "*")
     .replace(/÷/g, "/")
     .replace(/−/g, "-");
@@ -440,7 +441,7 @@ function foldAst(ast: Ast): Node {
 
 export function compileExpression(source: string, variables: Record<string, Node>): Node {
   return isolateCircuit(() => {
-    const root = compileParsed(source, variables);
+    const root = compileNested(source, variables);
     // A trig angle past 10^15 under the root is refused; the root's own trig or
     // pole note already says the angle is too large.
     const note = precisionNoteOf(root);
@@ -448,6 +449,20 @@ export function compileExpression(source: string, variables: Record<string, Node
     if (builtHugeAngle() && !own && root.type === "eml") markExactUnsure(root);
     return root;
   });
+}
+
+/**
+ * The fold walks nested calls on the JavaScript stack. About 3000 nested exp( or
+ * 5000 unary minus signs overflowed it, and the screen showed the engine's
+ * "Maximum call stack size exceeded".
+ */
+function compileNested(source: string, variables: Record<string, Node>): Node {
+  try {
+    return compileParsed(source, variables);
+  } catch (err) {
+    if (err instanceof RangeError) throw new EmlError("The expression is nested too deeply.");
+    throw err;
+  }
 }
 
 function compileParsed(source: string, variables: Record<string, Node>): Node {
@@ -590,7 +605,7 @@ export function agreementNote(caption: string, value: C, variables: Record<strin
   const textZero = text.trim() === "0" || text.trim() === "−0" || text.trim() === "-0";
   if (refZero && !textZero) return "float underflows";
   if (isUsable(value) && formatC(value) === formatC(ref)) return "matches the usual value";
-  if (/tan\s*\(\s*pi\s*\/\s*2\s*\)/i.test(caption)) {
+  if (/tan\s*\(\s*pi\s*\/\s*2\s*\)/i.test(preprocess(caption))) {
     return "near a pole: this π/2 is not the mathematical pole, and the digits depend on the engine";
   }
   return `usual value ${formatC(ref)}`;
