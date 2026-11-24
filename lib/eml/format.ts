@@ -7,7 +7,10 @@ function formatReal(n: number): string {
   const sign = n < 0 ? "−" : "";
   const abs = Math.abs(n);
   const nearest = Math.round(abs);
-  if (nearest !== 0 && Math.abs(abs - nearest) <= 1e-9 * nearest && nearest < 1e15) {
+  // Print a nearby integer only when twelve digits could not tell the value from it.
+  // A relative 10^(−9) printed 2·10^9/3 as 666666667 and 10^9/7 as 142857143.
+  const twelfth = 10 ** (Math.floor(Math.log10(abs)) - 11);
+  if (nearest !== 0 && Math.abs(abs - nearest) < twelfth / 2 && nearest < 1e15) {
     return sign + String(nearest);
   }
   let text: string;
@@ -22,8 +25,8 @@ function formatReal(n: number): string {
 function formatImag(n: number): string {
   const sign = n < 0 ? "−" : "";
   const abs = Math.abs(n);
-  if (Math.abs(abs - 1) <= 1e-9) return `${sign}i`;
-  return `${sign}${formatReal(abs)}i`;
+  const text = formatReal(abs);
+  return text === "1" ? `${sign}i` : `${sign}${text}i`;
 }
 
 /**
@@ -107,7 +110,9 @@ export function recognize(z: C): string | null {
   for (const item of NAMED) {
     const diff = Math.hypot(z.re - item.value.re, z.im - item.value.im);
     const scale = Math.max(hypotC(z), hypotC(item.value));
-    if (diff === 0 || (scale > 0 && diff <= 1e-9 * scale)) return item.name;
+    // Within what twelve digits hide (the float-differs bound). A relative 10^(−9)
+    // named a typed 3.141592654 "π" while the screen showed it differ in the tenth digit.
+    if (diff === 0 || (scale > 0 && diff <= 5e-12 * scale)) return item.name;
   }
   return null;
 }

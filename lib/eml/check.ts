@@ -282,6 +282,35 @@ if (formatC(c(0, Infinity)) !== "∞i") {
   failed += 1;
   console.log("FAIL imag infinity", formatC(c(0, Infinity)));
 }
+// A fraction twelve digits can show is not printed as the nearby integer.
+for (const [value, want] of [
+  [c(2e9 / 3), "666666666.667"],
+  [c(1e9 / 7), "142857142.857"],
+  [c(500000000.5), "500000000.5"],
+  [c(0, 1e10 / 3), "3.333333×10^9i"],
+  [c(3 + 4e-13), "3"],
+  [c(1e14 + 0.25), "100000000000000"],
+  [c(0, 1 + 1e-10), "1.0000000001i"],
+  [c(0, -(1 + 1e-13)), "−i"],
+] as const) {
+  if (formatC(value) !== want) {
+    failed += 1;
+    console.log("FAIL float display digits", value, formatC(value), "want", want);
+  }
+}
+// The imaginary coefficient keeps the digits the real part would show.
+for (const [source, want] of [
+  ["i*(1+10^-12)", "1.000000000001i"],
+  ["i*(1-10^-72)", `0.${"9".repeat(72)}i`],
+  ["2-i*(1+3*10^-13)", "2 − 1.0000000000003i"],
+  ["exp(i*pi/2)", "i"],
+] as const) {
+  const text = formatExact(exactEvaluate(compileExpression(source, {})));
+  if (text !== want) {
+    failed += 1;
+    console.log("FAIL exact imaginary digits", source, text, "want", want);
+  }
+}
 const expTiny = evaluate(compileExpression("exp(-50)", {}));
 const expWant = Math.exp(-50);
 if (Math.abs(expTiny.re - expWant) > 1e-6 * expWant || expTiny.im !== 0) {
@@ -313,9 +342,9 @@ if (shardTurn(1)) {
     console.log("FAIL atan(inf) circuit", formatExact(at.value), at.singular);
   }
 }
-if (recognize(c(1e-9)) === "0" || recognize(c(0.999999996973)) === "1") {
+if (recognize(c(1e-9)) === "0" || recognize(c(0.999999996973)) === "1" || recognize(c(3.141592654)) !== null || recognize(c(Math.PI)) !== "π") {
   failed += 1;
-  console.log("FAIL recognize", recognize(c(1e-9)), recognize(c(0.999999996973)));
+  console.log("FAIL recognize", recognize(c(1e-9)), recognize(c(0.999999996973)), recognize(c(3.141592654)), recognize(c(Math.PI)));
 }
 try {
   literalNode("0x10");

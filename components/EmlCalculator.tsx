@@ -1446,7 +1446,7 @@ export function EmlCalculator() {
             {model.note ? (
               <div className="ti-lcd-note">
                 <span title={fullNumber ?? undefined}>{model.note}</span>
-                {fullNumber ? <CopyNumber text={fullNumber} /> : null}
+                {fullNumber ? <CopyNumber key={fullNumber} text={fullNumber} /> : null}
               </div>
             ) : null}
             {model.error ? <p className="ti-lcd-error" role="alert">{model.error}</p> : null}

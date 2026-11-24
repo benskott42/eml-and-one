@@ -1645,8 +1645,10 @@ function formatDecImag(d: Decimal): string {
   if (d.isNaN()) return "undefined";
   if (!d.isFinite()) return d.isNeg() ? "−∞i" : "∞i";
   const sign = d.isNeg() ? "−" : "";
-  if (d.abs().sub(1).abs().lte("1e-12")) return `${sign}i`;
-  return `${sign}${formatDec(d.abs())}i`;
+  // The coefficient is printed as the real part would be: (1 + 10^(−12))i and
+  // (1 − 10^(−72))i keep their digits. A 10^(−12) neighbourhood of 1 printed both as i.
+  const text = formatDec(d.abs());
+  return text === "1" ? `${sign}i` : `${sign}${text}i`;
 }
 
 function formatFullInteger(d: Decimal): string {
