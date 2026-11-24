@@ -64,7 +64,6 @@ const BUGS: Record<string, string> = {
   "(inf*i)/2": "inf-finite: ∞, singular:uses ln 0 = −∞",
   "ln(ln(0)*i)": "inf-finite: ∞, singular:uses ln 0 = −∞",
   "1e-320*(1+1e-100)-1e-320": "jimmy1: certified residue, true value is 1e-420",
-  "exp(ln(ln(0))*i)": "jimmy1: ∞, singular:uses ln 0 = −∞",
   "exp(800)-exp(800)": "jimmy1: −∞, singular:passed through a non-finite value, true value is 0",
 };
 

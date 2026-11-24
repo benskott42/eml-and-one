@@ -625,6 +625,20 @@ function floatOf(node: Node): { re: number; im: number } | null {
   }
 }
 
+/**
+ * An infinite component beside a nonzero finite one, or two infinite components.
+ * A float overflow such as exp(800) is ∞ + 0i and is not this: its exact value is finite.
+ */
+function offAxisInfinity(value: { re: number; im: number } | null): boolean {
+  if (!value || Number.isNaN(value.re) || Number.isNaN(value.im)) return false;
+  const reInf = !Number.isFinite(value.re);
+  const imInf = !Number.isFinite(value.im);
+  if (reInf && imInf) return true;
+  if (reInf) return value.im !== 0;
+  if (imInf) return value.re !== 0;
+  return false;
+}
+
 function floatIsNaN(value: { re: number; im: number } | null): boolean {
   return value !== null && Number.isNaN(value.re) && Number.isNaN(value.im);
 }
@@ -728,6 +742,14 @@ export function tMul(a: Node, b: Node): Node {
   const quarterB = dirB ? null : factorQuarter(b);
   if (dirA && quarterB !== null) return rememberDirection(dirA.magnitude, dirA.quarter + quarterB);
   if (dirB && quarterA !== null) return rememberDirection(dirB.magnitude, dirB.quarter + quarterA);
+  // An infinity off the axes, such as ln(ln(0)) = ∞ + iπ, turned by i is −π + ∞i.
+  // The product word prints a real ∞, and a result read off it was certified:
+  // 1 + exp(−(ln(ln(0))·i)) was 1, though that exp has no limit.
+  const turned = (inf: Node, quarter: number | null) =>
+    (quarter === 1 || quarter === 3) && !directionOf(inf) && (nonFiniteFactor(inf) || mayBeInfinite(inf)) && offAxisInfinity(floatOf(inf));
+  if (turned(a, quarterB) || turned(b, quarterA)) {
+    return markUnverified(markInfiniteSource(rawMul(a, b)));
+  }
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
@@ -1262,6 +1284,12 @@ export function tArctan(t: Node): Node {
   if (small) return small;
   const series = oddSeries(t, ARCTAN_ODD, SERIES_WIDE);
   if (series) return series;
+  // arctan has its poles at ±i, where it is ±∞i: arctan(iy) = i·artanh(y) and y → 1.
+  // −i·artanh(i·i) did not see i·i as −1, so the infinity lost its quarter turn and
+  // came out a real ∞: exp(−arctan(i)) was 0, and 1 + exp(−arctan(i)) a certified 1.
+  // As a directed infinity, exp of it is undefined, as exp(ln(0)·i) already is.
+  if (t === tI()) return tMul(tI(), tNeg(tLn(tZero())));
+  if (t === tNeg(tI())) return tMul(tI(), tLn(tZero()));
   // A pure imaginary iy with |y| > 1 is i·artanh(y) on this cut.
   // artanh(−2) = −artanh(2), so arctan(−2i) = −π/2 − (artanh 2) i.
   const range = rangeOf(t);
@@ -1334,6 +1362,12 @@ export function tArtanh(t: Node): Node {
   const known = tightValue(t);
   // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
   if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
+  // artanh(±1) is ±∞, kept as ln 0 so it has a direction. The quotient of square
+  // roots divides by a 0 and gives an infinity with none, which i·artanh(1) turned
+  // into a real ∞.
+  const unit = rangeOf(t).int;
+  if (unit === BigInt(1)) return tNeg(tLn(tZero()));
+  if (unit === BigInt(-1)) return tLn(tZero());
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);
   if (known && imagZero(known) && known.re < -1) return tNeg(artanhAboveOne(tNeg(t)));
   // Log(√(1+z) / √(1−z)) with the principal √ and Log. It equals ½(ln(1+z) − ln(1−z))

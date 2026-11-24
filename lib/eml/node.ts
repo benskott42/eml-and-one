@@ -190,6 +190,32 @@ export function isUnverified(node: Node): boolean {
   return unverifiedNodes.has(node);
 }
 
+// Marks are only ever added, so a true answer stays true. A false one is not kept:
+// a builder can evaluate a node before it marks it (refuseInfiniteSum does).
+const dependsCache = new WeakSet<Node>();
+
+/**
+ * True when the circuit uses a node marked unverified anywhere, not only at its root.
+ * A finite result read off such a node is not certified either: ln(ln(0))·i is
+ * −π + ∞i, which the product word cannot hold, and 1 + exp(−(ln(ln(0))·i)) was a
+ * certified 1 although that exp has no limit.
+ */
+export function dependsOnUnverified(root: Node): boolean {
+  if (dependsCache.has(root)) return true;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  let found = false;
+  while (stack.length && !found) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (unverifiedNodes.has(n)) found = true;
+    else if (n.type === "eml") stack.push(n.a, n.b);
+  }
+  if (found) dependsCache.add(root);
+  return found;
+}
+
 /** Exact mode cannot certify this node's value; float mode still shows its own. */
 const exactUnsureNodes = new WeakSet<Node>();
 
@@ -275,6 +301,14 @@ export function expUnderflows(input: C): boolean {
 }
 
 export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: EvalBudget = {}): EvalReport {
+  const report = evaluateReportAt(root, env, budget);
+  // A value read off a node refused below the root is not certified either.
+  // An undefined result stays: (1 + 1/0) − 1/0 is still the indeterminate ∞ − ∞.
+  if (report.unverified || (Number.isNaN(report.value.re) && Number.isNaN(report.value.im)) || !dependsOnUnverified(root)) return report;
+  return { value: { re: Number.NaN, im: Number.NaN }, singular: null, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, unverified: true };
+}
+
+function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget): EvalReport {
   if (isUnverified(root)) {
     return {
       value: { re: Number.NaN, im: Number.NaN },

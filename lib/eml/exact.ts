@@ -9,6 +9,7 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  dependsOnUnverified,
   isUnverified,
   precisionMessage,
   provenInteger,
@@ -1147,6 +1148,9 @@ export function exactReport(
   const out = exactReportCore(root, env, budget, pass);
   if (overflowNaN(root, env, out)) return { ...out, singular: null, unverified: true };
   if (out.unverified) return out;
+  // A value read off a node refused below the root is not certified either.
+  // An undefined result stays: (1 + 1/0) − 1/0 is still the indeterminate ∞ − ∞.
+  if (!(out.value.re.isNaN() && out.value.im.isNaN()) && dependsOnUnverified(root)) return { ...out, singular: null, unverified: true };
   if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
   return squaredTinyPart(root, env, budget, out);
 }

@@ -4583,6 +4583,40 @@ if (shardTurn(84)) {
   }
 }
 
+if (shardTurn(95)) {
+  // A pole's infinity keeps its direction. arctan(±i) is ±∞i and artanh(±1) is ±∞, so
+  // exp of their turns has no limit. 1 + exp(−arctan(i)) was a certified 1. An infinity
+  // off the axes (ln(ln(0)) = ∞ + iπ) turned by i is refused, and so is any result read
+  // off it. A float overflow such as exp(800) is finite in exact mode and stays certified.
+  const show = (source: string): string => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    return report.unverified ? "unverified" : formatExact(report.value);
+  };
+  const rows: [string, string][] = [
+    ["arctan(i)", "∞i"],
+    ["arctan(-i)", "−∞i"],
+    ["artanh(1)*i", "∞i"],
+    ["1+exp(-arctan(i))", "undefined"],
+    ["1+exp(-exp(arctan(i)))", "undefined"],
+    ["sigma(arctan(i))", "undefined"],
+    ["sigma(arctan(-i))", "undefined"],
+    ["sigma(artanh(1)*i)", "undefined"],
+    ["sigma(ln(ln(0))*i)", "unverified"],
+    ["1+exp(-(ln(ln(0))*i))", "unverified"],
+    ["acos(2/2)", "0"],
+    ["acos(-(2/2))", "3.14159265359"],
+    ["exp(800)*i", "2.726374572113×10^347i"],
+    ["i*ln(0)", "−∞i"],
+  ];
+  for (const [source, want] of rows) {
+    const got = show(source);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL pole direction", source, got, "want", want);
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
