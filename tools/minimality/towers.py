@@ -638,15 +638,17 @@ def a_exp_lin(w, src=None, k=0):
     A = mkexp(approx(w), 1)
     if not isinstance(A, Tow) or A.ph is not None or isreal(A.W):
         return A
+    def reduces(Y):
+        # narrow first: a wide interval may have endpoints far too large to floor
+        return isinstance(Y, Ball) and Y.re.b - Y.re.a < 1 and cell(Y.re, False) is not None
     try:
-        Y = a_im(A.W)
-        if isinstance(Y, Ball) and cell(Y.re, False) is not None:
+        if reduces(a_im(A.W)):
             return A
     except Undecided:
         pass
     try:
         Y = im_sum(w)
-        if isinstance(Y, Ball) and cell(Y.re, False) is not None:
+        if reduces(Y):
             return Tow(A.W, A.s, Y.re)
     except Undecided:
         pass
