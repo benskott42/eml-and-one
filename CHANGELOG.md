@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Float mode flags a 13- to 15-digit integer whose printed digits are wrong. The screen prints a float that close to an integer as every digit of that integer, but the flag only checked twelve, so 10^30/10^15 showed 999999999999985 and 10^15 + 0.5 showed 999999999999978 with no flag. Both now show the exact value beside them.
 - A mode click and an Undo pressed while a mode switch is rebuilding the stack both apply. The queued undo started first, and the second switch's rebuild cancelled it: the screen kept the row, the history lost that step, and the next Undo went back two. A submit or a program load queued the same way could be dropped. The switch now holds the queue from the click until its rebuild finishes.
 - A refused program number or word loaded while a mode switch or an undo is rebuilding the stack shows its error. The error was set on the old screen and replaced when the rebuild landed, so the Load did nothing visible.
 - A long-press caption read on an empty screen, or on a screen that Undo returns to, stays gone. Clear and Undo brought it back, because the caption is tied to the tape and they restored the same tape.
