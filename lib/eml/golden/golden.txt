@@ -153,7 +153,7 @@ expr: exp(1e-50)-1 | exact: 1×10^−50 | exact-notes: certified | float: 0 | fl
 expr: exp(800)-exp(800) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK | # KNOWN-BUG jimmy1: −∞, singular:passed through a non-finite value, true value is 0
 expr: exp(800)*0 | exact: — | exact-notes: couldn't verify | float: undefined | float-notes: singular:out of float range / overflow,ln0,overflowed | press: 1071+ | round-trip: OK
 expr: exp(ln(1e-400))-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672797+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
-expr: exp(ln(ln(0))*i) | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: 93+ | round-trip: OK
+expr: exp(ln(ln(0))*i) | exact: — | exact-notes: couldn't verify,ln0 | float: — | float-notes: unverified | press: 93+ | round-trip: OK
 expr: i | exact: i | exact-notes: certified,ln0 | float: i | float-notes: ln0 | press: 57+ | round-trip: OK
 expr: inf+1 | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: N/A | round-trip: OK | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞
 expr: ln(-1) | exact: 3.14159265359i | exact-notes: certified,ln0 | float: 3.14159265359i | float-notes: ln0,near-cut | press: 21 | round-trip: OK
