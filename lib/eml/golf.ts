@@ -88,8 +88,13 @@ export function acceptsConstantProgram(node: Node, targetRe: number, targetIm: n
   // Both checks above stop at about 10^(−240): the K 35 word
   // 11111111E11E1EE1EEEEEE1E1E11E1E1EEE is −9×10^(−307) − i(π − 4×10^(−307)),
   // and a ball or a 280-digit compare reads it as exactly −iπ. Exact mode raises
-  // its precision for the 10^(−306) part it passes through and refuses it.
-  return exactReport(node).unverified !== true;
+  // its precision for the 10^(−306) part it passes through and certifies that part,
+  // so a component the target has as 0 must be certified 0 as well.
+  const report = exactReport(node);
+  if (report.unverified === true) return false;
+  if (targetRe === 0 && !report.value.re.isZero()) return false;
+  if (targetIm === 0 && !report.value.im.isZero()) return false;
+  return true;
 }
 
 function near(re: number, im: number, target: Target): boolean {
