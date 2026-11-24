@@ -12,6 +12,7 @@ import { compileExpression } from "./parse";
  * A circuit is a function of its expression: the same source builds the same
  * gates after other expressions, and a tiny real sum or difference either
  * agrees with the exact value or carries a float flag.
+ * check.ts runs branchChecks as a block of its own.
  */
 export function runPropertyChecks(): number {
   let failed = 0;
@@ -89,7 +90,6 @@ console.log(JSON.stringify({ dag: s.dagGates, depth: s.depth, tree: s.treeGates.
       }
     }
   }
-  failed += branchChecks();
   return failed;
 }
 

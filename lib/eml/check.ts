@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { runPropertyChecks } from "./check-properties";
+import { branchChecks, runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
@@ -83,14 +83,19 @@ let failed = 0;
 /**
  * EML_SHARD=i/N runs only the top-level blocks assigned to shard i (0-based) of N,
  * so CI can run the suite as parallel jobs. Setup outside the blocks runs in every
- * shard. Blocks are dealt by the measured weights in check-shards.json (greedy,
- * heaviest first); a block missing from it goes round-robin. EML_BLOCK_TIMES=1
- * prints each block's wall time, which is how that file is regenerated.
+ * shard. A block must not read anything another block sets: they may run in
+ * different processes. Blocks are dealt by the measured weights in
+ * check-shards.json (greedy, heaviest first); a block missing from it goes
+ * round-robin. EML_BLOCK_TIMES=1 prints each block's wall time.
+ * EML_ONLY_BLOCK=<id>[,<id>...] runs only those blocks (overrides EML_SHARD).
+ * check-shards.json holds cold times: each block alone in its own process with
+ * EML_ONLY_BLOCK=<id> EML_BLOCK_TIMES=1, free of caches warmed by shard-mates.
  */
 const shardMatch = /^(\d+)\/(\d+)$/.exec(process.env.EML_SHARD ?? "");
 const shardIndex = shardMatch ? Number(shardMatch[1]) : 0;
 const shardCount = shardMatch ? Math.max(1, Number(shardMatch[2])) : 1;
 const shardOf = assignShards(shardCount);
+const onlyBlocks = process.env.EML_ONLY_BLOCK ? new Set(process.env.EML_ONLY_BLOCK.split(",").map(Number)) : null;
 const blockTimes = process.env.EML_BLOCK_TIMES === "1";
 let openBlock = -1;
 let openedAt = 0;
@@ -117,7 +122,7 @@ function closeBlockTimer(): void {
 
 function shardTurn(id: number): boolean {
   closeBlockTimer();
-  const mine = shardCount <= 1 || (shardOf.get(id) ?? id % shardCount) === shardIndex;
+  const mine = onlyBlocks ? onlyBlocks.has(id) : shardCount <= 1 || (shardOf.get(id) ?? id % shardCount) === shardIndex;
   if (mine) {
     openBlock = id;
     openedAt = performance.now();
@@ -136,8 +141,6 @@ function runTsx(script: string, input: string, timeout = 180_000) {
     timeout,
   });
 }
-
-const isolateCases: { source: string; env: Record<string, { re: number; im: number }> }[] = [];
 
 function relClose(got: { re: number; im: number }, want: { re: number; im: number }, tol = 1e-12): boolean {
   const scale = Math.max(Math.hypot(want.re, want.im), 1e-320);
@@ -2013,7 +2016,8 @@ if (shardTurn(36)) {
   }
 }
 
-if (shardTurn(37)) {
+/** Block 37's seeded random sources. The isolate rebuild (block 43) uses them too. */
+function fuzzSources(): string[] {
   let seed = 20261115;
   const rand = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -2034,11 +2038,13 @@ if (shardTurn(37)) {
     const op = bins[Math.floor(rand() * bins.length)] ?? "+";
     return `(${nest(depth - 1)}${op}${nest(depth - 1)})`;
   };
-  for (let i = 0; i < 20; i += 1) {
-    const source = nest(2);
+  return Array.from({ length: 20 }, () => nest(2));
+}
+
+if (shardTurn(37)) {
+  for (const source of fuzzSources()) {
     try {
       const node = compileExpression(source, {});
-      isolateCases.push({ source, env: {} });
       const got = evaluate(node);
       const ref = referenceExpression(source, {});
       const exact = exactToFloat(exactEvaluate(node));
@@ -2287,7 +2293,9 @@ if (shardTurn(38)) {
   }
 }
 
-if (shardTurn(39)) {
+/** Block 39's seeded points. The isolate rebuild (block 43) uses them too. */
+function differentialCases(): { source: string; env: { x: { re: number; im: number }; y: { re: number; im: number } } }[] {
+  const cases: { source: string; env: { x: { re: number; im: number }; y: { re: number; im: number } } }[] = [];
   let seed = 11;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -2301,9 +2309,15 @@ if (shardTurn(39)) {
       y: c(rand() * 4 - 2, rand() * 2 - 1),
     };
     if (source === "tan(x)") env.x = c(rand(), 2 + rand() * 3);
+    cases.push({ source, env });
+  }
+  return cases;
+}
+
+if (shardTurn(39)) {
+  for (const { source, env } of differentialCases()) {
     try {
       const node = compileExpression(source, { x: V("x"), y: V("y") });
-      isolateCases.push({ source, env });
       const got = evaluate(node, env);
       const ref = referenceExpression(source, env);
       const exact = exactToFloat(exactEvaluate(node, env));
@@ -2390,29 +2404,30 @@ function samePoint(a: { re: number; im: number }, b: { re: number; im: number })
   return Object.is(a.re, b.re) && Object.is(a.im, b.im);
 }
 
+/** Block 40's samples. The isolate rebuild (block 43) uses them too. */
+const freshSamples = [
+  "2-1e10*i",
+  "1-800",
+  "(1+2^-52)-1",
+  "(2^53+1)-2^53",
+  "sqrt(2)^2-2",
+  "tan(1+800*i)",
+  "0*(-1)",
+  "1/(0*(-1))",
+  "exp(inf)-exp(inf)",
+  "inf-(1/0)",
+  "asinh(0)",
+  "asinh(-1e155)",
+  "10^400/7",
+  "3+1e16*i",
+  "1e40+i",
+  "1e300+i",
+  "(1+1e-15)-1",
+];
+
 if (shardTurn(40)) {
-  const samples = [
-    "2-1e10*i",
-    "1-800",
-    "(1+2^-52)-1",
-    "(2^53+1)-2^53",
-    "sqrt(2)^2-2",
-    "tan(1+800*i)",
-    "0*(-1)",
-    "1/(0*(-1))",
-    "exp(inf)-exp(inf)",
-    "inf-(1/0)",
-    "asinh(0)",
-    "asinh(-1e155)",
-    "10^400/7",
-    "3+1e16*i",
-    "1e40+i",
-    "1e300+i",
-    "(1+1e-15)-1",
-  ];
-  for (const source of samples) {
+  for (const source of freshSamples) {
     const node = compileExpression(source, {});
-    isolateCases.push({ source, env: {} });
     const copy = freshCircuit(node);
     if (copy === node || sharesStructure(node, copy)) {
       failed += 1;
@@ -2478,25 +2493,14 @@ if (shardTurn(40)) {
   }
 }
 
-if (shardTurn(41)) {
+/** Block 41's points and seeded random sources. The isolate rebuild (block 43) uses them too. */
+const wideSpan = [0, 1e-12, 1e-3, 0.5, 2, 80, 1e6, -1e5, 1e-300, 1e-15, 1e-9, 1e-5, 1e200, 1e300, -1e200];
+function wideFuzzSources(): string[] {
   let seed = 11;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
     return seed / 0x7fffffff;
   };
-  const span = [0, 1e-12, 1e-3, 0.5, 2, 80, 1e6, -1e5, 1e-300, 1e-15, 1e-9, 1e-5, 1e200, 1e300, -1e200];
-  for (const x of span) {
-    for (const source of ["x-y", "asinh(x)"]) {
-      const env = { x: c(x), y: c(x === 0 ? 800 : -x) };
-      const node = compileExpression(source, { x: V("x"), y: V("y") });
-      isolateCases.push({ source, env });
-      const copy = freshCircuit(node);
-      if (!samePoint(evaluate(node, env), evaluate(copy, env))) {
-        failed += 1;
-        console.log("FAIL wide fresh", source, x);
-      }
-    }
-  }
   const atoms = ["0", "1", "2", "0.5", "-1", "e", "10", "1e-300", "1e-15", "1e-9", "1e-5", "1e200", "1e300", "-1e200"];
   const bins = ["+", "-", "*", "/"];
   const uns = ["sin", "cos", "exp", "sqrt", "asinh"];
@@ -2507,11 +2511,24 @@ if (shardTurn(41)) {
     const op = bins[Math.floor(rand() * bins.length)] ?? "+";
     return `(${nest(depth - 1)}${op}${nest(depth - 1)})`;
   };
-  for (let i = 0; i < 30; i += 1) {
-    const source = nest(3);
+  return Array.from({ length: 30 }, () => nest(3));
+}
+
+if (shardTurn(41)) {
+  for (const x of wideSpan) {
+    for (const source of ["x-y", "asinh(x)"]) {
+      const env = { x: c(x), y: c(x === 0 ? 800 : -x) };
+      const node = compileExpression(source, { x: V("x"), y: V("y") });
+      const copy = freshCircuit(node);
+      if (!samePoint(evaluate(node, env), evaluate(copy, env))) {
+        failed += 1;
+        console.log("FAIL wide fresh", source, x);
+      }
+    }
+  }
+  for (const source of wideFuzzSources()) {
     try {
       const node = compileExpression(source, {});
-      isolateCases.push({ source, env: {} });
       const got = evaluate(node);
       const copy = evaluate(freshCircuit(node));
       if (!samePoint(got, copy)) {
@@ -2703,9 +2720,26 @@ if (shardTurn(42)) {
   }
 }
 
-if (shardTurn(43)) {
+type IsolateCase = { source: string; env: Record<string, { re: number; im: number }> };
+
+function compiles(source: string, vars: Record<string, Node>): boolean {
+  try {
+    compileExpression(source, vars);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Each case rebuilt from its DAG tokens in a fresh process must match the live
+ * float and exact values. The cases are the ones blocks 37, 39, 40 and 41 test
+ * (the sources that compile), built again here so that every shard checks all of
+ * them, whichever blocks share its process.
+ */
+function isolateRebuild(cases: IsolateCase[]): void {
   const repoRoot = path.resolve(__dirname, "../..");
-  const payload = isolateCases.map((item, id) => {
+  const payload = cases.map((item, id) => {
     const node = compileExpression(item.source, { x: V("x"), y: V("y") });
     const env: Record<string, { re: PackedNum; im: PackedNum }> = {};
     for (const [name, value] of Object.entries(item.env)) env[name] = { re: packNum(value.re), im: packNum(value.im) };
@@ -2758,7 +2792,20 @@ if (shardTurn(43)) {
   }
 }
 
+if (shardTurn(43)) isolateRebuild(fuzzSources().filter((source) => compiles(source, {})).map((source) => ({ source, env: {} })));
+
+if (shardTurn(69)) isolateRebuild(differentialCases().filter(({ source }) => compiles(source, { x: V("x"), y: V("y") })));
+
+if (shardTurn(70)) isolateRebuild(freshSamples.map((source) => ({ source, env: {} })));
+
+if (shardTurn(71)) isolateRebuild(wideSpan.flatMap((x) => ["x-y", "asinh(x)"].map((source) => ({ source, env: { x: c(x), y: c(x === 0 ? 800 : -x) } }))));
+
+if (shardTurn(72)) isolateRebuild(wideFuzzSources().filter((source) => compiles(source, {})).map((source) => ({ source, env: {} })));
+
 if (shardTurn(44)) failed += runPropertyChecks();
+
+if (shardTurn(66)) failed += branchChecks();
+
 // Wrong values that exact mode certified (lib/eml/check-certify.ts).
 if (shardTurn(45)) failed += runCertifyChecks();
 
@@ -3089,32 +3136,74 @@ if (shardTurn(47)) {
   }
 }
 
+// The screen's worker path: parse, pack, unpack, then the exact engine.
+// Equivalent spellings, series corrections, dust, and the 480-digit cap.
+function workerReport(source: string) {
+  const node = compileExpression(source, {});
+  const packed = packCircuit(node);
+  return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 80_000 });
+}
+function closeTo(source: string, re: string, im = "0"): void {
+  const report = workerReport(source);
+  const wantRe = exactParts(re).re;
+  const wantIm = exactParts(im).re;
+  const badRe = wantRe.isZero() ? !report.value.re.isZero() : report.value.re.sub(wantRe).abs().div(wantRe.abs()).gt("1e-9");
+  const badIm = wantIm.isZero() ? !report.value.im.isZero() : report.value.im.sub(wantIm).abs().div(wantIm.abs()).gt("1e-9");
+  if (report.unverified || badRe || badIm) {
+    failed += 1;
+    console.log("FAIL worker value", source, report.unverified ? "unverified" : formatExact(report.value));
+  }
+}
+function unresolved(source: string): void {
+  const report = workerReport(source);
+  if (!report.unverified) {
+    failed += 1;
+    console.log("FAIL certified", source, formatExact(report.value));
+  }
+}
+// From p = 112 the negative imaginary part falls off 120 digits and the composed
+// log would certify +π. The value is ln 2 − iπ, or the result stays unverified.
+function lnBelow(source: string): void {
+  const report = workerReport(source);
+  if (report.unverified) return;
+  const wantRe = exactParts("0.6931471805599453").re;
+  const wantIm = exactParts(Math.PI).re.neg();
+  const badRe = report.value.re.sub(wantRe).abs().div(wantRe.abs()).gt("1e-9");
+  const badIm = report.value.im.isPos() || report.value.im.sub(wantIm).abs().div(wantIm.abs()).gt("1e-9");
+  if (badRe || badIm) {
+    failed += 1;
+    console.log("FAIL ln below the cut", source, formatExact(report.value));
+  }
+}
+// Scaled tiny adds stay on the raw add word only while the lifted imaginary parts
+// and their sum sit in (−π, π]. These are the cases that leave that strip.
+function bothModes(source: string, re: string, im: string): void {
+  const node = compileExpression(source, {});
+  const packed = packCircuit(node);
+  const rebuilt = unpackCircuit(packed.tokens, packed.root);
+  const exact = exactReport(rebuilt, {}, { maxNodes: 200_000 });
+  const floated = evaluate(rebuilt, {}, { maxNodes: 200_000 });
+  const wantRe = exactParts(re).re;
+  const wantIm = exactParts(im).re;
+  const off = (got: Decimal, want: Decimal, tol: string) => {
+    if (want.isZero()) return got.abs().gt("1e-12");
+    return got.sub(want).abs().div(want.abs()).gt(tol);
+  };
+  const floatRe = exactParts(floated.re).re;
+  const floatIm = exactParts(floated.im).re;
+  if (
+    exact.unverified ||
+    off(exact.value.re, wantRe, "1e-9") ||
+    off(exact.value.im, wantIm, "1e-9") ||
+    off(floatRe, wantRe, "1e-8") ||
+    off(floatIm, wantIm, "1e-8")
+  ) {
+    failed += 1;
+    console.log("FAIL both modes", source, exact.unverified ? "unverified" : formatExact(exact.value), floated);
+  }
+}
+
 if (shardTurn(48)) {
-  // The screen's worker path: parse, pack, unpack, then the exact engine.
-  // Equivalent spellings, series corrections, dust, and the 480-digit cap.
-  const workerReport = (source: string) => {
-    const node = compileExpression(source, {});
-    const packed = packCircuit(node);
-    return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 80_000 });
-  };
-  const closeTo = (source: string, re: string, im = "0") => {
-    const report = workerReport(source);
-    const wantRe = exactParts(re).re;
-    const wantIm = exactParts(im).re;
-    const badRe = wantRe.isZero() ? !report.value.re.isZero() : report.value.re.sub(wantRe).abs().div(wantRe.abs()).gt("1e-9");
-    const badIm = wantIm.isZero() ? !report.value.im.isZero() : report.value.im.sub(wantIm).abs().div(wantIm.abs()).gt("1e-9");
-    if (report.unverified || badRe || badIm) {
-      failed += 1;
-      console.log("FAIL worker value", source, report.unverified ? "unverified" : formatExact(report.value));
-    }
-  };
-  const unresolved = (source: string) => {
-    const report = workerReport(source);
-    if (!report.unverified) {
-      failed += 1;
-      console.log("FAIL certified", source, formatExact(report.value));
-    }
-  };
   for (const source of [
     "sin(2*10^(-200))",
     "sin(2*1e-200)",
@@ -3127,12 +3216,18 @@ if (shardTurn(48)) {
   closeTo("tan(10^(-40))-10^(-40)", "3.333333333333e-121");
   closeTo("tan(3*10^(-40))-3*10^(-40)", "9e-120");
   closeTo("tan(1e-50)-1e-50", "3.333333333333e-151");
+}
+
+if (shardTurn(67)) {
   closeTo("tanh(1e-45)-1e-45", "-3.333333333333e-136");
   closeTo("tanh(10^(-45))-10^(-45)", "-3.333333333333e-136");
   closeTo("tanh(3*10^(-45))-3*10^(-45)", "-9e-135");
   closeTo("arctan(1e-45)-1e-45", "-3.333333333333e-136");
   closeTo("arctan(10^(-45))-10^(-45)", "-3.333333333333e-136");
   closeTo("arctan(3*10^(-45))-3*10^(-45)", "-9e-135");
+}
+
+if (shardTurn(68)) {
   closeTo("cos(1e-50)-1", "-5e-101");
   closeTo("cos(10^(-50))-1", "-5e-101");
   closeTo("cos(3*10^(-50))-1", "-4.5e-100");
@@ -3148,51 +3243,13 @@ if (shardTurn(48)) {
   closeTo("ln(1+10^(-300))", "1e-300");
   closeTo("ln(1+3*10^(-300))", "3e-300");
   closeTo("log(1+3*1e-300)", "3e-300");
-  // From p = 112 the negative imaginary part falls off 120 digits and the composed
-  // log would certify +π. The value is ln 2 − iπ, or the result stays unverified.
-  const lnBelow = (source: string) => {
-    const report = workerReport(source);
-    if (report.unverified) return;
-    const wantRe = exactParts("0.6931471805599453").re;
-    const wantIm = exactParts(Math.PI).re.neg();
-    const badRe = report.value.re.sub(wantRe).abs().div(wantRe.abs()).gt("1e-9");
-    const badIm = report.value.im.isPos() || report.value.im.sub(wantIm).abs().div(wantIm.abs()).gt("1e-9");
-    if (badRe || badIm) {
-      failed += 1;
-      console.log("FAIL ln below the cut", source, formatExact(report.value));
-    }
-  };
+}
+
+if (shardTurn(64)) {
   lnBelow("ln(-2-10^(-110)*i)");
   lnBelow("ln(-2-10^(-112)*i)");
   lnBelow("ln(-2-10^(-115)*i)");
   lnBelow("ln(-2-10^(-130)*i)");
-  // Scaled tiny adds stay on the raw add word only while the lifted imaginary parts
-  // and their sum sit in (−π, π]. These are the cases that leave that strip.
-  const bothModes = (source: string, re: string, im: string) => {
-    const node = compileExpression(source, {});
-    const packed = packCircuit(node);
-    const rebuilt = unpackCircuit(packed.tokens, packed.root);
-    const exact = exactReport(rebuilt, {}, { maxNodes: 200_000 });
-    const floated = evaluate(rebuilt, {}, { maxNodes: 200_000 });
-    const wantRe = exactParts(re).re;
-    const wantIm = exactParts(im).re;
-    const off = (got: Decimal, want: Decimal, tol: string) => {
-      if (want.isZero()) return got.abs().gt("1e-12");
-      return got.sub(want).abs().div(want.abs()).gt(tol);
-    };
-    const floatRe = exactParts(floated.re).re;
-    const floatIm = exactParts(floated.im).re;
-    if (
-      exact.unverified ||
-      off(exact.value.re, wantRe, "1e-9") ||
-      off(exact.value.im, wantIm, "1e-9") ||
-      off(floatRe, wantRe, "1e-8") ||
-      off(floatIm, wantIm, "1e-8")
-    ) {
-      failed += 1;
-      console.log("FAIL both modes", source, exact.unverified ? "unverified" : formatExact(exact.value), floated);
-    }
-  };
   bothModes("0.00005*i+0.00005*i", "0", "0.0001");
   bothModes("0.00006103*i+0.00006103*i", "0", "0.00012206");
   bothModes("sinh(0.00005*i)", "0", "0.00005");
@@ -3206,6 +3263,9 @@ if (shardTurn(48)) {
   bothModes("6*i+(-6*i)", "0", "0");
   bothModes("(2+3*i)+(-1+0.2*i)", "1", "3.2");
   bothModes("(3.141592653589793*i)+(-0.0001*i)", "0", "3.141492653589793");
+}
+
+if (shardTurn(65)) {
   closeTo("(exp(1e-50)-1)-1e-50", "5e-101");
   closeTo("ln(1+1e-50)-1e-50", "-5e-101");
   closeTo("(sqrt(1+1e-50)-1)-5e-51", "-1.25e-101");
@@ -3469,59 +3529,63 @@ if (shardTurn(50)) {
   }
 }
 
+// Identities that are exactly 0. A rounding residue, including one that
+// holds still while the precision climbs, must come out 0 or unverified.
+// A nearby difference, and a sum that does not cancel, stays a certified
+// value. Both the packed worker and a fresh process.
+const tinyCancelRows = [
+  "exp(ln(1e-400))-1e-400",
+  "1e-400*1.5/1.5-1e-400",
+  "(1e-400)/2*2-(1e-400)",
+  "1e-400/0.5/2-1e-400",
+  "1e-400*(2^0.5)^2-2e-400",
+  "1e-450*e/e-1e-450",
+  "1e-500*e/e-1e-500",
+  "1e-600*e/e-1e-600",
+  "1e-200*(2^0.5)^2-2*1e-200",
+  "1e-100*1.5/1.5-1e-100",
+  "1e-50*1.5/1.5-1e-50",
+  "1e-150*1.5/1.5-1e-150",
+  "1e-320*pi/pi-1e-320",
+  "1e-320*e/e-1e-320",
+  "1e-320*3/3-1e-320",
+  "exp(ln(1e-320))-1e-320",
+  "1e-318*pi/pi-1e-318",
+];
+const tinyKeptRows: Array<[string, string]> = [
+  ["1e-400-1e-400*(1+1e-50)", "−1×10^−450"],
+  ["(1e-400)*3/3-(1e-400)*(1+1e-50)", "−1×10^−450"],
+  ["1e-400*(1+1e-100)-1e-400", "1×10^−500"],
+  ["1e-400*pi+1e-400", "4.14159265359×10^−400"],
+  ["exp(-1000)-exp(-1001)", "3.20861797491×10^−435"],
+];
+function packedTinyReport(source: string) {
+  const packed = packCircuit(compileExpression(source, {}));
+  return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 400_000 });
+}
+const tinyShownText = (report: ReturnType<typeof exactReport>) => formatExact(report.value).replace(/\u200b/g, "");
+function honestZero(report: ReturnType<typeof exactReport>) {
+  if (report.unverified) return true;
+  const text = tinyShownText(report);
+  return text === "0" || text === "−0";
+}
+
 if (shardTurn(51)) {
-  // Identities that are exactly 0. A rounding residue, including one that
-  // holds still while the precision climbs, must come out 0 or unverified.
-  // A nearby difference, and a sum that does not cancel, stays a certified
-  // value. Both the packed worker and a fresh process.
-  const cancelRows = [
-    "exp(ln(1e-400))-1e-400",
-    "1e-400*1.5/1.5-1e-400",
-    "(1e-400)/2*2-(1e-400)",
-    "1e-400/0.5/2-1e-400",
-    "1e-400*(2^0.5)^2-2e-400",
-    "1e-450*e/e-1e-450",
-    "1e-500*e/e-1e-500",
-    "1e-600*e/e-1e-600",
-    "1e-200*(2^0.5)^2-2*1e-200",
-    "1e-100*1.5/1.5-1e-100",
-    "1e-50*1.5/1.5-1e-50",
-    "1e-150*1.5/1.5-1e-150",
-    "1e-320*pi/pi-1e-320",
-    "1e-320*e/e-1e-320",
-    "1e-320*3/3-1e-320",
-    "exp(ln(1e-320))-1e-320",
-    "1e-318*pi/pi-1e-318",
-  ];
-  const keptRows: Array<[string, string]> = [
-    ["1e-400-1e-400*(1+1e-50)", "−1×10^−450"],
-    ["(1e-400)*3/3-(1e-400)*(1+1e-50)", "−1×10^−450"],
-    ["1e-400*(1+1e-100)-1e-400", "1×10^−500"],
-    ["1e-400*pi+1e-400", "4.14159265359×10^−400"],
-    ["exp(-1000)-exp(-1001)", "3.20861797491×10^−435"],
-  ];
-  const packedReport = (source: string) => {
-    const packed = packCircuit(compileExpression(source, {}));
-    return exactReport(unpackCircuit(packed.tokens, packed.root), {}, { maxNodes: 400_000 });
-  };
-  const shownText = (report: ReturnType<typeof exactReport>) => formatExact(report.value).replace(/\u200b/g, "");
-  const honestZero = (report: ReturnType<typeof exactReport>) => {
-    if (report.unverified) return true;
-    const text = shownText(report);
-    return text === "0" || text === "−0";
-  };
-  for (const source of cancelRows) {
-    const report = packedReport(source);
+  for (const source of tinyCancelRows) {
+    const report = packedTinyReport(source);
     if (!honestZero(report)) {
       failed += 1;
-      console.log("FAIL certified tiny cancel", source, shownText(report));
+      console.log("FAIL certified tiny cancel", source, tinyShownText(report));
     } else {
-      console.log("cancel", source, report.unverified ? "couldn't verify" : shownText(report));
+      console.log("cancel", source, report.unverified ? "couldn't verify" : tinyShownText(report));
     }
   }
-  for (const [source, want] of keptRows) {
-    const report = packedReport(source);
-    const text = shownText(report);
+}
+
+if (shardTurn(61)) {
+  for (const [source, want] of tinyKeptRows) {
+    const report = packedTinyReport(source);
+    const text = tinyShownText(report);
     if (report.unverified || text !== want) {
       failed += 1;
       console.log("FAIL tiny kept value", source, report.unverified ? "unverified" : text);
@@ -3529,7 +3593,10 @@ if (shardTurn(51)) {
       console.log("kept", source, text);
     }
   }
-  const cancelJobs = [...cancelRows, ...keptRows.map(([source]) => source)].map((source) => {
+}
+
+if (shardTurn(62)) {
+  const cancelJobs = [...tinyCancelRows, ...tinyKeptRows.map(([source]) => source)].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
     return { source, tokens: packed.tokens, root: packed.root };
   });
@@ -3541,7 +3608,7 @@ if (shardTurn(51)) {
     const rows = JSON.parse(cancelFresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>;
     rows.forEach((row, index) => {
       const text = row.text.replace(/\u200b/g, "");
-      if (index < cancelRows.length) {
+      if (index < tinyCancelRows.length) {
         const ok = row.unverified || text === "0" || text === "−0";
         if (!ok) {
           failed += 1;
@@ -3549,7 +3616,7 @@ if (shardTurn(51)) {
         }
         return;
       }
-      const want = keptRows[index - cancelRows.length]?.[1];
+      const want = tinyKeptRows[index - tinyCancelRows.length]?.[1];
       if (!want || row.unverified || text !== want) {
         failed += 1;
         console.log("FAIL fresh tiny kept value", row.source, row.unverified ? "unverified" : text, want);
@@ -4028,6 +4095,35 @@ if (shardTurn(53)) {
   }
 }
 
+// Release refusals: a large trig argument below the root, a part cancelled to 0
+// beside a nonzero part after a value below the precision, a finite overflow
+// operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
+const releaseRefused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(10^400-(2-2*i))^-1", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
+function releaseRefusal(source: string): void {
+  const node = compileExpression(source, {});
+  const packed = packCircuit(node);
+  const seen = [exactReport(node), exactReport(node), exactReport(unpackCircuit(packed.tokens, packed.root))];
+  if (seen.some((report) => !report.unverified)) {
+    failed += 1;
+    console.log("FAIL release refusal", source, seen.map((report) => formatExact(report.value)).join(" | "));
+  } else console.log("release refusal", source);
+}
+// A large real product passes through its reciprocal; that tiny real cannot reach the
+// zero imaginary part, so these stay certified (v1.0.1 refused every one of them).
+// atanh of a real above 1 is −iπ/2, and arctan of iy with y < −1 is −π/2 + …i,
+// however the argument was built (mpmath's atanh and atan).
+// A point just below the negative real axis keeps its side through a composition
+// (mpmath at 600 digits); past 480 digits that side cannot be read, so it is refused.
+const releaseKept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "1"], ["(1-1)^0", "1"], ["0^(1-1)", "1"], ["2^0", "1"], ["ln(0)^0", "unverified"], ["10^400/7", "1.428571428571×10^399"], ["10^400*2", "2×10^400"], ["10^400*i", "1×10^400i"], ["-(10^400)/3", "−3.333333333333×10^399"], ["10^300*10^100", "1×10^400"], ["atanh(1.694^3)", "0.208689790346 − 1.570796326795i"], ["atanh(-(1.5^3))", "−0.305454541161 + 1.570796326795i"], ["atanh(1.694^3)*atanh(32)", "−2.460877420177 − 0.376912529663i"], ["atan((-i-i)*asinh(9))", "−1.570796326795 − 0.174556001875i"], ["atan(-i*(1.5^3))", "−1.570796326795 − 0.305454541161i"], ["atan(i*(1.5^3))", "1.570796326795 + 0.305454541161i"], ["(10^108-i)*sin(atanh(-i))", "−0.868670961486 − 8.68670961486×10^107i"], ["(10^106-i)*sin(atanh(-i))", "−0.868670961486 − 8.68670961486×10^105i"], ["(10^300-(2-2*i))^-1", "1×10^−300 − 2×10^−600i"], ["1/(10^300-(2-2*i))", "1×10^−300 − 2×10^−600i"], ["(10^300+2)^-1", "1×10^−300"], ["((1+1/10^130)-1)+i/2", "1×10^−130 + 0.5i"], ["((1+1/10^130)-1)*i+1/2", "0.5 + 1×10^−130i"], ["((1+1/10^300)-1)+i/2", "unverified"], ["acos(1+10^-16)", "0.000000014142i"], ["((i)*(6))-(acos((1+10^-16)))", "5.999999985858i"], ["acos(1-10^-200)", "1.414213562373×10^−100"], ["acos(-1-10^-200)", "3.14159265359 − 1.414213562373×10^−100i"], ["acos(2/2)", "0"], ["acos(cos(0))", "0"], ["acos(-(2/2))", "3.14159265359"], ["atanh(2/exp(300))", "1.029640044482×10^−130"], ["atanh(((-3)-(-5))/(sqrt(exp(600))))", "1.029640044482×10^−130"], ["sin(2/exp(300))", "1.029640044482×10^−130"], ["sin(2/exp(200))", "2.767793053473×10^−87"], ["sinh(10^300*i)", "−0.98575042516i"], ["cosh(10^20*i)", "0.763970404442"], ["ln(0)-ln(0)", "undefined"], ["0/0", "undefined"], ["1+exp(-10^20)", "1"], ["ln(ln(-5-i*10^-300))", "1.261257534955 − 1.097357207506i"], ["sqrt(acosh(-2-i*10^-120))", "1.536785569226 − 1.022131101599i"], ["acos(atanh(-5-i*10^-120))", "1.679425334464 + 1.238394314276i"], ["(-1/2-i*10^-120)^(1+i)", "−8.90036048882 + 7.393003249711i"], ["ln(-2-i*10^-300)-(2+3*i)^(-5)", "0.692818599089 − 3.143200548164i"], ["ln(ln(-5-i*10^-450))", "unverified"], ["sqrt(-4-i*10^-200)", "2.5×10^−201 − 2i"], ["(-8-i*10^-300)^(1/3)", "1 − 1.732050807569i"]];
+function releaseKeptValue(source: string, want: string): void {
+  const report = exactReport(compileExpression(source, {}));
+  const got = report.unverified ? "unverified" : formatExact(report.value);
+  if (got !== want) {
+    failed += 1;
+    console.log("FAIL release kept", source, got, "want", want);
+  } else console.log("release kept", source, got);
+}
+
 if (shardTurn(54)) {
   // Parser messages say what to type: implicit products, a function without
   // parentheses, an unknown function, and a doubled operator.
@@ -4052,26 +4148,6 @@ if (shardTurn(54)) {
     } else console.log("parser message", source, got);
   }
 
-  // Release refusals: a large trig argument below the root, a part cancelled to 0
-  // beside a nonzero part after a value below the precision, a finite overflow
-  // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
-  const refused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(10^400-(2-2*i))^-1", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
-  // A large real product passes through its reciprocal; that tiny real cannot reach the
-  // zero imaginary part, so these stay certified (v1.0.1 refused every one of them).
-  // atanh of a real above 1 is −iπ/2, and arctan of iy with y < −1 is −π/2 + …i,
-  // however the argument was built (mpmath's atanh and atan).
-  // A point just below the negative real axis keeps its side through a composition
-  // (mpmath at 600 digits); past 480 digits that side cannot be read, so it is refused.
-  const kept: [string, string][] = [["1e-320*e/e-1e-320*(1+1e-100)", "−1×10^−420"], ["1e-320*(1+1e-100)-1e-320", "1×10^−420"], ["exp(-1000)+1", "1"], ["1e-400*pi+1e-400", "4.14159265359×10^−400"], ["((1+10^(-136))-1)+i*3/2", "1×10^−136 + 1.5i"], ["exp(800)-exp(800)", "0"], ["0^0", "1"], ["(1-1)^0", "1"], ["0^(1-1)", "1"], ["2^0", "1"], ["ln(0)^0", "unverified"], ["10^400/7", "1.428571428571×10^399"], ["10^400*2", "2×10^400"], ["10^400*i", "1×10^400i"], ["-(10^400)/3", "−3.333333333333×10^399"], ["10^300*10^100", "1×10^400"], ["atanh(1.694^3)", "0.208689790346 − 1.570796326795i"], ["atanh(-(1.5^3))", "−0.305454541161 + 1.570796326795i"], ["atanh(1.694^3)*atanh(32)", "−2.460877420177 − 0.376912529663i"], ["atan((-i-i)*asinh(9))", "−1.570796326795 − 0.174556001875i"], ["atan(-i*(1.5^3))", "−1.570796326795 − 0.305454541161i"], ["atan(i*(1.5^3))", "1.570796326795 + 0.305454541161i"], ["(10^108-i)*sin(atanh(-i))", "−0.868670961486 − 8.68670961486×10^107i"], ["(10^106-i)*sin(atanh(-i))", "−0.868670961486 − 8.68670961486×10^105i"], ["(10^300-(2-2*i))^-1", "1×10^−300 − 2×10^−600i"], ["1/(10^300-(2-2*i))", "1×10^−300 − 2×10^−600i"], ["(10^300+2)^-1", "1×10^−300"], ["((1+1/10^130)-1)+i/2", "1×10^−130 + 0.5i"], ["((1+1/10^130)-1)*i+1/2", "0.5 + 1×10^−130i"], ["((1+1/10^300)-1)+i/2", "unverified"], ["acos(1+10^-16)", "0.000000014142i"], ["((i)*(6))-(acos((1+10^-16)))", "5.999999985858i"], ["acos(1-10^-200)", "1.414213562373×10^−100"], ["acos(-1-10^-200)", "3.14159265359 − 1.414213562373×10^−100i"], ["acos(2/2)", "0"], ["acos(cos(0))", "0"], ["acos(-(2/2))", "3.14159265359"], ["atanh(2/exp(300))", "1.029640044482×10^−130"], ["atanh(((-3)-(-5))/(sqrt(exp(600))))", "1.029640044482×10^−130"], ["sin(2/exp(300))", "1.029640044482×10^−130"], ["sin(2/exp(200))", "2.767793053473×10^−87"], ["sinh(10^300*i)", "−0.98575042516i"], ["cosh(10^20*i)", "0.763970404442"], ["ln(0)-ln(0)", "undefined"], ["0/0", "undefined"], ["1+exp(-10^20)", "1"], ["ln(ln(-5-i*10^-300))", "1.261257534955 − 1.097357207506i"], ["sqrt(acosh(-2-i*10^-120))", "1.536785569226 − 1.022131101599i"], ["acos(atanh(-5-i*10^-120))", "1.679425334464 + 1.238394314276i"], ["(-1/2-i*10^-120)^(1+i)", "−8.90036048882 + 7.393003249711i"], ["ln(-2-i*10^-300)-(2+3*i)^(-5)", "0.692818599089 − 3.143200548164i"], ["ln(ln(-5-i*10^-450))", "unverified"], ["sqrt(-4-i*10^-200)", "2.5×10^−201 − 2i"], ["(-8-i*10^-300)^(1/3)", "1 − 1.732050807569i"]];
-  for (const source of refused) {
-    const node = compileExpression(source, {});
-    const packed = packCircuit(node);
-    const seen = [exactReport(node), exactReport(node), exactReport(unpackCircuit(packed.tokens, packed.root))];
-    if (seen.some((report) => !report.unverified)) {
-      failed += 1;
-      console.log("FAIL release refusal", source, seen.map((report) => formatExact(report.value)).join(" | "));
-    } else console.log("release refusal", source);
-  }
   // A subtree shared through both inputs at every level: its cancellation records
   // are kept once, so 40 levels finish quickly instead of doubling per level.
   {
@@ -4085,36 +4161,43 @@ if (shardTurn(54)) {
       console.log("FAIL deep shared circuit", took, "ms");
     } else console.log("deep shared circuit", took, "ms");
   }
-  for (const [source, want] of kept) {
-    const report = exactReport(compileExpression(source, {}));
-    const got = report.unverified ? "unverified" : formatExact(report.value);
-    if (got !== want) {
-      failed += 1;
-      console.log("FAIL release kept", source, got, "want", want);
-    } else console.log("release kept", source, got);
-  }
+}
+
+// The release rows run as four blocks so that no one block sets the CI shard floor.
+if (shardTurn(57)) for (const source of releaseRefused.slice(0, 20)) releaseRefusal(source);
+
+if (shardTurn(58)) for (const source of releaseRefused.slice(20)) releaseRefusal(source);
+
+if (shardTurn(59)) for (const [source, want] of releaseKept.slice(0, 27)) releaseKeptValue(source, want);
+
+if (shardTurn(60)) for (const [source, want] of releaseKept.slice(27)) releaseKeptValue(source, want);
+
+// A repeat evaluation in one process (the exact worker is reused across jobs) must
+// match an evaluation with the pure cache off: same text, same note, same verdict.
+// Large trig arguments: each certified a wrong value on a repeat before (cos(1e119) → −0.98499,
+// true −0.37226; cos(1e125/1e130/1e200) → 1; sin(1e150/1e300) → −0; tan(1e140) → −2.306, true −3.307).
+const repeatBigTrig = [
+  "cos(1e119)", "cos(1e125)", "cos(1e130)", "cos(1e200)", "sin(1e150)", "sin(1e300)", "tan(1e140)",
+  "sin(10^22)", "tan(10^22)", "cos(10^7)", "cos(2^60)",
+  "sin(1e23)", "cos(1e23)", "tan(1e23)", "sin(1e60)", "cos(1e60)", "tan(1e60)", "sin(1e250)", "cos(1e250)", "tan(1e300)",
+];
+const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)", ...repeatBigTrig];
+const warmRows = ["1e100", "1e22", "1e7", "1e119", "1e300", "sqrt(1/10^130)", "6*i", "pi/2"];
+const repeatVerdict = (report: ReturnType<typeof exactReport>) =>
+  `${report.unverified ? "unverified" : formatExact(report.value)} [${report.singular ?? ""}]`;
+/** Each repeat row evaluated with the pure cache off: the reference for the repeat blocks. */
+function repeatColdVerdicts(): string[] {
+  const saved = process.env.EML_NOCACHE;
+  process.env.EML_NOCACHE = "1";
+  const cold = repeatRows.map((source) => repeatVerdict(exactReport(compileExpression(source, {}))));
+  if (saved === undefined) delete process.env.EML_NOCACHE;
+  else process.env.EML_NOCACHE = saved;
+  return cold;
 }
 
 if (shardTurn(55)) {
-  // A repeat evaluation in one process (the exact worker is reused across jobs) must
-  // match an evaluation with the pure cache off: same text, same note, same verdict.
-  // Large trig arguments: each certified a wrong value on a repeat before (cos(1e119) → −0.98499,
-  // true −0.37226; cos(1e125/1e130/1e200) → 1; sin(1e150/1e300) → −0; tan(1e140) → −2.306, true −3.307).
-  const bigTrig = [
-    "cos(1e119)", "cos(1e125)", "cos(1e130)", "cos(1e200)", "sin(1e150)", "sin(1e300)", "tan(1e140)",
-    "sin(10^22)", "tan(10^22)", "cos(10^7)", "cos(2^60)",
-    "sin(1e23)", "cos(1e23)", "tan(1e23)", "sin(1e60)", "cos(1e60)", "tan(1e60)", "sin(1e250)", "cos(1e250)", "tan(1e300)",
-  ];
-  const repeatRows = ["1-cos(sqrt(1/10^130))", "6*i+(-6*i)", "cos(1e100)", "sin(1e22)", "tan(1e100)", "tan(1e22)", "cos(1e7)", "tan(pi/2)", ...bigTrig];
-  const warmRows = ["1e100", "1e22", "1e7", "1e119", "1e300", "sqrt(1/10^130)", "6*i", "pi/2"];
-  const verdict = (report: ReturnType<typeof exactReport>) =>
-    `${report.unverified ? "unverified" : formatExact(report.value)} [${report.singular ?? ""}]`;
-  const saved = process.env.EML_NOCACHE;
-  process.env.EML_NOCACHE = "1";
-  const cold = repeatRows.map((source) => verdict(exactReport(compileExpression(source, {}))));
-  if (saved === undefined) delete process.env.EML_NOCACHE;
-  else process.env.EML_NOCACHE = saved;
-  bigTrig.forEach((source) => {
+  const cold = repeatColdVerdicts();
+  repeatBigTrig.forEach((source) => {
     const want = cold[repeatRows.indexOf(source)];
     if (!want?.includes("argument too large to reduce")) {
       failed += 1;
@@ -4124,10 +4207,10 @@ if (shardTurn(55)) {
   for (const source of warmRows) exactReport(compileExpression(source, {}));
   repeatRows.forEach((source, index) => {
     const node = compileExpression(source, {});
-    const first = verdict(exactReport(node));
-    const second = verdict(exactReport(node));
+    const first = repeatVerdict(exactReport(node));
+    const second = repeatVerdict(exactReport(node));
     const packed = packCircuit(node);
-    const trip = verdict(exactReport(unpackCircuit(packed.tokens, packed.root)));
+    const trip = repeatVerdict(exactReport(unpackCircuit(packed.tokens, packed.root)));
     if (first !== cold[index] || second !== cold[index] || trip !== cold[index]) {
       failed += 1;
       console.log("FAIL repeat evaluation", source, "cold", cold[index], "first", first, "second", second, "round trip", trip);
@@ -4135,6 +4218,10 @@ if (shardTurn(55)) {
       console.log("repeat evaluation", source, cold[index]);
     }
   });
+}
+
+if (shardTurn(63)) {
+  const cold = repeatColdVerdicts();
   // The same rows in one shared fresh child after earlier jobs, each evaluated twice.
   const shared = [...warmRows, ...repeatRows].map((source) => {
     const packed = packCircuit(compileExpression(source, {}));
