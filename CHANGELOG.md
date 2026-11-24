@@ -33,6 +33,7 @@
 - The press line says "x and y stay in the string" for a program past 20000 presses. The preview is a 30-press prefix, and the note was read from that prefix: sin(sin(x)) left it out.
 - The page loads about 10% less JavaScript (213 KB gzip, from 236 KB) and is ready sooner (170 ms from 218 ms unthrottled; about 850 ms from 1030 ms at 4× CPU). decimal.js and the exact engine load only in the workers, or in the fallback when there is no worker. The first screen's key captions and tooltips are built at export time, and the exact worker starts when the page is idle, so the first exact result after 1, 1, EML takes 24 ms instead of 54 ms.
 - The expression box says that log(b, x) is log base b of x, as on the logₓy key. log(8, 2) is 1/3 there; nothing said so.
+- Docs: the README said 1e-433 is past the exact cap and could not be verified. A literal that spells its exponent is exact at any size (1e-433, 1e-5000), and (1e-433+1)−1 recovers 10^(−433). known-limitations listed the 671-press word for ln(1+10^(−130)) as able to show exact 0 depending on the cache. It is 10^(−130) fresh, after the named expression, and through the worker, and a check row now holds it there. The entry saying a value near 10^(−130) makes exact evaluation slow is also gone: ln(1+10^(−130)), exp(10^(−130))−1, 1−cos(√(10^(−130))) and √(1+10^(−130))−1 take 0.3–0.6 s.
 
 ## 1.0.2 — 2026-11-22
 

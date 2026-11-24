@@ -49,6 +49,7 @@ import {
   evaluateReport,
   expUnderflows,
   input,
+  isolateCircuit,
   provenInteger,
   isPure,
   nodeFromRpn,
@@ -4286,6 +4287,30 @@ if (shardTurn(56)) {
 
 closeBlockTimer();
 if (shardCount > 1) console.log(`shard ${shardIndex}/${shardCount}`);
+if (shardTurn(57)) {
+  // The 671-press word for ln(1+10^(−130)) was listed as able to show an exact 0
+  // depending on the cache. Built from its presses, alone, after the named
+  // expression, and through the worker's wire, it is 10^(−130) every time.
+  const named = compileExpression("ln(1+10^-130)", {});
+  const words = rpnTokens(named, Number(circuitStats(named).rpnLength));
+  const texts: string[] = [];
+  if (words) {
+    const read = (node: Node) => {
+      const report = exactReport(node, {}, { maxNodes: 80_000 });
+      return report.unverified ? "unverified" : formatExact(report.value);
+    };
+    texts.push(read(isolateCircuit(() => nodeFromRpn(words))));
+    texts.push(read(named));
+    texts.push(read(nodeFromRpn(words)));
+    const packed = packCircuit(nodeFromRpn(words));
+    texts.push(read(isolateCircuit(() => unpackCircuit(packed.tokens, packed.root))));
+  }
+  if (!words || words.length !== 671 || texts.some((text) => text !== "1×10^−130")) {
+    failed += 1;
+    console.log("FAIL press word of ln(1+10^-130)", words?.length, texts);
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);

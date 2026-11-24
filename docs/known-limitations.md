@@ -33,12 +33,10 @@ What the flag does not catch:
 - 0 minus the smallest positive float, 5×10^(−324). Float keeps a signed zero and exact keeps 0. The comparison treats those magnitudes as equal.
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
-- Raising precision for a value near 10^(−130) makes that exact evaluation slow. Cancel stops it. A newer exact expression pre-empts the one already running.
 
 ## Circuits and search
 
 - Rebuilding a circuit from its press string drops the low-precision, pole, and large-angle flags. Those notes sit beside the node, not in the gates.
-- Loading the 671-press word for ln(1+10^-130) can show exact 0 (float flags "differs from exact"); the result depends on whether the compiled circuit is still cached. Fix planned for v1.1.
 - The fast suite stops at the K = 21 table (K 23 without ln 0). `npm run eml:golf` runs K = 35 in about 75 s and is not part of the publish check; its last run is in [docs/golf-k35.md](golf-k35.md).
 - The constant search does not merge circuits by value. Its pool is every float-finite circuit that did not overflow or underflow, 88 M through K 35 with ln 0, so K 37 and past are left to tools/emlsearch.
 - The calculator component is still one file. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
