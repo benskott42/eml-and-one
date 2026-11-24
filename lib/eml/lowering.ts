@@ -138,6 +138,20 @@ function ulp(x: number): number {
   return 2 ** (Math.floor(Math.log2(ax)) - 52);
 }
 
+/**
+ * A product of two nonzero floats that underflowed to 0. That 0 is not the integer 0:
+ * (10^(−200))² was the point 0, so 0^((10^(−200))²) folded to 1 and
+ * (10^(−170))²·10^300 to a certified 0. The true product is below 2^(−1074).
+ */
+function underflowed(x: number, y: number, product: number): boolean {
+  return x !== 0 && y !== 0 && product === 0;
+}
+
+/** The interval grown by `pad` on each side. */
+function pad(iv: Iv, by: number): Iv {
+  return { lo: iv.lo - by, hi: iv.hi + by };
+}
+
 function outLo(x: number): number {
   if (!Number.isFinite(x)) return x;
   return x - ulp(x);
@@ -291,7 +305,20 @@ function expOf(t: Node): Node {
 function ivAdd(a: Iv, b: Iv, sign: 1 | -1): Iv | null {
   const lo = sign === 1 ? a.lo + b.lo : a.lo - b.hi;
   const hi = sign === 1 ? a.hi + b.hi : a.hi - b.lo;
-  return widen(lo, hi);
+  return cancelledPoint(widen(lo, hi), Math.max(Math.abs(a.lo), Math.abs(a.hi), Math.abs(b.lo), Math.abs(b.hi)));
+}
+
+/**
+ * A tagged float is the nearest float to its value, not the value: π, e, √2, ln 2 and
+ * a decimal such as 3.141592653589793e0. Two of them can cancel to the float 0 when
+ * their values differ, and the point 0 is then the exact 0 that the 0·x, 0/x and x^0
+ * folds use: (3.141592653589793e0 − π)·10^20 was a certified 0 (it is −23846.26…).
+ * A 0 from nonzero terms keeps two ulps of the larger term on each side.
+ */
+function cancelledPoint(iv: Iv | null, scale: number): Iv | null {
+  if (!iv || iv.lo !== 0 || iv.hi !== 0 || !(scale > 0)) return iv;
+  const by = 2 * ulp(scale);
+  return { lo: -by, hi: by };
 }
 
 function ivMul(a: Range, b: Range): Range {
@@ -300,12 +327,16 @@ function ivMul(a: Range, b: Range): Range {
   let reHi = -Infinity;
   let imLo = Infinity;
   let imHi = -Infinity;
+  let reUnder = false;
+  let imUnder = false;
   for (const ar of [a.re.lo, a.re.hi]) {
     for (const ai of [a.im.lo, a.im.hi]) {
       for (const br of [b.re.lo, b.re.hi]) {
         for (const bi of [b.im.lo, b.im.hi]) {
           const re = ar * br - ai * bi;
           const im = ar * bi + ai * br;
+          if (underflowed(ar, br, ar * br) || underflowed(ai, bi, ai * bi)) reUnder = true;
+          if (underflowed(ar, bi, ar * bi) || underflowed(ai, br, ai * br)) imUnder = true;
           if (!Number.isFinite(re) || !Number.isFinite(im)) return UNKNOWN;
           reLo = Math.min(reLo, re);
           reHi = Math.max(reHi, re);
@@ -318,7 +349,8 @@ function ivMul(a: Range, b: Range): Range {
   const re = widen(reLo, reHi);
   const im = widen(imLo, imHi);
   if (!re || !im) return UNKNOWN;
-  return { re, im };
+  // Each underflowed term is below 2^(−1074); two terms per part.
+  return { re: reUnder ? pad(re, 2 * Number.MIN_VALUE) : re, im: imUnder ? pad(im, 2 * Number.MIN_VALUE) : im };
 }
 
 function combine(a: Range, b: Range, op: "add" | "sub" | "mul" | "div"): Range {
@@ -355,13 +387,20 @@ function combine(a: Range, b: Range, op: "add" | "sub" | "mul" | "div"): Range {
     re = ar - br;
     im = ai - bi;
   } else if (op === "mul") {
+    // Reached only when ivMul gave nothing, and ivMul is what pads an underflow.
+    if ([[ar, br], [ai, bi], [ar, bi], [ai, br]].some(([x, y]) => underflowed(x, y, x * y))) return UNKNOWN;
     re = ar * br - ai * bi;
     im = ar * bi + ai * br;
   } else {
     const den = br * br + bi * bi;
     if (!(den > 0) || !Number.isFinite(den)) return UNKNOWN;
+    // A quotient read from underflowed terms, or one that itself underflowed, is
+    // not a point: 10^(−300)/10^100 came out the point 0.
+    const terms = [[ar, br], [ai, bi], [ai, br], [ar, bi], [br, br], [bi, bi]];
+    if (terms.some(([x, y]) => underflowed(x, y, x * y))) return UNKNOWN;
     re = (ar * br + ai * bi) / den;
     im = (ai * br - ar * bi) / den;
+    if (underflowed(ar * br + ai * bi, 1, re) || underflowed(ai * br - ar * bi, 1, im)) return UNKNOWN;
   }
   const rv = widen(re, re);
   const iv = widen(im, im);

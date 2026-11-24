@@ -494,6 +494,12 @@ function exactZero(node: Node): boolean {
   return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
 }
 
+/** A known −0 or 0. exactZero leaves −0 out, since −0 is not an identity of a sum. */
+function signedZero(node: Node): boolean {
+  const known = knownValue(node);
+  return !!known && known.re === 0 && known.im === 0;
+}
+
 function negativeFactor(node: Node): boolean {
   const v = knownValue(node);
   if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
@@ -777,7 +783,8 @@ export function tPow(a: Node, b: Node): Node {
   // x^0 = 1 for every finite x, 0^0 included: the IEEE pow convention, and v1.1's.
   // The power word evaluates ln(0) for a zero base and printed 0^0 as undefined.
   // An infinite base (ln(0)^0) keeps the word and stays undefined.
-  if (exactZero(b) && provenFinite(a)) return tagInteger(ONE, BigInt(1));
+  // −0 is that zero too: IEEE pow(0, −0) is 1, and 0^−0 printed undefined.
+  if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return tagInteger(ONE, BigInt(1));
   // An integer power multiplies the quarter turn. ^2 was the only case, so
   // (∞i)^3 stayed the power word and came out a real infinity.
   // A negative integer power is 0, the same zero as 1 over that infinity.
@@ -801,7 +808,8 @@ export function tPow(a: Node, b: Node): Node {
     const re = va.re ** vb.re;
     // A float underflow is 0, and tagReal would store that as the integer 0.
     // The power is not that integer. The decade lets a later cancellation see it.
-    if (Number.isFinite(re) && re !== 0) tagReal(node, re);
+    // A float power is not the integer it may round to: 8^(3.3333333333333333e−1) is not 2.
+    if (Number.isFinite(re) && re !== 0) tagValue(node, { re, im: 0 });
     else if (re === 0) {
       const log10 = Math.log10(va.re) * vb.re;
       const decade = Math.floor(log10 + 1e-10);
@@ -822,6 +830,9 @@ export function tSqr(t: Node): Node {
   const node = applyProgram("sqr", { x: t });
   const v = knownValue(t);
   if (!v) return node;
+  // A square that underflowed to 0 is not the integer 0.
+  const tiny = (x: number, y: number) => x !== 0 && y !== 0 && x * y === 0;
+  if (tiny(v.re, v.re) || tiny(v.im, v.im) || tiny(v.re, v.im)) return node;
   return tagValue(node, { re: v.re * v.re - v.im * v.im, im: 2 * v.re * v.im });
 }
 
@@ -849,7 +860,11 @@ export function tSqrt(t: Node): Node {
   const inner = onePlus.get(t);
   if (inner && tinyScale(inner, SERIES_REL) !== null) sqrtArg.set(node, inner);
   if (!v) return node;
-  if (v.im === 0 && v.re >= 0) return tagReal(node, Math.sqrt(v.re));
+  if (v.im === 0 && v.re >= 0) {
+    // Only the root of a proven integer square is that integer: sqrt(4.0000000000000001e0) is not 2.
+    const root = Math.sqrt(v.re);
+    return rangeOf(t).int !== undefined && root * root === v.re ? tagReal(node, root) : tagValue(node, { re: root, im: 0 });
+  }
   const ax = Math.abs(v.re);
   const ay = Math.abs(v.im);
   const s = Math.sqrt((ax + Math.hypot(v.re, v.im)) / 2);
@@ -1426,7 +1441,13 @@ function literalNodeBuild(text: string): Node {
     const signed = sign < 0 ? tNeg(magnitude) : magnitude;
     noteDecade(signed, expAdj);
     const numeric = Number(trimmed);
-    return Number.isFinite(numeric) && numeric !== 0 ? tagReal(signed, numeric) : signed;
+    if (!Number.isFinite(numeric) || numeric === 0) return signed;
+    // The float is the decimal only when it is an integer the float holds exactly:
+    // 1.0000000000000001e0 rounds to 1, and tagging it the integer 1 made 1.0000000000000001e0 − 1 a certified 0.
+    const whole = digits.replace(/0+$/, "") || "0";
+    const shift = expAdj + (digits.length - whole.length);
+    const integral = shift >= 0 && Number.isSafeInteger(numeric) && BigInt(whole) * BigInt(10) ** BigInt(shift) === BigInt(Math.abs(numeric));
+    return integral ? tagReal(signed, numeric) : tagValue(signed, { re: numeric, im: 0 });
   }
   if (/^[+-]?\d+$/.test(trimmed)) {
     return digitsToInteger(trimmed.startsWith("-") ? -1 : 1, trimmed.replace(/^[+-]/, ""));

@@ -4414,6 +4414,54 @@ if (shardTurn(76)) {
   }
 }
 
+if (shardTurn(82)) {
+  // A build-time known value is a float. A product or quotient that underflowed, two
+  // tags that cancel in float (π against 3.141592653589793e0), and a decimal or power
+  // that rounds to an integer were the exact 0 or that integer, and the folds for x·0,
+  // 0/x and x^0 used them: (10^(−170))²·10^300 was a certified 0 (it is 10^(−40)),
+  // (3.141592653589793e0 − π)·10^20 was 0, and 1.0000000000000001e0 − 1 was 0.
+  // 0^(−0) is 1, as 0^0 is.
+  const rows: [string, string][] = [
+    ["(3.141592653589793e0-pi)*1e20", "−23846.26433832795"],
+    ["5*(3.141592653589793e0-pi)", "−1.192313216916×10^−15"],
+    ["(ln(2)-0.6931471805599453e0)*1e20", "941.723212145818"],
+    ["(sqrt(2)-1.4142135623730951e0)*1e20", "−5119.83112757903"],
+    ["1.0000000000000001e0-1", "1×10^−16"],
+    ["3.0000000000000001e0*2-6", "2×10^−16"],
+    ["8^(3.3333333333333333e-1)-2", "−1.38629436112×10^−17"],
+    ["sqrt(4.0000000000000001e0)-2", "2.5×10^−17"],
+    ["0^(1.0000000000000001e0-1)", "0"],
+    ["2e3-2000", "0"],
+    ["sqrt(4)-2", "0"],
+    ["(1e-300/1e100)*1e300", "1×10^−100"],
+    ["sqr(1e-200)*5", "5×10^−400"],
+    ["sqr(1e-200)*(-3)", "−3×10^−400"],
+    ["sqr(1e-200)/5", "2×10^−401"],
+    ["(1e-300/1e100)/5", "2×10^−401"],
+    ["0^(1e-200*1e-200)", "0"],
+    ["0^(1e-300/1e100)", "0"],
+    ["2^(1e-200*1e-200)-1", "6.931471805599×10^−401"],
+    ["0^-0", "1"],
+    ["0^(0*-1)", "1"],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL build-time known value", source, got, "want", want);
+    }
+  }
+  // Refused is honest; a certified 0 is not.
+  for (const source of ["sqr(1e-170)*1e300", "sqr(1e-200)*1e300", "sqr(1e-170)*1e200*1e200"]) {
+    const report = workerReport(source);
+    if (!report.unverified && report.value.re.isZero()) {
+      failed += 1;
+      console.log("FAIL underflowed product certified 0", source, formatExact(report.value));
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
