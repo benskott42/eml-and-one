@@ -4475,6 +4475,8 @@ if (shardTurn(81)) {
     failed += 1;
     console.log("FAIL tan(π/2) agreement note", poleNote);
   }
+}
+
 if (shardTurn(82)) {
   // A build-time known value is a float. A product or quotient that underflowed, two
   // tags that cancel in float (π against 3.141592653589793e0), and a decimal or power
@@ -4504,17 +4506,6 @@ if (shardTurn(82)) {
     ["2^(1e-200*1e-200)-1", "6.931471805599×10^−401"],
     ["0^-0", "1"],
     ["0^(0*-1)", "1"],
-if (shardTurn(83)) {
-  // a − (a + 0) is +0. A 16-digit literal ending in 0 is (its prefix)·10 + 0, so
-  // 1234567890123456*10 − 12345678901234560 folded to −(0) = −0, and ln of it was
-  // a certified −∞ + iπ where ln(2*10 − 20) is −∞.
-  const rows: [string, string][] = [
-    ["1234567890123456*10-12345678901234560", "0"],
-    ["ln(1234567890123456*10-12345678901234560)", "−∞"],
-    ["1/(1234567890123456*10-12345678901234560)", "∞"],
-    ["12345678901234567890*10-123456789012345678900", "0"],
-    ["123456789012345678900-12345678901234567890*10", "0"],
-    ["12345678901234567891-12345678901234567890", "1"],
   ];
   for (const [source, want] of rows) {
     const report = workerReport(source);
@@ -4530,10 +4521,33 @@ if (shardTurn(83)) {
     if (!report.unverified && report.value.re.isZero()) {
       failed += 1;
       console.log("FAIL underflowed product certified 0", source, formatExact(report.value));
+    }
+  }
+}
+
+if (shardTurn(83)) {
+  // a − (a + 0) is +0. A 16-digit literal ending in 0 is (its prefix)·10 + 0, so
+  // 1234567890123456*10 − 12345678901234560 folded to −(0) = −0, and ln of it was
+  // a certified −∞ + iπ where ln(2*10 − 20) is −∞.
+  const rows: [string, string][] = [
+    ["1234567890123456*10-12345678901234560", "0"],
+    ["ln(1234567890123456*10-12345678901234560)", "−∞"],
+    ["1/(1234567890123456*10-12345678901234560)", "∞"],
+    ["12345678901234567890*10-123456789012345678900", "0"],
+    ["123456789012345678900-12345678901234567890*10", "0"],
+    ["12345678901234567891-12345678901234567890", "1"],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
     const floated = formatC(evaluate(compileExpression(source, {})));
     if (got !== want || floated !== want) {
       failed += 1;
       console.log("FAIL sum complement zero", source, got, floated, "want", want);
+    }
+  }
+}
+
 if (shardTurn(84)) {
   // An odd function at an exact 0 is 0, and at −0 it is −0. tan(0), sinh(0), arctan(0)
   // and artanh(0) were "couldn't verify", and arcsin(−0) was undefined in float.
