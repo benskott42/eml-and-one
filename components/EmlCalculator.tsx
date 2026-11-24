@@ -630,6 +630,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function loadProgramText(source: string) {
+    // A refused word's error, set during a rebuild, was replaced when the rebuild landed.
+    if (recomputeRef.current) {
+      queueRef.current.push(() => loadProgramText(source));
+      return;
+    }
     try {
       const parsed = parseProgramInput(source);
       if (parsed.kind === "index") {

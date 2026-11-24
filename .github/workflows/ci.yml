@@ -535,6 +535,36 @@ jobs:
             console.log("queued mode and undo", JSON.stringify(queuedUndo));
             if (queuedUndo.first !== "1  1" || queuedUndo.second !== "1" || queuedUndo.mode !== "exact") fail(`queued mode switch and undo ${JSON.stringify(queuedUndo)}`);
 
+            // A refused program entered while a mode switch rebuilds the stack shows its error.
+            // It was set on the old screen and replaced when the rebuild landed.
+            const loadError = await evalJs(`(async () => {
+              const button = (name) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === name);
+              const input = [...document.querySelectorAll("label")].find((label) => /^\\s*Program number/.test(label.textContent || ""))?.querySelector("input");
+              if (!input || !input.form) return { error: "no program field" };
+              for (let i = 0; i < 9; i += 1) document.querySelector(".ti-btn-one").click();
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              set.call(input, "#12a");
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              button("hardware").click();
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              input.form.requestSubmit();
+              const deadline = Date.now() + 10000;
+              let shown = "";
+              while (Date.now() < deadline) {
+                shown = document.querySelector(".ti-lcd-error")?.textContent ?? "";
+                if (shown) break;
+                await new Promise((resolve) => setTimeout(resolve, 40));
+              }
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              const kept = document.querySelector(".ti-lcd-error")?.textContent ?? "";
+              button("exact").click();
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+              return { shown, kept };
+            })()`);
+            console.log("program error during a switch", JSON.stringify(loadError));
+            if (!/followed by digits/.test(loadError.kept || "")) fail(`program error during a mode switch ${JSON.stringify(loadError)}`);
+
             // A long-press caption read on an empty screen came back after a press and Clear.
             const keyCenter = await evalJs(`(() => {
               const key = [...document.querySelectorAll(".ti-key button")].find((b) => b.textContent.trim() === "π");
