@@ -38,7 +38,6 @@ What the flag does not catch:
 ## Circuits and search
 
 - Rebuilding a circuit from its press string drops the low-precision, pole, and large-angle flags. Those notes sit beside the node, not in the gates.
-- Loading the 671-press word for ln(1+10^-130) can show exact 0 (float flags "differs from exact"); the result depends on whether the compiled circuit is still cached. Fix planned for v1.1.
 - The slow K = 35 search was not re-run for this version. The fast suite stops at the K = 21 table.
 - The dedup key still keeps up to four circuits. The unsigned-key rewrite is not in this version.
 - The calculator component is still one file. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
