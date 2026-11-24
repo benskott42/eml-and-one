@@ -4414,6 +4414,27 @@ if (shardTurn(76)) {
   }
 }
 
+if (shardTurn(84)) {
+  // An odd function at an exact 0 is 0, and at −0 it is −0. tan(0), sinh(0), arctan(0)
+  // and artanh(0) were "couldn't verify", and arcsin(−0) was undefined in float.
+  // sinh(−0) marked the shared −0 leaf as a series shortcut, so a later "-0" in the
+  // same process (the exact worker is reused) was refused too.
+  const rows: [string, string][] = [];
+  for (const name of ["sin", "tan", "sinh", "tanh", "arcsin", "arctan", "arsinh", "artanh"]) {
+    rows.push([`${name}(0)`, "0"], [`${name}(-0)`, "−0"], [`${name}(2-2)`, "0"]);
+  }
+  rows.push(["-0", "−0"], ["sqrt(-0)", "−0"]);
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    const floated = formatC(evaluate(compileExpression(source, {})));
+    if (got !== want || floated !== want) {
+      failed += 1;
+      console.log("FAIL odd function at zero", source, got, floated, "want", want);
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);

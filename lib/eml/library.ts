@@ -876,6 +876,8 @@ export function tSigmoid(t: Node): Node {
 }
 
 export function tSinh(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
   // The dropped cubic is not exact, so z is marked as a series shortcut: a later
@@ -892,6 +894,8 @@ export function tCosh(t: Node): Node {
 }
 
 export function tTanh(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
@@ -1049,7 +1053,21 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
   sign: (i % 2 === 0 ? -1 : 1) as -1 | 1,
 }));
 
+/**
+ * An odd function at an exact zero is that zero, and at −0 it is −0, as in IEEE.
+ * Their circuits cancel to a 0 that exact mode cannot certify, or that a series
+ * shortcut produced: tan(0), sinh(0), tanh(−0), arctan(0) and artanh(0) said
+ * "couldn't verify", and arcsin(−0) was undefined in float.
+ */
+function oddAtZero(t: Node): Node | null {
+  if (rangeOf(t).int === BigInt(0)) return tZero();
+  if (t.type === "input" && Object.is(t.value.re, -0) && t.value.im === 0) return t;
+  return null;
+}
+
 export function tSin(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, SIN_ODD, SERIES_POLY);
@@ -1067,6 +1085,8 @@ export function tCos(t: Node): Node {
 }
 
 export function tTan(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TAN_ODD, SERIES_WIDE);
@@ -1167,6 +1187,8 @@ function arcsinSeries(t: Node): Node {
  * flagged against the exact value. It is not given another formula.
  */
 export function tArcsin(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const known = knownValue(t);
   // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
   const tiny = known ? Math.hypot(known.re, known.im) : Number.NaN;
@@ -1219,6 +1241,8 @@ export function tArccos(t: Node): Node {
 }
 
 export function tArctan(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, ARCTAN_ODD, SERIES_WIDE);
@@ -1259,6 +1283,8 @@ function asinhOutside(t: Node, limit: number): boolean {
  * ±i are matched only as the i program itself: a float near ±i is not that node.
  */
 export function tArsinh(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const known = knownValue(t);
   if ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || rangeOf(t).int === BigInt(0)) return tZero();
   if (t === tI() || t === tNeg(tI())) {
@@ -1288,6 +1314,8 @@ function artanhAboveOne(t: Node): Node {
 }
 
 export function tArtanh(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
   const known = tightValue(t);
   // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
   if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
