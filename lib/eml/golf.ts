@@ -403,10 +403,8 @@ export function searchConstants(
   return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
 }
 
-/** The with-infinity search keeps these and says so. The finite search rejects them. */
-export function ln0Dependence(hit: GolfHit): string | null {
-  return hit.usesLn0 ? "depends on ln 0 = −∞" : null;
-}
+// ln0Dependence lives in ./golf-label so the screen can label hits without loading the search.
+export { ln0Dependence } from "./golf-label";
 
 export function searchConstantsMerged(maxK: number, workers: number): GolfHit[] {
   return searchConstants(maxK, { workers, partition: workers > 1 }).hits;

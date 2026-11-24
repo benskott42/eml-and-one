@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { type C } from "@/lib/eml/complex";
-import { beyondFloatBound, exactReport, exactToFloat, exactUnderflowsFloat, formatExact } from "@/lib/eml/exact";
+import { beyondFloatBound } from "@/lib/eml/float-bound";
 import { packCircuit } from "@/lib/eml/wire";
 import { captionName, formatC, isUsable, recognize } from "@/lib/eml/format";
-import { ln0Dependence, type GolfHit } from "@/lib/eml/golf";
+import type { GolfHit } from "@/lib/eml/golf";
+import { ln0Dependence } from "@/lib/eml/golf-label";
 import {
   BINARY_KEYS,
   CONSTANT_KEYS,
@@ -108,6 +109,28 @@ type Model = {
 };
 
 const EMPTY: Model = { stack: [], tape: [], note: null, error: null };
+
+// The exact engine (decimal.js) runs in exact.worker. The screen loads it only
+// for the fallback: no Worker, or a worker that failed. Once loaded it is kept,
+// and a delivery runs synchronously as before.
+type ExactEngine = typeof import("@/lib/eml/exact");
+let exactEngine: ExactEngine | null = null;
+let exactEngineLoad: Promise<ExactEngine> | null = null;
+
+function loadExactEngine(): Promise<ExactEngine> {
+  exactEngineLoad ??= import("@/lib/eml/exact").then(
+    (engine) => {
+      exactEngine = engine;
+      return engine;
+    },
+    (err: unknown) => {
+      // A failed chunk fetch is retried on the next delivery.
+      exactEngineLoad = null;
+      throw err;
+    },
+  );
+  return exactEngineLoad;
+}
 
 const EXAMPLES = [
   { label: "e", expr: "e" },
@@ -710,6 +733,8 @@ export function EmlCalculator() {
 
   useEffect(() => {
     const workers = exactWorkers.current;
+    // Without workers every exact result comes from the fallback; fetch it before the first press.
+    if (typeof Worker === "undefined") void loadExactEngine().catch(() => undefined);
     return () => {
       workers.fill?.terminate();
       workers.compare?.terminate();
@@ -717,7 +742,7 @@ export function EmlCalculator() {
   }, []);
 
   useEffect(() => {
-    const deliver = (request: number, node: Node, bound: Record<string, C>) => {
+    const run = ({ exactReport, exactToFloat, exactUnderflowsFloat, formatExact }: ExactEngine, request: number, node: Node, bound: Record<string, C>) => {
       try {
         const report = exactReport(node, bound, { maxNodes: 80_000 });
         const exact = exactToFloat(report.value);
@@ -733,6 +758,16 @@ export function EmlCalculator() {
       } catch (err) {
         finishExact(request, { error: failure(err) });
       }
+    };
+    const deliver = (request: number, node: Node, bound: Record<string, C>) => {
+      if (exactEngine) {
+        run(exactEngine, request, node, bound);
+        return;
+      }
+      loadExactEngine().then(
+        (engine) => run(engine, request, node, bound),
+        (err: unknown) => finishExact(request, { error: failure(err) }),
+      );
     };
     const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; message?: string }) => {
       if (data.request === undefined || !exactJobs.current.has(data.request)) return;
