@@ -20,7 +20,22 @@ export function beyondFloatBound(got: C, exact: C): boolean {
     if (left === 0) return true;
     if (right === 0) return Math.abs(left) > 5e-12 * Math.max(scale, Math.abs(left));
     const mag = Math.max(Math.abs(left), Math.abs(right));
-    return Math.abs(left - right) > 5e-12 * mag;
+    if (Math.abs(left - right) > 5e-12 * mag) return true;
+    // The screen prints a float within half a twelfth digit of an integer below
+    // 10^15 as that integer, every digit of it (formatReal in format.ts). From
+    // 10^12 that is more than twelve digits, and the last ones can be wrong
+    // inside the relative bound: 10^30/10^15 printed 999999999999985 with no
+    // flag. Such a component is flagged when a printed digit is wrong.
+    return printedAsLongInteger(left) && Math.abs(left - right) >= 0.5;
   };
   return part(got.re, exact.re) || part(got.im, exact.im);
+}
+
+/** True when formatReal prints |x| as an integer of 13 to 15 digits. */
+function printedAsLongInteger(x: number): boolean {
+  const abs = Math.abs(x);
+  if (!(abs >= 1e12) || !(abs < 1e15)) return false;
+  const nearest = Math.round(abs);
+  const twelfth = 10 ** (Math.floor(Math.log10(abs)) - 11);
+  return nearest < 1e15 && Math.abs(abs - nearest) < twelfth / 2;
 }
