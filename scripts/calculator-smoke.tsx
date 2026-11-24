@@ -48,6 +48,9 @@ async function main() {
     "low absolute precision",
     'aria-label="Calculator screen"',
     'aria-pressed="false"',
+    // One tab stop in the mode radio group: the checked radio.
+    'role="radio" aria-checked="false" tabindex="-1"',
+    'role="radio" aria-checked="true" tabindex="0"',
   ];
 
   let failed = false;
@@ -240,6 +243,76 @@ async function main() {
     console.error("pi's shortened program number is missing", screenText());
     failed = true;
   }
+  // There is no clipboard outside a secure context (nor in jsdom). Copy must not throw.
+  const thrown: string[] = [];
+  const onError = (event: ErrorEvent) => {
+    thrown.push(String(event.error ?? event.message));
+    event.preventDefault();
+  };
+  view.addEventListener("error", onError);
+  const pressCopy = buttonByText("Copy");
+  if (!(pressCopy instanceof view.HTMLButtonElement)) {
+    console.error("pi's press line has no Copy button", screenText());
+    failed = true;
+  } else {
+    await act(async () => {
+      pressCopy.click();
+    });
+  }
+  view.removeEventListener("error", onError);
+  if (thrown.length > 0) {
+    console.error("Copy without a clipboard threw", thrown);
+    failed = true;
+  }
+  // A word of x and y reads the x and y fields, in exact as in float.
+  const xField = view.document.querySelector(".ti-fields input");
+  if (!(xField instanceof view.HTMLInputElement)) {
+    console.error("missing x field");
+    failed = true;
+  } else {
+    const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(xField, "2");
+      xField.dispatchEvent(new view.Event("input", { bubbles: true }));
+    });
+  }
+  await setProgram("1xE");
+  await clickNamed("Load");
+  await waitResult();
+  if (!resultText().includes("2.025134647") || screenText().includes("needs a value for x")) {
+    console.error("the word 1xE did not read x = 2 in exact mode", resultText(), screenText());
+    failed = true;
+  }
+  await clickNamed("hardware");
+  await waitResult();
+  if (!resultText().includes("2.025134647") || screenText().includes("needs a value for x")) {
+    console.error("the word 1xE did not read x = 2 in float mode", resultText(), screenText());
+    failed = true;
+  }
+  await clickNamed("exact");
+  await waitResult();
+  // A long-press caption goes with the next press.
+  const sinKey = buttonByText("sin");
+  if (!(sinKey instanceof view.HTMLButtonElement)) {
+    console.error("missing sin");
+    failed = true;
+  } else {
+    await act(async () => {
+      sinKey.dispatchEvent(new view.Event("pointerdown", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 520));
+      view.dispatchEvent(new view.Event("pointerup"));
+      sinKey.click();
+    });
+    const shown = view.document.querySelector(".ti-lcd-hold")?.textContent ?? "";
+    await act(async () => {
+      view.dispatchEvent(new view.KeyboardEvent("keydown", { key: "1", bubbles: true }));
+    });
+    const after = view.document.querySelector(".ti-lcd-hold");
+    if (!shown.startsWith("sin") || after) {
+      console.error("a long-press caption stayed after the next press", shown, after?.textContent);
+      failed = true;
+    }
+  }
   await act(async () => {
     root.unmount();
   });
@@ -325,6 +398,106 @@ async function main() {
     preemptRoot.unmount();
   });
   preemptView.close();
+
+  // A worker that answers only when told to, so a row stays computing.
+  class ManualWorker {
+    static made: ManualWorker[] = [];
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    terminated = false;
+    jobs: number[] = [];
+    constructor() {
+      ManualWorker.made.push(this);
+    }
+    postMessage(data: { request: number }) {
+      this.jobs.push(data.request);
+    }
+    answer(text: string) {
+      for (const request of this.jobs.splice(0)) {
+        if (!this.terminated) this.onmessage?.({ data: { type: "done", request, text, re: 3, im: 0, singular: null, touchedLn0: false } });
+      }
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+  workerGlobal.Worker = ManualWorker as unknown as typeof HoldingWorker;
+  const held = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const heldView = held.window;
+  globals.window = heldView;
+  globals.self = heldView;
+  globals.document = heldView.document;
+  globals.HTMLElement = heldView.HTMLElement;
+  const heldMount = heldView.document.getElementById("root");
+  if (!heldMount) {
+    console.error("missing manual-worker root");
+    process.exit(1);
+  }
+  const heldRoot = createRoot(heldMount);
+  await act(async () => {
+    heldRoot.render(<EmlCalculator />);
+  });
+  const heldButton = (label: string) =>
+    [...heldView.document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
+  const heldClick = async (label: string) => {
+    const button = heldButton(label);
+    if (!(button instanceof heldView.HTMLButtonElement)) {
+      console.error(`missing ${label}`);
+      failed = true;
+      return;
+    }
+    await act(async () => {
+      button.click();
+    });
+  };
+  const heldWait = async (ms: number) => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  };
+  const heldResult = () => heldView.document.querySelector(".ti-lcd-result")?.textContent ?? "";
+  const heldError = () => heldView.document.querySelector(".ti-lcd-error")?.textContent ?? "";
+  // An error from a press made while the top row computes stays when that row lands.
+  await heldClick("π");
+  await heldClick("swap");
+  const live = ManualWorker.made.find((worker) => !worker.terminated && worker.jobs.length > 0);
+  await act(async () => {
+    live?.answer("3");
+  });
+  if (heldResult() !== "3" || !heldError().includes("Swap needs two values")) {
+    console.error("a landing exact row wiped the swap error", heldResult(), heldError());
+    failed = true;
+  }
+  // Cancel while a mode switch is rebuilding the stack cancels the rows it lands.
+  await heldClick("hardware");
+  await heldWait(40);
+  // A synchronous act runs the switch's effect but none of its timer turns,
+  // so Cancel lands while the stack is being rebuilt.
+  const toExact = heldButton("exact");
+  act(() => {
+    if (toExact instanceof heldView.HTMLButtonElement) toExact.click();
+  });
+  const cancel = [...heldView.document.querySelectorAll(".ti-modes button")].find((button) => button.textContent?.trim() === "Cancel");
+  if (!(cancel instanceof heldView.HTMLButtonElement)) {
+    console.error("no Cancel while a mode switch computes", heldResult());
+    failed = true;
+  } else {
+    act(() => {
+      cancel.click();
+    });
+  }
+  await heldWait(60);
+  if (heldResult() !== "—" || heldView.document.querySelector(".ti-lcd-note span")?.textContent !== "cancelled") {
+    console.error("Cancel during a mode switch was lost", heldResult(), heldView.document.querySelector(".ti-lcd-note span")?.textContent);
+    failed = true;
+  }
+  await act(async () => {
+    heldRoot.unmount();
+  });
+  heldView.close();
   delete workerGlobal.Worker;
 
   if (failed) process.exit(1);
