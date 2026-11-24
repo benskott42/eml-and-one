@@ -579,6 +579,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const inflight = useRef<Record<JobKind, Map<number, number>>>({ fill: new Map(), compare: new Map() });
   const exactJobs = useRef(new Map<number, { watch: number; kind: JobKind; floated: C }>());
   const exactSerial = useRef(0);
+  const startFillWorker = useRef<(() => void) | null>(null);
 
   const publishWatch = useCallback((token: number, next: Entry) => {
     const current = modelRef.current;
@@ -760,6 +761,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         created.onmessage = (event: MessageEvent<Parameters<typeof accept>[0]>) => accept(event.data);
         created.onerror = () => {
           created.terminate();
+          // A worker that fails once (blocked script, CSP) will likely fail again: have the fallback ready.
+          void loadExactEngine().catch(() => undefined);
           if (exactWorkers.current[kind] === created) exactWorkers.current[kind] = null;
           const pending = [...exactJobs.current.entries()].filter(([, job]) => job.kind === kind);
           for (const [request, job] of pending) {
@@ -803,7 +806,25 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       for (const [name, value] of Object.entries(bound)) env[name] = { re: value.re, im: value.im };
       worker.postMessage({ request, tokens: packed.tokens, root: packed.root, env });
     }
+    startFillWorker.current = () => {
+      if (!exactWorkers.current.fill) ensure("fill");
+    };
   }, [finishExact, model.stack]);
+
+  // The fill worker starts on the first exact job. Its startup (fetching and
+  // compiling decimal.js and the exact engine) was most of the wait for the first
+  // result, so it is started once the page is idle instead. Jobs still create one if
+  // it is missing or was replaced.
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const start = () => startFillWorker.current?.();
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(start, { timeout: 3000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = window.setTimeout(start, 500);
+    return () => window.clearTimeout(handle);
+  }, []);
 
   const expansions = useMemo(() => initialKeys?.expansions ?? keyExpansions(), [initialKeys]);
 
