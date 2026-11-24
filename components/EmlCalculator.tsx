@@ -1570,6 +1570,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               Compute
             </button>
           </form>
+          <p className="ti-caption">log(b, x) is log base b of x, as on the log key; log(x) and ln(x) are the natural log.</p>
           <div className="ti-chips">
             {EXAMPLES.map((example) => (
               <button
