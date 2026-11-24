@@ -1170,6 +1170,20 @@ if (shardTurn(11)) {
     failed += 1;
     console.log("FAIL float bound");
   }
+  // 13 to 15 digits print as an integer, so a wrong printed digit is flagged.
+  const longInteger: [number, number, boolean][] = [
+    [999999999999985, 1e15, true], // 10^30/10^15
+    [999999999999978, 1e15 + 0.5, true], // 10^15 + 0.5
+    [2 ** 40, 2 ** 40, false],
+    [123456789012345, 123456789012345.4, false],
+    [1e12, 1e12 + 0.3, false],
+  ];
+  for (const [floated, exact, want] of longInteger) {
+    if (beyondFloatBound(c(floated), c(exact)) !== want) {
+      failed += 1;
+      console.log("FAIL float bound long integer", floated, exact, "want", want);
+    }
+  }
 }
 const asinhCases: Array<[string, number]> = [
   ["asinh(0.5-3)", Math.asinh(-2.5)],
