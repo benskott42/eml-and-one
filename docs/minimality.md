@@ -1,6 +1,6 @@
 # Minimality of 0, −1, and 2
 
-0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. +iπ is proved minimal at K 21, and at K 23 without ln 0 (below). Every other record in this project is shortest known.
+0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. +iπ is proved minimal at K 21, and at K 23 without ln 0, and −2 at K 25 with ln 0 (below). Every other record in this project is shortest known.
 
 A program is an RPN word on the alphabet {1, E}. A word with n leaves has length K = 2n − 1, so only odd lengths occur. "K ≤ n" means every odd length up to n. Each program was generated directly and decided on its own. Programs were not grouped by value, so it does not matter whether two forms are the same.
 
@@ -33,9 +33,9 @@ The verification scripts above are not in this repository. [tools/minimality/dec
 
 ## −2 at K 25
 
-Of the 82500 programs with K ≤ 23, the first pass of decide.py left 188 undecided, all of them towers. towers.py decides 187 of them, and none is −2. The last one, `11E1E1111E1E1EEEE1E1E1E`, is exp(exp(W)) with W = T4/z, where T4 = exp(exp(exp(e))) ≈ 10^1656520 and z = e − ln(e − T2) = e − ln(T2 − e) + iπ. Re W > 10^1656000, so its modulus exp(e^(Re W) cos θ), with θ = Im W mod 2π, is 2 only if |cos θ| < 10^(−1000). θ depends on every digit of T4. [tools/minimality/deep.py](../tools/minimality/deep.py) encloses θ with interval arithmetic at 5.5 million bits, which takes hours, so `--open` reports this program as undecided unless it is run with `--deep`. Until that run certifies |cos θ| > 10^(−6), −2 at K 25 is shortest known, not proved minimal.
+Of the 82500 programs with K ≤ 23, the first pass of decide.py left 188 undecided, all of them towers. towers.py decides 187 of them, and none is −2. The last one, `11E1E1111E1E1EEEE1E1E1E`, is exp(exp(W)) with W = T4/z, where T4 = exp(exp(exp(e))) ≈ 10^1656520 and z = e − ln(e − T2) = e − ln(T2 − e) + iπ. Re W > 10^1656000, so its modulus exp(e^(Re W) cos θ), with θ = Im W mod 2π, is 2 only if |cos θ| < 10^(−1000). θ depends on every digit of T4. [tools/minimality/deep.py](../tools/minimality/deep.py) encloses θ with interval arithmetic at 5.5 million bits: exp by Newton's method on mpmath's ln, each enclosure checked with directed-rounding logs, so Im W is known to within 10^(−116). On 2026-11-24 it gave θ = −5.39531064387935195139… and cos θ = 0.63106214288953973449…, in 87 minutes. A plain interval-arithmetic run (mpmath iv.exp, 152 minutes) gave the same enclosure. So this program is not −2, and **−2 is minimal at K 25 with ln 0 = −∞**. `--open` alone reports this program as undecided and names deep.py; `--open --deep` runs deep.py on it in the same pass.
 
-Without ln 0, −2 is shortest known at K 27. 18 K 25 programs without ln 0 remain undecided. One of them, `111E1E1111E1E1EEEE1E1E1EE` = e − ln(exp(exp(W))), turns on the same θ (its real part is e − e^(Re W) cos θ), and deep.py decides it with the same run. towers.py leaves the other 17 undecided: each has a tower whose phase it cannot reduce.
+Without ln 0, −2 is shortest known at K 27. 18 K 25 programs without ln 0 were left undecided by towers.py. One of them, `111E1E1111E1E1EEEE1E1E1EE` = e − ln(exp(exp(W))), turns on the same θ (its real part is e − e^(Re W) cos θ), and the same deep.py run excludes it. The other 17 remain undecided: each has a tower whose phase towers.py cannot reduce, so K 27 without ln 0 is not proved minimal.
 
 ## How towers.py decides a tower program
 

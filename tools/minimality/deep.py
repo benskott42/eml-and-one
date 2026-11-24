@@ -15,16 +15,47 @@ the point, and then decides:
   that ln takes, its real part is Re exp(W) = e^(Re W) cos theta, so the value has real
   part -2 only if cos theta = (e + 2) e^-(Re W). Excluded when |cos theta| > 10^-6.
 
-usage: python deep.py   (5.5 million bits; it takes hours)
+usage: python deep.py   (5.5 million bits; about 90 minutes)
 """
 import sys
 import time
-from mpmath import iv, mpf, nstr
+from mpmath import iv, mp, mpf, nstr
+from mpmath.libmp import mpf_log, round_ceiling, round_floor
 
 PRECISION = 5_503_000 + 256  # log2(T4) is about 5502820
 K23 = "11E1E1111E1E1EEEE1E1E1E"
 K25 = "111E1E1111E1E1EEEE1E1E1EE"
 _THETA = {}
+
+
+def newton_exp(x, prec):
+    """exp(x) to about prec bits by Newton's method on ln (not rigorous by itself).
+    mpmath's ln is much faster than its exp at millions of bits."""
+    p = 2000
+    with mp.workprec(p):
+        y = mp.exp(x)
+    while p < prec:
+        p = min(2 * p, prec)
+        with mp.workprec(p + 64):
+            y = y * (1 + x - mp.log(y))
+    return y
+
+
+def exp_iv(X, prec):
+    """An interval containing exp(X) for a real interval X, made rigorous by checking
+    ln(lower) <= X.a and ln(upper) >= X.b with directed-rounding logs."""
+    with mp.workprec(X._mpi_[0][3] + X._mpi_[1][3] + prec + 64):  # exact endpoints
+        xa, xb = mpf(X._mpi_[0]), mpf(X._mpi_[1])
+    with mp.workprec(prec + 64):
+        y = newton_exp((xa + xb) / 2, prec + 32)
+        d = (xb - xa) / 2  # exp(x) = y * exp(x - mid), |x - mid| <= d
+        lo = y * (1 - 2 * d - mpf(2) ** -prec)
+        hi = y * (1 + 2 * d + mpf(2) ** -prec)
+    from mpmath.libmp import mpf_cmp
+    if not (mpf_cmp(mpf_log(lo._mpf_, prec + 64, round_ceiling), xa._mpf_) <= 0
+            and mpf_cmp(mpf_log(hi._mpf_, prec + 64, round_floor), xb._mpf_) >= 0):
+        raise ArithmeticError("exp enclosure check failed")
+    return iv.mpf([lo, hi])
 
 
 def theta(bits=PRECISION):
@@ -35,10 +66,10 @@ def theta(bits=PRECISION):
     saved = iv.prec
     iv.prec = bits
     e = iv.exp(iv.mpf(1))
-    T2 = iv.exp(e)
-    T3 = iv.exp(T2)
+    T2 = exp_iv(e, bits)
+    T3 = exp_iv(T2, bits)
     print(f"deep.py: T3 done ({time.time() - t0:.0f} s)", flush=True)
-    T4 = iv.exp(T3)
+    T4 = exp_iv(T3, bits)
     print(f"deep.py: T4 done ({time.time() - t0:.0f} s)", flush=True)
     a = e - iv.log(T2 - e)  # z = a + i*pi
     b = iv.pi

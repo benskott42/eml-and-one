@@ -1,12 +1,12 @@
 # Known limitations
 
-This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), and 2 at K 19 are proved minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
+This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), 2 at K 19, +iπ at K 21 (K 23 without ln 0), and −2 at K 25 (using ln 0) are proved minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
 
 ## Records
 
 −iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 47 does not use ln 0. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
 
-Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21, and at K 23 without ln 0, is proved minimal (tools/minimality/decide.py --open). −2 at K 25 is shortest known: one tower program with K ≤ 23 is decided only by tools/minimality/deep.py, a 5.5-million-bit run that has not certified it yet, so that length is not proven minimal. Without ln 0, −2 at K 27 is shortest known: 18 K 25 programs remain undecided.
+Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21, and at K 23 without ln 0, is proved minimal (tools/minimality/decide.py --open). −2 at K 25 with ln 0 is proved minimal (decide.py --open --deep: one tower program needs tools/minimality/deep.py, a 5.5-million-bit run of about 90 minutes). Without ln 0, −2 at K 27 is shortest known: 17 K 25 programs remain undecided.
 
 Phase-free infinities do not make subtraction or addition work at b = 0. sub(5, 0) and add(5, 0) are NaN in that model. b = 0 needs a directed infinity. artanh of a real greater than 1 is ½ ln|(1+x)/(1−x)| − iπ/2, matching mpmath's atanh. C99 catanh of that real with a +0 imaginary part returns +iπ/2.
 

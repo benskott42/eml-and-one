@@ -6,7 +6,7 @@
 python decide.py         # 0 at K 7, −1 at K 15 (with ln 0) and K 17 (without), 2 at K 19
 python decide.py --open         # +iπ at K 21 (K 23 without ln 0), −2 at K 25 (K 27 without ln 0)
 python decide.py --open --deep  # the same, and runs deep.py for the two programs that need it
-python deep.py                  # those two alone: 5.5 million bits, several hours
+python deep.py                  # those two alone: 5.5 million bits, about 90 minutes
 ```
 
 A program is excluded only when it certainly differs from the target. Its value may be ±∞, an invalid ∞ − ∞, or a tower far outside float range, or the target may lie outside the interval rectangle that encloses the value. Three devices keep that decisive:
