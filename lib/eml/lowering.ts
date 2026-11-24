@@ -724,8 +724,14 @@ function subComplement(minuend: Node, subtrahend: Node): Node | null {
   if (inner && provenFinite(inner.left) && provenFinite(inner.right) && inner.left === minuend) return inner.right;
   const outer = realSub.get(minuend);
   if (!outer || !provenFinite(outer.left) || !provenFinite(outer.right)) return null;
-  if (outer.left === subtrahend) return domainNeg(outer.right);
+  if (outer.left === subtrahend) return zeroValued(outer.right) ? zeroNode() : domainNeg(outer.right);
   return null;
+}
+
+/** The integer 0 or the −0 leaf. Its fold is a − a, which is +0, not its negation. */
+function zeroValued(node: Node): boolean {
+  if (rangeOf(node).int === BigInt(0)) return true;
+  return node.type === "input" && node.value.re === 0 && node.value.im === 0;
 }
 
 /** An integer past the float range. Number(10^400) is already Infinity. */
@@ -966,7 +972,8 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   const folded = cancelledSummand(a, b);
   if (folded) return folded;
   const complement = sumComplement(b, a);
-  if (complement) return domainNeg(complement);
+  // a − (a + 0) is a − a, which is +0. Negating the 0 gave −0, so ln of it was −∞ + iπ.
+  if (complement) return zeroValued(complement) ? zeroNode() : domainNeg(complement);
   const rest = subComplement(a, b);
   if (rest) return rest;
   // Same-sign infinities are indeterminate. That check stays ahead of the identical-node fold.
