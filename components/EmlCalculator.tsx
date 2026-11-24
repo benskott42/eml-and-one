@@ -13,12 +13,8 @@ import {
   UNARY_KEYS,
   applyBinaryNode,
   applyUnaryNode,
-  binaryNode,
   constantNode,
-  integerNode,
-  scalarNode,
   seriesShortcutNote,
-  unaryNode,
 } from "@/lib/eml/library";
 import {
   E,
@@ -38,6 +34,7 @@ import { agreementNote, compileExpression } from "@/lib/eml/parse";
 import table from "@/lib/eml/best-known.json";
 import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory, type History } from "@/lib/eml/history";
 import { pressPreviewForNode } from "@/lib/eml/presses";
+import { INITIAL_X, INITIAL_Y, type KeyTables, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
 import { parseProgramInput, programIndexDigits, programNumberText, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 
 const TWO_BUTTONS_KEY = "eml-and-one-two-buttons";
@@ -282,13 +279,6 @@ function noteFor(item: Entry): string | null {
   return bits.length ? bits.join(" · ") : null;
 }
 
-function shortcutTitle(node: Node, hint?: string): string {
-  const presses = pressPreviewForNode(node);
-  const lead = hint ? `${hint}. ` : "";
-  if (!presses) return `${lead}Shortcut for the 1 and EML keys.`;
-  return `${lead}Presses ${presses.preview}${presses.truncated ? ` (${presses.presses} presses)` : ""}`;
-}
-
 function CopyNumber({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -386,22 +376,6 @@ function resultError(item: Entry): string | null {
 
 function entry(node: Node, caption: string, mode: Mode): Entry {
   return { node, caption, watch: watchSerial++, ...runNode(node, mode) };
-}
-
-/** The x or y field. Its own errors name the field: "Enter an expression." read as the box below. */
-function readScalar(text: string, field: "x" | "y"): Node {
-  const trimmed = text.trim();
-  if (!trimmed) throw new EmlError(`Give ${field} a value.`);
-  try {
-    return scalarNode(trimmed);
-  } catch {
-    try {
-      return compileExpression(trimmed, {});
-    } catch (err) {
-      if (err instanceof EmlError) throw new EmlError(`In ${field}: ${err.message}`);
-      throw err;
-    }
-  }
 }
 
 function valuesOf(xText: string, yText: string): Record<string, C> {
@@ -565,10 +539,10 @@ function GolfPanel() {
   );
 }
 
-export function EmlCalculator() {
+export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {}) {
   const [model, setModel] = useState<Model>(EMPTY);
-  const [xText, setXText] = useState("0.5");
-  const [yText, setYText] = useState("2");
+  const [xText, setXText] = useState(INITIAL_X);
+  const [yText, setYText] = useState(INITIAL_Y);
   const [expr, setExpr] = useState("sin(pi/6)");
   const [programField, setProgramField] = useState("");
   const [mode, setMode] = useState<Mode>("exact");
@@ -585,53 +559,12 @@ export function EmlCalculator() {
   const jobRef = useRef(0);
   const twoButtonsRef = useRef(false);
   twoButtonsRef.current = twoButtons;
-  const costs = useMemo(() => {
-    const table: Record<string, string> = {};
-    const label = (node: Node) => {
-      const k = circuitStats(node).rpnLength;
-      return k <= BigInt(9999) ? `K ${k}` : "wide";
-    };
-    for (const key of CONSTANT_KEYS) {
-      try {
-        table[key.id] = label(constantNode(key.id));
-      } catch {
-        table[key.id] = "";
-      }
-    }
-    let xNode = integerNode(2);
-    let yNode = integerNode(3);
-    try {
-      if (model.stack.length >= 2) {
-        xNode = model.stack[model.stack.length - 2]?.node ?? xNode;
-        yNode = model.stack[model.stack.length - 1]?.node ?? yNode;
-      } else if (model.stack.length === 1) {
-        xNode = model.stack[0]?.node ?? xNode;
-        yNode = readScalar(yText, "y");
-      } else {
-        xNode = readScalar(xText, "x");
-        yNode = readScalar(yText, "y");
-      }
-    } catch {
-      xNode = integerNode(2);
-      yNode = integerNode(3);
-    }
-    const arg = model.stack[model.stack.length - 1]?.node ?? xNode;
-    for (const key of UNARY_KEYS) {
-      try {
-        table[key.id] = label(applyUnaryNode(key.id, arg));
-      } catch {
-        table[key.id] = "";
-      }
-    }
-    for (const key of BINARY_KEYS) {
-      try {
-        table[key.id] = label(applyBinaryNode(key.id, xNode, yNode));
-      } catch {
-        table[key.id] = "";
-      }
-    }
-    return table;
-  }, [model.stack, xText, yText]);
+  // The first screen uses the tables app/page.tsx built at export time. With an
+  // empty stack the captions depend only on the x and y text.
+  const costs = useMemo(
+    () => (initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y ? initialKeys.costs : keyCosts(model.stack, xText, yText)),
+    [initialKeys, model.stack, xText, yText],
+  );
 
   // The handlers are the only writers of modelRef and modeRef: each one sets the
   // ref before its setState. Syncing them from an effect let a late passive effect
@@ -872,31 +805,28 @@ export function EmlCalculator() {
     }
   }, [finishExact, model.stack]);
 
-  const expansions = useMemo(() => {
-    const table: Record<string, string> = {};
-    for (const key of CONSTANT_KEYS) {
+  const expansions = useMemo(() => initialKeys?.expansions ?? keyExpansions(), [initialKeys]);
+
+  // Building the tables also fills the circuit caches in lib/eml. With the
+  // tables handed in, that work would land on the first key press, so it runs
+  // here once the page is idle. The results are discarded.
+  useEffect(() => {
+    if (!initialKeys) return;
+    const warm = () => {
       try {
-        table[key.id] = shortcutTitle(constantNode(key.id), key.label);
+        keyCosts([], INITIAL_X, INITIAL_Y);
+        keyExpansions();
       } catch {
-        table[key.id] = "Shortcut for the 1 and EML keys.";
+        // The tables catch their own errors; nothing here is shown.
       }
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(warm, { timeout: 2000 });
+      return () => window.cancelIdleCallback(handle);
     }
-    for (const key of UNARY_KEYS) {
-      try {
-        table[key.id] = shortcutTitle(unaryNode(key.id), key.label);
-      } catch {
-        table[key.id] = "Shortcut for the 1 and EML keys.";
-      }
-    }
-    for (const key of BINARY_KEYS) {
-      try {
-        table[key.id] = shortcutTitle(binaryNode(key.id), key.hint);
-      } catch {
-        table[key.id] = key.hint;
-      }
-    }
-    return table;
-  }, []);
+    const handle = window.setTimeout(warm, 200);
+    return () => window.clearTimeout(handle);
+  }, [initialKeys]);
 
   useEffect(() => {
     const snapshot = modelRef.current.stack.map((item) => ({ ...item }));

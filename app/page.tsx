@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { EmlCalculator } from "@/components/EmlCalculator";
+import { initialKeyTables } from "@/components/keyTables";
 import "@/components/ti-calculator.css";
 
 export const metadata: Metadata = {
@@ -17,7 +18,7 @@ export default function Page() {
             'try{if(localStorage.getItem("eml-and-one-two-buttons")==="1")document.documentElement.classList.add("ti-two-buttons")}catch(e){}',
         }}
       />
-      <EmlCalculator />
+      <EmlCalculator initialKeys={initialKeyTables()} />
     </>
   );
 }
