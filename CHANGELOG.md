@@ -23,6 +23,7 @@
 - A sum of a variable term whose range is unknown gets the low-precision note whenever it nearly cancels. 2x + 1 for x just above −1/2 had no note, though x + 1 for x just above −1 had one, and 10^(−300)·x + 1 printed 6.35×10^(−13) for a value of 10^(−12) with no note. The scaled sum rebuilds its terms, so the noted term was not a gate the evaluation had read.
 - The press line says "x and y stay in the string" for a program past 20000 presses. The preview is a 30-press prefix, and the note was read from that prefix: sin(sin(x)) left it out.
 - The page loads about 10% less JavaScript (213 KB gzip, from 236 KB) and is ready sooner (170 ms from 218 ms unthrottled; about 850 ms from 1030 ms at 4× CPU). decimal.js and the exact engine load only in the workers, or in the fallback when there is no worker. The first screen's key captions and tooltips are built at export time, and the exact worker starts when the page is idle, so the first exact result after 1, 1, EML takes 24 ms instead of 54 ms.
+- Docs: the README said 1e-433 is past the exact cap and could not be verified. A literal that spells its exponent is exact at any size (1e-433, 1e-5000), and (1e-433+1)−1 recovers 10^(−433). known-limitations listed the 671-press word for ln(1+10^(−130)) as able to show exact 0 depending on the cache. It is 10^(−130) fresh, after the named expression, and through the worker, and a check row now holds it there.
 
 ## 1.0.2 — 2026-11-22
 
