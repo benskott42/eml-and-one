@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A program word with x or y, such as 1xE, reads the x and y fields, as push x and push y do. Exact mode said "cancelled" with "This expression needs a value for x", and float refused the word with that error.
+- Cancel pressed while a mode switch or an undo is rebuilding the stack cancels the rows it lands. The press was lost, and the rows went on computing.
+- An error from a press made while the top row computes, such as "Swap needs two values.", stays when that row's exact value arrives. It was wiped.
+- A long-press caption leaves the screen with the next press, undo, or clear. It stayed up until another long press.
+- Copy on the press line does nothing without a clipboard (a page served over plain http). It threw.
+- The evaluation radio group is one tab stop, the checked mode; the arrow keys move between the two.
 - x^0 is 1 for every finite x, 0^0 included (the IEEE pow convention, which v1.1 uses too). It was undefined: the power word evaluates ln(0) for a zero base. An infinite base, such as ln(0)^0, stays undefined.
 - Exact mode raises its precision when exp turns an angle near a multiple of π/2. Such an angle keeps only part of its digits in cos or sin. (10^108 − i)·sin(atanh(−i)) printed a real part of −0.868670961405; the value is −0.868670961486. The same raise fixes cos(1e119), which showed −0.98499 beside its "argument too large" note and now shows −0.372261757876, and certifies ((1 + 10^−130) − 1) + i/2 as 1×10^−130 + 0.5i where it used to refuse.
 - Exact mode keeps a tiny imaginary part that an angle sum rounded away. (10^300 − (2 − 2i))^(−1) printed 1×10^−300 without its −2×10^−600 i. Past 480 digits, as with 10^400 in place of 10^300, the result is unverified.
