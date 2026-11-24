@@ -1179,14 +1179,18 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         const { node, numbers } = compileSubmission(text, xText, yText);
         const item = { ...entry(node, text, modeRef.current), bound: numbers };
         const bits = [noteFor(item)].filter(Boolean);
+        // An exact value for an older row can land between the submit and this
+        // turn. It is in modelRef, not in the stack read at the submit.
+        const latest = modelRef.current;
         commit({
-          stack: [...current.stack, item],
-          tape: [...current.tape, text],
+          stack: [...latest.stack, item],
+          tape: [...latest.tape, text],
           note: bits.length ? bits.join(" · ") : null,
           error: resultError(item),
         });
       } catch (err) {
-        const next = { ...current, error: failure(err) };
+        const latest = modelRef.current;
+        const next = { ...latest, note: latest.note === pending.note ? current.note : latest.note, error: failure(err) };
         modelRef.current = next;
         setModel(next);
       }
