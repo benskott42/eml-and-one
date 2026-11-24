@@ -21,8 +21,9 @@ concurrency:
 # eml:check). The jobs below run in parallel: eml:check is split into shards by
 # EML_SHARD (see the top of lib/eml/check.ts and check-shards.json), and each
 # golden mode runs in 4 shards by GOLDEN_SHARD. The check jobs print each block's time
-# (EML_BLOCK_TIMES), which is where check-shards.json weights come from. The site job builds, runs headless Chrome, and
-# uploads the folder it tested.
+# (EML_BLOCK_TIMES). check-shards.json holds cold times: each block alone in its own
+# process (EML_ONLY_BLOCK), since a block's time in a shard depends on its shard-mates.
+# The site job builds, runs headless Chrome, and uploads the folder it tested.
 jobs:
   static:
     runs-on: ubuntu-latest
