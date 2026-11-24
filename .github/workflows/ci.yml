@@ -20,7 +20,8 @@ concurrency:
 # The suite used to be one sequential job (about 20 minutes, almost all of it
 # eml:check). The jobs below run in parallel: eml:check is split into shards by
 # EML_SHARD (see the top of lib/eml/check.ts and check-shards.json), and each
-# golden mode runs in 4 shards by GOLDEN_SHARD. The site job builds, runs headless Chrome, and
+# golden mode runs in 4 shards by GOLDEN_SHARD. The check jobs print each block's time
+# (EML_BLOCK_TIMES), which is where check-shards.json weights come from. The site job builds, runs headless Chrome, and
 # uploads the folder it tested.
 jobs:
   static:
@@ -58,6 +59,7 @@ jobs:
       - run: npm run eml:check
         env:
           EML_SHARD: ${{ matrix.shard }}/6
+          EML_BLOCK_TIMES: "1"
 
   golden:
     runs-on: ubuntu-latest
