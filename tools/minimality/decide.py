@@ -21,13 +21,14 @@ Three devices keep the enclosures decisive:
 Anything else is UNDECIDED and reported, never assumed. Undecided programs are
 retried at higher precision, and then by towers.py, a second decider with an exact
 combination layer and tower enclosures that carry their phase (see its docstring),
-before they are reported. Two programs (K 23 and K 25) whose value depends on the phase
-of exp(T4 / z), and so on every digit of T4 = e^(e^(e^e)), are decided only by deep.py,
-at 5.5 million bits.
+before they are reported. Programs whose value depends on the phase of a tower such as
+exp(T4 / z), and so on every digit of T4 = e^(e^(e^e)), are decided only with deep.py,
+which gives towers.py that phase at up to 5.5 million bits.
 
 usage: python decide.py [max_K]       the claims in docs/minimality.md (default 17)
-       python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25
-       python decide.py --open --deep the same, and run deep.py for its two programs
+       python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
+                                      K 27 without ln 0
+       python decide.py --open --deep the same, with deep.py for the programs left open
 """
 import sys
 import time
@@ -575,6 +576,13 @@ def uses_ln0(word):
 
 
 def decide(word, tre, tk=0):
+    k = (word, tre, tk)
+    if k not in VERDICT:
+        VERDICT[k] = decide_once(word, tre, tk)
+    return VERDICT[k]
+
+
+def decide_once(word, tre, tk=0):
     reason = None
     for bits in (128, 1024, 8192):
         iv.prec = bits
@@ -588,23 +596,26 @@ def decide(word, tre, tk=0):
     if verdict is not None:
         STATS["towers"] += 1
         return verdict, None
-    if word in DEEP and (tre, tk) in DEEP[word][0]:
-        if not RUN_DEEP:
-            return None, f"{reason}; towers.py: {why}; needs deep.py (python tools/minimality/deep.py)"
-        import deep
-        if deep.check(word):
-            STATS["deep"] += 1
-            return True, None
-        return None, "deep.py did not exclude it"
     return None, f"{reason}; towers.py: {why}"
 
 
 STATS = {"towers": 0, "deep": 0}
-RUN_DEEP = False
-# Programs that turn on the phase of exp(T4 / z), Im(T4 / z) mod 2*pi, which only
-# millions of bits settle (deep.py), and the target deep.py's argument covers.
-DEEP = {"11E1E1111E1E1EEEE1E1E1E": ({(-2, 0)}, "deep.py"),
-        "111E1E1111E1E1EEEE1E1E1EE": ({(-2, 0)}, "deep.py")}
+VERDICT = {}    # (word, tre, tk) -> (verdict, reason)
+PENDING = []    # undecided programs whose verdict a claim needs, for deep.py
+QUIET = False
+
+
+def run_deep():
+    """Retry PENDING with deep.py's phase oracle (in parallel) and record the verdicts."""
+    import deep
+    jobs = [j for j in dict.fromkeys(PENDING) if VERDICT[j][0] is None]
+    print(f"deep.py: {len(jobs)} programs left open go to towers.py with deep.py's phases", flush=True)
+    for j, (verdict, why) in deep.run(jobs).items():
+        if verdict is not None:
+            STATS["deep"] += 1
+            VERDICT[j] = (verdict, None)
+        else:
+            VERDICT[j] = (None, f"{VERDICT[j][1]}; with deep.py: {why}")
 
 
 CLAIMS = [("0", 0, 5), ("-1", -1, 13), ("2", 2, 17)]
@@ -619,9 +630,12 @@ def prove(label, tre, tk, upto):
             verdict, reason = decide(w, tre, tk)
             if verdict is None:
                 undecided.append((w, reason))
+                PENDING.append((w, tre, tk))
             elif verdict is False:
                 equal.append(w)
     status = "PROVED" if not undecided and not equal else "NOT PROVED"
+    if QUIET:
+        return status == "PROVED"
     print(f"{label}: no program with K <= {upto} equals {label}: {status}  ({checked} programs, {len(equal)} not excluded, {len(undecided)} undecided)", flush=True)
     for w in equal[:10]:
         print(f"   not excluded: {w}")
@@ -639,9 +653,12 @@ def only_ln0(label, tre, tk, k):
         if verdict is not True:
             left.append((w, verdict, reason))
     strict = [x for x in left if uses_ln0(x[0]) is not True]
+    PENDING.extend((w, tre, tk) for w, verdict, _ in strict if verdict is None)
     status = "PROVED" if not strict else "NOT PROVED"
+    if QUIET:
+        return not strict
     print(f"{label} without ln 0 needs more than K {k}: {status}  ({len(left)} K {k} programs not excluded, {len(strict)} of them without ln 0)", flush=True)
-    for w, verdict, reason in strict[:10]:
+    for w, verdict, reason in strict[:20]:
         print(f"   {w}  {'undecided: ' + reason if verdict is None else 'not excluded'}")
     return not strict
 
@@ -665,6 +682,11 @@ SELF_TEST = [
 def self_test():
     bad = [w for w, tre, tk in SELF_TEST if decide(w, tre, tk)[0] is True]
     bad += [w for w, tre, tk in SELF_TEST if towers.decide(w, tre, tk)[0] is True and w not in bad]
+    if "--deep" in sys.argv:  # and with deep.py's phases
+        import deep
+        towers.PHASE = deep.phase
+        bad += [w for w, tre, tk in SELF_TEST if towers.decide(w, tre, tk)[0] is True and w not in bad]
+        towers.PHASE = None
     print(f"self-test: {len(SELF_TEST) - len(bad)}/{len(SELF_TEST)} known words not excluded for their own value")
     for w in bad:
         print(f"   UNSOUND: excluded {w}")
@@ -676,13 +698,21 @@ def main():
         sys.exit(2)
     if len(sys.argv) > 1 and sys.argv[1] == "--open":
         # +i*pi on this cut at K 21 (K 23 without ln 0), and -2 at K 25 (K 27 without ln 0).
-        global RUN_DEEP
-        RUN_DEEP = "--deep" in sys.argv
+        global QUIET
         t0 = time.time()
-        ok = prove("+i*pi", 0, 1, 19)
-        ok = only_ln0("+i*pi", 0, 1, 21) and ok
-        ok = prove("-2", -2, 0, 23) and ok
-        ok = only_ln0("-2", -2, 0, 25) and ok
+
+        def claims():
+            ok = prove("+i*pi", 0, 1, 19)
+            ok = only_ln0("+i*pi", 0, 1, 21) and ok
+            ok = prove("-2", -2, 0, 23) and ok
+            return only_ln0("-2", -2, 0, 25) and ok
+        if "--deep" in sys.argv:
+            QUIET = True
+            claims()
+            print(f"first pass: {time.time() - t0:.0f} s", flush=True)
+            run_deep()
+            QUIET = False
+        ok = claims()
         print(f"decided by towers.py: {STATS['towers']}, by deep.py: {STATS['deep']}  ({time.time() - t0:.0f} s)")
         sys.exit(0 if ok else 1)
     max_k = int(sys.argv[1]) if len(sys.argv) > 1 else 17

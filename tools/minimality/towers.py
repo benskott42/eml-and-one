@@ -22,8 +22,16 @@ towers. This module evaluates a program in two layers, both exact or rigorous:
    comparable exponentials, exp(W1)(1 + exp(W2 - W1)), where W2 - W1 is computed
    from the exact layer when both are exp atoms, so a shared tower cancels.
 
+A tower keeps its phase apart from W when W's own enclosure is too wide for it:
+Im w summed atom by atom in the exact layer (T6 - ln z is a tower with imaginary
+part -Arg z), or, when PHASE is set (deep.py), Im w mod 2*pi computed at millions of
+bits from the subword whose value is w. A branch that depends on a phase nothing
+reduces, ln(exp w) with Im w a tower, keeps its exact real part Re w and an unknown
+-2*pi*i*n as an atom that is purely imaginary and has no enclosure.
+
 A program is excluded when value - target is a nonempty combination whose
-enclosure is a tower (nonzero) or a rectangle that misses 0. An empty
+enclosure is a tower (nonzero) or a rectangle that misses 0, or whose real part,
+without the purely imaginary atoms, is a tower or a rectangle that misses 0. An empty
 combination means the value IS the target, and is reported as such. Anything
 else raises Undecided. ln 0 = -inf and infinities follow decide.py.
 """
@@ -50,11 +58,16 @@ class Ball:
 
 
 class Tow:
-    """s*exp(W), s = +-1, W an enclosure. Never 0."""
-    __slots__ = ("W", "s")
+    """s*exp(W), s = +-1, W an enclosure. Never 0. ph, when set, is a real interval
+    with Im W in ph + 2*pi*Z: the phase of the tower, known more tightly than W's
+    own imaginary part (from the exact layer, or from deep.py at millions of bits).
+    im, when set, is a real interval containing the imaginary part of the value itself,
+    summed atom by atom in the exact layer (T6 - ln z is a tower whose imaginary part
+    -Arg z no enclosure of the tower alone keeps)."""
+    __slots__ = ("W", "s", "ph", "im")
 
-    def __init__(self, W, s):
-        self.W, self.s = W, s
+    def __init__(self, W, s, ph=None, im=None):
+        self.W, self.s, self.ph, self.im = W, s, ph, im
 
 
 def zint(x):
@@ -76,7 +89,7 @@ def pm(r):
 def a_neg(A):
     if isinstance(A, Ball):
         return Ball(-A.re, -A.im)
-    return Tow(A.W, -A.s)
+    return Tow(A.W, -A.s, A.ph, None if A.im is None else -A.im)
 
 
 def sign_iv(x):
@@ -89,16 +102,24 @@ def sign_iv(x):
     return None
 
 
+def phase(A):
+    """A real interval congruent to Im W mod 2*pi for a tower A = s*exp(W), or None."""
+    if A.ph is not None:
+        return A.ph
+    imW = a_im(A.W)
+    return imW.re if isinstance(imW, Ball) else None
+
+
 def a_re(A):
     """Real part, as a real enclosure."""
     if isinstance(A, Ball):
         return Ball(A.re)
     if isreal(A.W):
         return A
-    imW = a_im(A.W)
-    if not isinstance(imW, Ball):
+    ph = phase(A)
+    if ph is None:
         return symmetric(A, "tower with a tower phase")
-    c = iv.cos(imW.re)
+    c = iv.cos(ph)
     sc = sign_iv(c)
     if sc in (None, 0):
         return symmetric(A, "phase of a tower near +-pi/2")
@@ -111,10 +132,12 @@ def a_im(A):
         return Ball(A.im)
     if isreal(A.W):
         return Ball(iv.mpf(0))
-    imW = a_im(A.W)
-    if not isinstance(imW, Ball):
+    if A.im is not None:
+        return Ball(A.im)
+    ph = phase(A)
+    if ph is None:
         return symmetric(A, "tower with a tower phase")
-    sn = iv.sin(imW.re)
+    sn = iv.sin(ph)
     ss = sign_iv(sn)
     if ss is None:
         return symmetric(A, "phase of a tower near 0 or pi")
@@ -146,22 +169,22 @@ def is_tiny(A):
     return lA.re.b < -5 if isinstance(lA, Ball) else lA.s < 0
 
 
-def mkexp(W, s=1):
-    """s*exp(W) as a rectangle when it is in range, else as a tower."""
+def mkexp(W, s=1, ph=None):
+    """s*exp(W) as a rectangle when it is in range, else as a tower. ph: see Tow."""
     if isinstance(W, Ball):
         if W.re.a >= -THRESH and W.re.b <= THRESH:
             m = iv.exp(W.re) * s
             if zint(W.im):
                 return Ball(m)
             return Ball(m * iv.cos(W.im), m * iv.sin(W.im))
-        return Tow(W, s)
+        return Tow(W, s, ph)
     # W is a tower: exp of a tiny W is 1 + O(|W|)
     lW = a_re(W.W)  # ln|W|
     tiny = lW.re.b < -5 if isinstance(lW, Ball) else lW.s < 0
     if tiny:
         m = mag_up(W)
         return Ball(s * (1 + pm(2 * m)), iv.mpf(0) if isreal(W) else pm(2 * m))
-    return Tow(W, s)
+    return Tow(W, s, ph)
 
 
 def mag_up(A):
@@ -234,11 +257,39 @@ def absorb(A, B, g):
     # s*exp(W) + B = s*exp(W + ln(1 + x)), x = B/A, |x| <= e^-g
     try:
         x = a_mul(B, a_inv(A))
-        W = a_add(A.W, ln1p_enc(x, g))
+        P = ln1p_enc(x, g)
     except Undecided:
         r = 2 * iv.exp(-iv.mpf(g)).b
-        W = a_add(A.W, Ball(pm(r), iv.mpf(0) if real else pm(r)))
-    return mkexp(W, A.s)
+        P = Ball(pm(r), iv.mpf(0) if real else pm(r))
+    W = a_add(A.W, P)
+    if isinstance(W, Tow) and W.im is None and not isreal(W):
+        # Im(W + P) = Im W + Im P, kept when the sum is a tower too
+        try:
+            iA = A.W.im if isinstance(A.W, Ball) else (0 if isreal(A.W) else A.W.im)
+            if iA is not None:
+                W = Tow(W.W, W.s, W.ph, iA + im_bound(P))
+        except Undecided:
+            pass
+    return mkexp(W, A.s, ph_add(A.ph, P))
+
+
+def im_bound(A):
+    """A real interval containing Im A."""
+    if isinstance(A, Ball):
+        return A.im
+    if isreal(A):
+        return iv.mpf(0)
+    return pm(mag_up(A))
+
+
+def ph_add(ph, P):
+    """The phase ph shifted by Im P, or None."""
+    if ph is None:
+        return None
+    try:
+        return ph + im_bound(P)
+    except Undecided:
+        return None
 
 
 def ln1p_enc(u, g):
@@ -317,6 +368,13 @@ def combine(W1, s1, W2, s2, D):
     return mkexp(a_add(W1, Wq), s1 * sq)
 
 
+def logph(A, W):
+    """A phase of s*exp(W) = A: A's own ph for a tower, else Im W when it is a rectangle."""
+    if isinstance(A, Tow) and A.ph is not None:
+        return A.ph
+    return W.im if isinstance(W, Ball) else None
+
+
 def a_mul(A, B):
     if isinstance(A, Ball) and isinstance(B, Ball):
         if isreal(A) and isreal(B):
@@ -324,12 +382,14 @@ def a_mul(A, B):
         return Ball(A.re * B.re - A.im * B.im, A.re * B.im + A.im * B.re)
     W1, s1 = logform(A)
     W2, s2 = logform(B)
-    return mkexp(a_add(W1, W2), s1 * s2)
+    p1, p2 = logph(A, W1), logph(B, W2)
+    return mkexp(a_add(W1, W2), s1 * s2, None if p1 is None or p2 is None else p1 + p2)
 
 
 def a_inv(A):
     W, s = logform(A)
-    return mkexp(a_neg(W), s)
+    p = logph(A, W)
+    return mkexp(a_neg(W), s, None if p is None else -p)
 
 
 def a_scale(A, c):
@@ -406,12 +466,17 @@ def a_log(A):
     if isreal(W):
         return W if s > 0 else a_add(W, Ball(iv.mpf(0), -iv.pi))
     Y = a_im(W)
-    if not isinstance(Y, Ball):
-        raise Undecided("tower phase")
-    n = cell(Y.re, s < 0)
+    if isinstance(Y, Ball):
+        n = cell(Y.re, s < 0)
+        if n is not None:
+            return a_add(W, Ball(iv.mpf(0), (iv.pi if s < 0 else 0) - 2 * iv.pi * n))
+    if A.ph is None:
+        raise Undecided("tower phase" if not isinstance(Y, Ball) else "tower phase on the cut")
+    # Im W is known only mod 2*pi, through ph: ln A = Re W + i*Arg A
+    n = cell(A.ph, s < 0)
     if n is None:
         raise Undecided("tower phase on the cut")
-    return a_add(W, Ball(iv.mpf(0), (iv.pi if s < 0 else 0) - 2 * iv.pi * n))
+    return a_add(a_re(W), Ball(iv.mpf(0), A.ph + (iv.pi if s < 0 else 0) - 2 * iv.pi * n))
 
 
 # ---------------------------------------------------------------- exact layer
@@ -479,6 +544,8 @@ def approx(lin):
     k = key(lin)
     if k in APPROX:
         return APPROX[k]
+    if any(ATOMS[a]["A"] is None for a in lin):
+        raise Undecided("imaginary part is a tower")
     terms = list(lin.items())
     # merge pairs of comparable exp atoms through the exact difference of their arguments
     pieces = []
@@ -510,6 +577,13 @@ def approx(lin):
     out = Ball(iv.mpf(0))
     for p in pieces:
         out = a_add(out, p)
+    if isinstance(out, Tow) and out.im is None and not isreal(out.W):
+        try:
+            Y = im_sum(lin)
+            if isinstance(Y, Ball):
+                out = Tow(out.W, out.s, out.ph, Y.re)
+        except Undecided:
+            pass
     APPROX[k] = out
     return out
 
@@ -527,7 +601,7 @@ def rough(A):
     return (lvl, x)
 
 
-def mk_exp(v):
+def mk_exp(v, src=None):
     if v is NAN:
         return NAN
     if isinstance(v, Inf):
@@ -550,12 +624,37 @@ def mk_exp(v):
     sign = 1 if k % 2 == 0 else -1
     if not w:
         return {"1": sign}
-    atom = new_atom(f"E[{key(w)}]", a_exp_lin(w), warg=w)
+    kk = f"E[{key(w)}]"
+    atom = kk if kk in ATOMS else new_atom(kk, a_exp_lin(w, src, k), warg=w)
     return {atom: sign}
 
 
-def a_exp_lin(w):
-    return mkexp(approx(w), 1)
+PHASE = None  # deep.py's phase oracle: PHASE(word) -> a real interval congruent to Im(word) mod 2*pi
+
+
+def a_exp_lin(w, src=None, k=0):
+    """exp(w). A tower keeps the phase Im w when its enclosure is wide: from the exact layer
+    (Im w summed atom by atom), else, with deep.py, from the subword src whose value is w + k*pi*i."""
+    A = mkexp(approx(w), 1)
+    if not isinstance(A, Tow) or A.ph is not None or isreal(A.W):
+        return A
+    try:
+        Y = a_im(A.W)
+        if isinstance(Y, Ball) and cell(Y.re, False) is not None:
+            return A
+    except Undecided:
+        pass
+    try:
+        Y = im_sum(w)
+        if isinstance(Y, Ball) and cell(Y.re, False) is not None:
+            return Tow(A.W, A.s, Y.re)
+    except Undecided:
+        pass
+    if PHASE is not None and src is not None:
+        ph = PHASE(src)
+        if ph is not None:
+            return Tow(A.W, A.s, ph - k * iv.pi)
+    return A
 
 
 def im_of(lin):
@@ -578,6 +677,8 @@ def im_sign(lin):
         info = ATOMS[a]
         if info["real"]:
             continue
+        if info["A"] is None:
+            return None
         try:
             Y = a_scale(a_im(info["A"]), c)
             if real_sign(Y) is not None or info.get("imsign") is None:
@@ -619,6 +720,8 @@ def im_sum(lin):
     for a, c in lin.items():
         if ATOMS[a]["real"]:
             continue
+        if ATOMS[a]["A"] is None:
+            raise Undecided("imaginary part is a tower")
         pieces.append(a_scale(a_im(ATOMS[a]["A"]), c))
     pieces.sort(key=rough, reverse=True)
     out = Ball(iv.mpf(0))
@@ -640,9 +743,20 @@ def ln_single(a, c):
         w = info["warg"]
         if lin_real(w):
             return dict(w) if c > 0 else lsub(w, {"ipi": 1})
-        Y = im_of(w)
-        if not isinstance(Y, Ball):
-            raise Undecided("exp atom with a tower phase")
+        try:
+            Y = im_of(w)
+        except Undecided:
+            # Im w is a tower: ln(c*exp(w)) = w (+ i*pi) - 2*pi*i*n for some integer n that
+            # nothing bounds. The real part is still exactly Re w; the rest is an atom that
+            # is purely imaginary and has no enclosure.
+            out = dict(w)
+            if c < 0:
+                out["ipi"] = out.get("ipi", 0) + 1
+                if out["ipi"] == 0:
+                    del out["ipi"]
+            ATOMS.setdefault(f"N[{key({a: c})}]", dict(A=None, real=False, imonly=True))
+            out[f"N[{key({a: c})}]"] = 1
+            return out
         lo, hi = cell_range(Y.re, c < 0)
         if lo == hi:
             kk = (1 if c < 0 else 0) - 2 * lo
@@ -658,7 +772,7 @@ def ln_single(a, c):
             out["ipi"] = out.get("ipi", 0) + 1
             if out["ipi"] == 0:
                 del out["ipi"]
-        nk = new_atom(f"N[{key({a: c})}]", Ball(iv.mpf(0), -2 * iv.pi * iv.mpf([lo, hi])))
+        nk = new_atom(f"N[{key({a: c})}]", Ball(iv.mpf(0), -2 * iv.pi * iv.mpf([lo, hi])), imonly=True)
         out[nk] = 1
         return out
     return ln_generic({a: c})
@@ -748,7 +862,7 @@ def ln_raw(v):
         out = dict(base)
         out[atom] = out.get(atom, 0) + 1
         if unknown is not None:
-            nk = new_atom(f"N[{key(v)}]", Ball(iv.mpf(0), -2 * iv.pi * iv.mpf(list(unknown))))
+            nk = new_atom(f"N[{key(v)}]", Ball(iv.mpf(0), -2 * iv.pi * iv.mpf(list(unknown))), imonly=True)
             out[nk] = 1
         if wrap:
             out["ipi"] = out.get("ipi", 0) + wrap
@@ -786,12 +900,12 @@ def evaluate(word):
     st = []
     for ch in word:
         if ch == "1":
-            st.append({"1": 1})
+            st.append(({"1": 1}, "1"))
         else:
-            y = st.pop()
-            x = st.pop()
-            st.append(sub(mk_exp(x), mk_ln(y)))
-    return st[0]
+            y, wy = st.pop()
+            x, wx = st.pop()
+            st.append((sub(mk_exp(x, wx), mk_ln(y)), wx + wy + "E"))
+    return st[0][0]
 
 
 def excludes(word, tre, tk=0):
@@ -807,17 +921,27 @@ def excludes(word, tre, tk=0):
     d = lsub(v, target)
     if not d:
         return False
-    A = approx(d)
-    if isinstance(A, Tow):
-        return True
-    if sign_iv(A.re) in (1, -1) or sign_iv(A.im) in (1, -1):
-        return True
+    why = "enclosure of value - target contains 0"
+    try:
+        A = approx(d)
+        if isinstance(A, Tow):
+            return True
+        if sign_iv(A.re) in (1, -1) or sign_iv(A.im) in (1, -1):
+            return True
+    except Undecided as e:
+        why = str(e)
     try:
         if im_sign(d) in (1, -1):
             return True
     except Undecided:
         pass
-    raise Undecided("enclosure of value - target contains 0")
+    # The real part alone: purely imaginary atoms (the unknown -2*pi*i*n of a branch) drop out.
+    dr = {a: c for a, c in d.items() if not ATOMS[a].get("imonly") and a != "ipi"}
+    if dr and len(dr) < len(d):
+        R = a_re(approx(dr))
+        if isinstance(R, Tow) or sign_iv(R.re) in (1, -1):
+            return True
+    raise Undecided(why)
 
 
 def decide(word, tre, tk=0):
