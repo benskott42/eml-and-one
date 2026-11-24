@@ -169,7 +169,7 @@ function programText(node: Node): string | null {
   return summary;
 }
 
-function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
+function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
   if (node.type === "one") {
     return { value: { re: 1, im: 0 }, text: "1", singular: null, mode, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, pendingExact: false, notice: null };
   }
@@ -189,7 +189,7 @@ function runNode(node: Node, mode: Mode): Pick<Entry, "value" | "text" | "singul
     };
   }
   try {
-    const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    const report = evaluateReport(node, env, { maxNodes: 80_000 });
     if (report.unverified) {
       return {
         value: { re: Number.NaN, im: Number.NaN },
@@ -318,7 +318,10 @@ function PressLine({ node }: { node: Node | null }) {
             type="button"
             className="ti-lcd-btn"
             onClick={() => {
-              void navigator.clipboard.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
+              // No clipboard outside a secure context; that must not throw.
+              const clip = navigator.clipboard;
+              if (!clip) return;
+              void clip.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
             }}
           >
             {copied ? "Copied" : "Copy"}
@@ -374,8 +377,11 @@ function resultError(item: Entry): string | null {
   });
 }
 
-function entry(node: Node, caption: string, mode: Mode): Entry {
-  return { node, caption, watch: watchSerial++, ...runNode(node, mode) };
+/** bound holds the x and y values a word of x and y leaves reads, in float as in exact. */
+function entry(node: Node, caption: string, mode: Mode, bound?: Record<string, C>): Entry {
+  const item: Entry = { node, caption, watch: watchSerial++, ...runNode(node, mode, bound) };
+  if (bound) item.bound = bound;
+  return item;
 }
 
 function valuesOf(xText: string, yText: string): Record<string, C> {
@@ -549,7 +555,10 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const twoButtons = useSyncExternalStore(subscribeTwoButtons, readTwoButtons, () => false);
   // Presses on the static HTML before hydration do nothing; tests and scripts wait for data-ready.
   const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
-  const [heldShortcut, setHeldShortcut] = useState<string | null>(null);
+  // A long-press caption belongs to the screen it was read on. The tape changes
+  // with every press, undo, and clear, so the caption goes with the next one.
+  const [held, setHeld] = useState<{ text: string; tape: string[] } | null>(null);
+  const setHeldShortcut = useCallback((text: string) => setHeld({ text, tape: modelRef.current.tape }), []);
   const modelRef = useRef(model);
   const textRef = useRef({ xText, yText });
   const modeRef = useRef<Mode>("exact");
@@ -590,7 +599,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       ...current,
       stack,
       note: top?.watch === token ? noteFor(next) : current.note,
-      error: top?.watch === token ? resultError(next) : current.error,
+      // "Swap needs two values." pressed while the top computed stays up.
+      error: top?.watch === token ? (resultError(next) ?? current.error) : current.error,
     };
     modelRef.current = updated;
     historyRef.current = { ...historyRef.current, current: updated };
@@ -642,7 +652,13 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     [publishWatch],
   );
 
-  const cancelExact = useCallback(() => {
+  const cancelExact = useCallback(function cancel() {
+    // A mode switch or undo shows "computing" before its rows exist. A cancel
+    // then waits for them, or the rows it lands would start computing again.
+    if (recomputeRef.current) {
+      queueRef.current.push(() => cancel());
+      return;
+    }
     exactJobs.current.clear();
     for (const kind of ["fill", "compare"] as const) {
       exactWorkers.current[kind]?.terminate();
@@ -869,7 +885,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           if (cancel) return;
           await new Promise((resolve) => setTimeout(resolve, 0));
           if (cancel) return;
-          stack.push({ ...entry(item.node, item.caption, mode), bound: item.bound });
+          stack.push(entry(item.node, item.caption, mode, item.bound));
         }
       } catch (err) {
         error = failure(err);
@@ -1019,7 +1035,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       }
       const node = E(x.node, y.node);
       const caption = clip(`eml(${x.caption}, ${y.caption})`);
-      const item = { ...entry(node, caption, modeRef.current), bound: { ...x.bound, ...y.bound } };
+      const item = entry(node, caption, modeRef.current, { ...x.bound, ...y.bound });
       commit({
         stack: [...rest, item],
         tape: [...current.tape, "E"],
@@ -1061,7 +1077,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       }
       const node = applyUnaryNode(id, arg.node);
       const caption = clip(unaryCaption(id, label, arg.caption));
-      const item = { ...entry(node, caption, modeRef.current), bound: arg.bound };
+      const item = entry(node, caption, modeRef.current, arg.bound);
       commit({
         stack: [...rest, item],
         tape: [...current.tape, label],
@@ -1100,7 +1116,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       }
       const node = applyBinaryNode(id, x.node, y.node);
       const caption = clip(binaryCaption(id, x.caption, y.caption));
-      const item = { ...entry(node, caption, modeRef.current), bound: { ...x.bound, ...y.bound } };
+      const item = entry(node, caption, modeRef.current, { ...x.bound, ...y.bound });
       commit({
         stack: [...rest, item],
         tape: [...current.tape, label],
@@ -1223,7 +1239,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         for (const item of previous.stack) {
           await new Promise((resolve) => setTimeout(resolve, 0));
           if (job !== jobRef.current) return;
-          built.push({ ...entry(item.node, item.caption, modeNow), bound: item.bound });
+          built.push(entry(item.node, item.caption, modeNow, item.bound));
         }
       } catch (err) {
         error = failure(err);
@@ -1265,16 +1281,16 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     commit(EMPTY);
   }
 
-  function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null) {
+  function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null, bound?: Record<string, C>) {
     if (recomputeRef.current) {
-      queueRef.current.push(() => showProgram(node, caption, replace, notice));
+      queueRef.current.push(() => showProgram(node, caption, replace, notice, bound));
       return;
     }
     const job = (jobRef.current += 1);
     const previous = modelRef.current;
     const mode = modeRef.current;
     if (mode === "exact") {
-      const item = { ...entry(node, caption, mode), notice };
+      const item = { ...entry(node, caption, mode, bound), notice };
       const rest = replace && previous.stack.length > 0 ? previous.stack.slice(0, -1) : previous.stack;
       const next: Model = {
         stack: [...rest, item],
@@ -1295,7 +1311,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (job !== jobRef.current) return;
       try {
-        const item = entry(node, caption, mode);
+        const item = entry(node, caption, mode, bound);
         const rest = replace && previous.stack.length > 0 ? previous.stack.slice(0, -1) : previous.stack;
         const next: Model = {
           stack: [...rest, item],
@@ -1327,7 +1343,12 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       const from = parsed.rotatedFrom;
       const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
       const notice = from ? `Rotated ${from} to ${to}.` : null;
-      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice);
+      // A word of x and y reads the fields as they are now, as push x and push y do.
+      const numbers: Record<string, C> = {};
+      if (parsed.word.includes("x")) numbers.x = evaluateReport(readScalar(textRef.current.xText, "x")).value;
+      if (parsed.word.includes("y")) numbers.y = evaluateReport(readScalar(textRef.current.yText, "y")).value;
+      const bound = Object.keys(numbers).length > 0 ? numbers : undefined;
+      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice, bound);
     } catch (err) {
       fail(failure(err));
     }
@@ -1437,7 +1458,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
             ) : null}
             {model.error ? <p className="ti-lcd-error" role="alert">{model.error}</p> : null}
             <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
-            {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
+            {held && held.tape === model.tape ? <p className="ti-lcd-hold">{held.text}</p> : null}
           </div>
         </div>
 
@@ -1455,6 +1476,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               type="button"
               role="radio"
               aria-checked={mode === "float"}
+              tabIndex={mode === "float" ? 0 : -1}
               onClick={() => requestMode("float")}
               onKeyDown={(event) => {
                 if (event.key === "ArrowRight" || event.key === "ArrowDown") {
@@ -1472,6 +1494,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               type="button"
               role="radio"
               aria-checked={mode === "exact"}
+              tabIndex={mode === "exact" ? 0 : -1}
               onClick={() => requestMode("exact")}
               onKeyDown={(event) => {
                 if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
@@ -1570,6 +1593,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               Compute
             </button>
           </form>
+          <p className="ti-caption">log(b, x) is log base b of x, as on the log key; log(x) and ln(x) are the natural log.</p>
           <div className="ti-chips">
             {EXAMPLES.map((example) => (
               <button

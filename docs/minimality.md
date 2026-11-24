@@ -1,6 +1,6 @@
 # Minimality of 0, −1, and 2
 
-0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. Every other record in this project is shortest known.
+0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. +iπ is proved minimal at K 21, and at K 23 without ln 0, and −2 at K 25 with ln 0 (below). Every other record in this project is shortest known.
 
 A program is an RPN word on the alphabet {1, E}. A word with n leaves has length K = 2n − 1, so only odd lengths occur. "K ≤ n" means every odd length up to n. Each program was generated directly and decided on its own. Programs were not grouped by value, so it does not matter whether two forms are the same.
 
@@ -25,8 +25,24 @@ The same exclusions hold when infinities keep a direction. The two infinity mode
 
 The verification scripts above are not in this repository. [tools/minimality/decide.py](../tools/minimality/decide.py) is an independent check that is: interval arithmetic (mpmath) with exact k·π tags, symbolic cancellation, and signed tower offsets. Run `python tools/minimality/decide.py` and it reports each claim as PROVED or lists the programs it could not decide. On 2026-11-22 every claim above came out PROVED with nothing undecided: 0 at K 7, −1 at K 15 with ln 0 and at K 17 without it, and 2 at K 19. That includes the four K 17 programs settled by hand above.
 
-## +iπ at K 21
+## +iπ at K 21, and K 23 without ln 0
 
-`python tools/minimality/decide.py --open` also settles a length that this document did not claim. **+iπ on this cut (−iπ under the principal log) is minimal at K 21 with ln 0 = −∞**: all 6918 programs with K ≤ 19 are excluded, with nothing undecided. Three of them were tower impostors that differ from +iπ by about 10^(−1656519). The script excludes them because it tracks the sign of the term a tower absorbs, not by numerical comparison, which no precision short of a million digits could do.
+`python tools/minimality/decide.py --open` also settles lengths that this document did not claim. **+iπ on this cut (−iπ under the principal log) is minimal at K 21 with ln 0 = −∞**: all 6918 programs with K ≤ 19 are excluded, with nothing undecided. Three of them were tower impostors that differ from +iπ by about 10^(−1656519). The script excludes them because it tracks the sign of the term a tower absorbs, not by numerical comparison, which no precision short of a million digits could do.
 
-Still open: +iπ without ln 0 at K 23 (16 K 21 programs undecided) and −2 at K 25 (188 programs with K ≤ 23 undecided). No counterexample was found among them.
+**Without ln 0, +iπ is minimal at K 23.** Of the 58786 K 21 programs, the only two that are not excluded take ln 0, and both are +iπ. The first pass of decide.py left 16 K 21 programs undecided. [tools/minimality/towers.py](../tools/minimality/towers.py) decides all 16 (2026-11-24); none is +iπ.
+
+## −2 at K 25
+
+Of the 82500 programs with K ≤ 23, the first pass of decide.py left 188 undecided, all of them towers. towers.py decides 187 of them, and none is −2. The last one, `11E1E1111E1E1EEEE1E1E1E`, is exp(exp(W)) with W = T4/z, where T4 = exp(exp(exp(e))) ≈ 10^1656520 and z = e − ln(e − T2) = e − ln(T2 − e) + iπ. Re W > 10^1656000, so its modulus exp(e^(Re W) cos θ), with θ = Im W mod 2π, is 2 only if |cos θ| < 10^(−1000). θ depends on every digit of T4. [tools/minimality/deep.py](../tools/minimality/deep.py) encloses θ with interval arithmetic at 5.5 million bits: exp by Newton's method on mpmath's ln, each enclosure checked with directed-rounding logs, so Im W is known to within 10^(−116). On 2026-11-24 it gave θ = −5.39531064387935195139… and cos θ = 0.63106214288953973449…, in 87 minutes. A plain interval-arithmetic run (mpmath iv.exp, 152 minutes) gave the same enclosure. So this program is not −2, and **−2 is minimal at K 25 with ln 0 = −∞**. `--open` alone reports this program as undecided and names deep.py; `--open --deep` runs deep.py on it in the same pass.
+
+Without ln 0, −2 is shortest known at K 27. 18 K 25 programs without ln 0 were left undecided by towers.py. One of them, `111E1E1111E1E1EEEE1E1E1EE` = e − ln(exp(exp(W))), turns on the same θ (its real part is e − e^(Re W) cos θ), and the same deep.py run excludes it. The other 17 remain undecided: each has a tower whose phase towers.py cannot reduce, so K 27 without ln 0 is not proved minimal.
+
+## How towers.py decides a tower program
+
+decide.py follows towers only in a few fixed shapes. The programs it left open nest a tower such as T5 = exp(exp(exp(exp(e)))) inside logs, sums and further exponentials, so the value carries a phase within 10^(−1656519) of a multiple of π, or is the difference of two towers. towers.py evaluates each program in two layers:
+
+- **An exact layer.** A value is an integer combination of atoms: 1, iπ, exp(w), ln(z), and ln(1 + u). Equal atoms cancel exactly. The rewrites are exp(ln z) = z, exp(w + kπi) = (−1)^k exp(w), and ln(±exp w) = w, with the multiple of 2πi fixed by the lower cut. When one term t of a sum v is larger than the rest r (|r/t| < 1/e, certified), ln v is split as ln t + ln(1 + r/t), and the 2πi correction comes from the sign of Im(r/t), which the exact layer computes term by term. So ln(e − T5) is exactly T4 − iπ plus a tiny real atom, not an interval.
+- **A rigorous enclosure for each atom**: an interval rectangle, or ±exp(W) with W itself an enclosure. ±exp(W) is a tower, huge or tiny, that keeps its phase, and it is never 0. A sum absorbs a term e^50 times smaller into W with a proven bound, and two comparable exponentials exp(w1) ± exp(w2) are combined through w2 − w1 from the exact layer, so a shared tower cancels.
+- When a branch is not known, because ln(exp w) depends on Im w mod 2π with Im w a tower, or the sign of a phase below e^(−10^15) is lost, the real part is still exact. The unknown −2πin becomes an atom of its own, purely imaginary, with a range for n.
+
+A program is excluded when value − target is a nonempty combination whose enclosure is ±exp(W), or a rectangle, or an imaginary part summed atom by atom, that misses 0. On each of the 6918 programs with K ≤ 19 and each of the targets 0, −1, 2, −2 and +iπ, no program that one of towers.py and decide.py finds equal to the target is excluded by the other. towers.py excludes a few more, such as −1 + exp(e − exp(exp(e − 1))), which decide.py leaves open. Each of the 4138 finite values that plain 300-bit evaluation reaches away from the cut lies in towers.py's enclosure.

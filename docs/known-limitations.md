@@ -1,12 +1,12 @@
 # Known limitations
 
-This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), and 2 at K 19 are proved minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
+This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), 2 at K 19, +iπ at K 21 (K 23 without ln 0), and −2 at K 25 (using ln 0) are proved minimal. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
 
 ## Records
 
 −iπ at K 45, 4, 2/3, −1/3, −3, and both 1/3 words are stored in `best-known.json`. −iπ at K 45 is not the K 21 word: that word is +iπ on this cut and −iπ under the principal log. −iπ at K 47 does not use ln 0. −iπ at K 45 and 1/3 at K 35 use ln 0 = −∞. 1/3 at K 37 does not. None of those lengths is proven minimal.
 
-Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21 is proved minimal (tools/minimality/decide.py --open). +iπ at K 23 without ln 0, and −2 at K 25, are shortest known: 16 and 188 tower programs remain undecided, so those lengths are not proven minimal.
+Scaled variable subtraction is K 565 and scaled variable addition is K 655. Both are the current constructions, shortest known, and both depend on ln 0 = −∞. Neither is proven minimal. +iπ at K 21, and at K 23 without ln 0, is proved minimal (tools/minimality/decide.py --open). −2 at K 25 with ln 0 is proved minimal (decide.py --open --deep: one tower program needs tools/minimality/deep.py, a 5.5-million-bit run of about 90 minutes). Without ln 0, −2 at K 27 is shortest known: 17 K 25 programs remain undecided.
 
 Phase-free infinities do not make subtraction or addition work at b = 0. sub(5, 0) and add(5, 0) are NaN in that model. b = 0 needs a directed infinity. artanh of a real greater than 1 is ½ ln|(1+x)/(1−x)| − iπ/2, matching mpmath's atanh. C99 catanh of that real with a +0 imaginary part returns +iπ/2.
 
@@ -33,13 +33,11 @@ What the flag does not catch:
 - 0 minus the smallest positive float, 5×10^(−324). Float keeps a signed zero and exact keeps 0. The comparison treats those magnitudes as equal.
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
-- Raising precision for a value near 10^(−130) makes that exact evaluation slow. Cancel stops it. A newer exact expression pre-empts the one already running.
 
 ## Circuits and search
 
 - Rebuilding a circuit from its press string drops the low-precision, pole, and large-angle flags. Those notes sit beside the node, not in the gates.
-- Loading the 671-press word for ln(1+10^-130) can show exact 0 (float flags "differs from exact"); the result depends on whether the compiled circuit is still cached. Fix planned for v1.1.
-- The slow K = 35 search was not re-run for this version. The fast suite stops at the K = 21 table.
-- The dedup key still keeps up to four circuits. The unsigned-key rewrite is not in this version.
+- The fast suite stops at the K = 21 table (K 23 without ln 0). `npm run eml:golf` runs K = 35 in about 75 s and is not part of the publish check; its last run is in [docs/golf-k35.md](golf-k35.md).
+- The constant search does not merge circuits by value. Its pool is every float-finite circuit that did not overflow or underflow, 88 M through K 35 with ln 0, so K 37 and past are left to tools/emlsearch.
 - The calculator component is still one file. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
 - 0, −1, and 2 tie the lengths in arXiv:2603.21852. ±iπ at K 21 was posted publicly before this project. 3 at K 29 ties an earlier code-golf answer. Those are not claimed as first discoveries. The citations are in the EML and One README.
