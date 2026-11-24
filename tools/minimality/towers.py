@@ -119,6 +119,8 @@ def a_re(A):
     ph = phase(A)
     if ph is None:
         return symmetric(A, "tower with a tower phase")
+    if ph.b - ph.a > 7:  # cos is [-1, 1]; skip reducing endpoints that may be huge
+        return symmetric(A, "phase of a tower near +-pi/2")
     c = iv.cos(ph)
     sc = sign_iv(c)
     if sc in (None, 0):
@@ -137,6 +139,8 @@ def a_im(A):
     ph = phase(A)
     if ph is None:
         return symmetric(A, "tower with a tower phase")
+    if ph.b - ph.a > 7:
+        return symmetric(A, "phase of a tower near 0 or pi")
     sn = iv.sin(ph)
     ss = sign_iv(sn)
     if ss is None:
