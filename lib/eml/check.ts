@@ -4583,6 +4583,81 @@ if (shardTurn(84)) {
   }
 }
 
+if (shardTurn(85)) {
+  // Well-conditioned results the size rules refused. ln(10^400) passes through 10^400
+  // and loses nothing; an enclosure (exact-ball.ts) now confirms such a result where
+  // the rule "far below a value past float range" refused it. (−10^200)^3 is a
+  // compiler-proven integer. Decimal literals are exact, so a sum of them that comes
+  // to 0 is the integer 0. Each row is read directly, through the wire in this
+  // process, and in a fresh process that receives only the packed circuit.
+  const certified: [string, string][] = [
+    ["ln(1e400)", "921.034037197618"],
+    ["ln(1e-400)", "−921.034037197618"],
+    ["sqrt(4e-400)", "2×10^−200"],
+    ["hypot(-1e-200,3e-200)", "3.162277660168×10^−200"],
+    ["(-1e200)^3", "−1×10^600"],
+    ["0.1+0.2-0.3", "0"],
+    ["(0.1+0.2)-0.3", "0"],
+    ["0.3-(0.1+0.2)", "0"],
+    ["-0.3+0.1+0.2", "0"],
+    ["0.5+0.25-0.75", "0"],
+    ["0.7-0.5-0.2", "0"],
+    ["1e-5+2e-5-3e-5", "0"],
+    ["0.1+0.2-0.3+1e-50", "1×10^−50"],
+    ["(0.1+0.2-0.3)*7", "0"],
+    ["0-10^(-500)", "−1×10^−500"],
+    ["10^400/7", "1.428571428571×10^399"],
+  ];
+  // Still refused: a term absorbed into a huge value and cancelled with it, a part
+  // past the cap, a collapsed logarithm, a series zero, and the two hypot words whose
+  // circuits pass through a 0 that only the gates' snap makes exact (known-limitations).
+  const refused = [
+    "((1+10^(-500))-1)+i/2",
+    "(exp(800)+1)-exp(800)",
+    "exp(800)*0",
+    "ln(1-10^(-500))",
+    "ln(1+exp(-1000))",
+    "ln(1-exp(-1000))",
+    "pi+sqrt(exp(800))-sqrt(exp(800))-pi",
+    "hypot(2e-160,1)",
+    "hypot(1e160,-1)",
+    "sinh(1e-7)-1e-7",
+  ];
+  const read = (report: ReturnType<typeof exactReport>) => (report.unverified ? "unverified" : formatExact(report.value).replace(/\u200b/g, ""));
+  for (const [source, want] of certified) {
+    const got = [read(exactReport(compileExpression(source, {}), {}, { maxNodes: 400_000 })), read(workerReport(source))];
+    if (got.some((text) => text !== want)) {
+      failed += 1;
+      console.log("FAIL newly certified", source, got, "want", want);
+    }
+  }
+  for (const source of refused) {
+    const got = [read(exactReport(compileExpression(source, {}), {}, { maxNodes: 400_000 })), read(workerReport(source))];
+    if (got.some((text) => text !== "unverified")) {
+      failed += 1;
+      console.log("FAIL still refused", source, got);
+    }
+  }
+  const jobs = [...certified.map(([source]) => source), ...refused].map((source) => {
+    const packed = packCircuit(compileExpression(source, {}));
+    return { source, tokens: packed.tokens, root: packed.root };
+  });
+  const fresh = runTsx("scripts/fresh-exact.ts", JSON.stringify(jobs), 300_000);
+  if (fresh.status !== 0) {
+    failed += 1;
+    console.log("FAIL fresh newly certified", fresh.status, fresh.stderr?.slice(0, 400));
+  } else {
+    const want = new Map<string, string>([...certified, ...refused.map((source): [string, string] => [source, "unverified"])]);
+    for (const row of JSON.parse(fresh.stdout) as Array<{ source: string; text: string; unverified: boolean }>) {
+      const text = row.unverified ? "unverified" : row.text.replace(/\u200b/g, "");
+      if (text !== want.get(row.source)) {
+        failed += 1;
+        console.log("FAIL fresh newly certified", row.source, text, "want", want.get(row.source));
+      }
+    }
+  }
+}
+
 if (shardTurn(95)) {
   // A pole's infinity keeps its direction. arctan(±i) is ±∞i and artanh(±1) is ±∞, so
   // exp of their turns has no limit. 1 + exp(−arctan(i)) was a certified 1. An infinity

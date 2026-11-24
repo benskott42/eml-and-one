@@ -1,5 +1,5 @@
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markInfiniteSource, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, precisionNoteOf, provenInteger, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -30,6 +30,8 @@ export type Wire =
       ki?: number;
       /** Exact integer when the float has already rounded or overflowed. */
       int?: string;
+      /** The root's integer as the compiler built it; exact mode checks the gates against it. */
+      pint?: string;
       /** A dropped term. Exact mode must not certify the gates. */
       unver?: 1;
       /** Exact mode cannot certify this value; float keeps its own. */
@@ -121,6 +123,10 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     const digits = exactIntDigits(frame.n);
     if (digits !== undefined) token.int = digits;
+    else if (frame.n === root) {
+      const built = provenInteger(frame.n);
+      if (built !== undefined) token.pint = built.toString();
+    }
     if (isUnverified(frame.n)) token.unver = 1;
     if (isExactUnsure(frame.n)) token.xu = 1;
     if (mayBeInfinite(frame.n)) token.inf = 1;
@@ -162,6 +168,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
       if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
+      else if (tok.pint !== undefined && tok.i === root) noteProvenInt(node, BigInt(tok.pint));
       if (tok.unver) markUnverified(node);
       if (tok.xu) markExactUnsure(node);
       if (tok.inf) markInfiniteSource(node);
