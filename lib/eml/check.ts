@@ -76,6 +76,7 @@ import { agreementNote, compileExpression, referenceExpression } from "./parse";
 import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
+import { keyCostEntries, keyCosts } from "../../components/keyTables";
 import { runCertifyChecks } from "./check-certify";
 import shardWeights from "./check-shards.json";
 
@@ -4343,6 +4344,29 @@ if (shardTurn(74)) {
   if (!words || words.length !== 671 || texts.some((text) => text !== "1×10^−130")) {
     failed += 1;
     console.log("FAIL press word of ln(1+10^-130)", words?.length, texts);
+  }
+}
+
+if (shardTurn(75)) {
+  // The calculator builds the key captions in slices from keyCostEntries, with
+  // other circuits built in between. The table must not depend on that.
+  const four = { node: compileExpression("2*2", {}) };
+  const tables = [
+    { stack: [four], want: "add=K 89 sub=K 81 mul=K 87 div=K 87 pow=K 95 log=K 99 avg=K 133 hypot=K 233" },
+    { stack: [four, four], want: "add=K 123 sub=K 7 mul=K 121 div=K 121 pow=K 129 log=K 133 avg=K 167 hypot=K 301" },
+  ];
+  for (const { stack, want } of tables) {
+    const whole = keyCosts(stack, "0.5", "2");
+    const sliced: Record<string, string> = {};
+    for (const [id, caption] of keyCostEntries(stack, "0.5", "2")) {
+      sliced[id] = caption;
+      compileExpression("3+5", {});
+    }
+    const binary = ["add", "sub", "mul", "div", "pow", "log", "avg", "hypot"].map((id) => `${id}=${sliced[id]}`).join(" ");
+    if (JSON.stringify(whole) !== JSON.stringify(sliced) || binary !== want) {
+      failed += 1;
+      console.log("FAIL key captions", stack.length, binary);
+    }
   }
 }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The K captions under the keys are built in slices of a few ms after a result is shown, and the old captions stay until the new ones are complete. Each caption builds its key's circuit on the stack, so after a large result such as tan(10^(−5000)), the render that showed it also spent about 10 ms building captions (several times that on a slow machine). The site check that fails on any main-thread task over 50 ms tripped on that now and then, and it blocked a deploy.
 - A program word with x or y, such as 1xE, reads the x and y fields, as push x and push y do. Exact mode said "cancelled" with "This expression needs a value for x", and float refused the word with that error.
 - Cancel pressed while a mode switch or an undo is rebuilding the stack cancels the rows it lands. The press was lost, and the rows went on computing.
 - An error from a press made while the top row computes, such as "Swap needs two values.", stays when that row's exact value arrives. It was wiped.

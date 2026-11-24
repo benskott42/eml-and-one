@@ -57,17 +57,28 @@ function shortcutTitle(node: Node, hint?: string): string {
 /** The K caption under each key, for what that key would push onto this stack. */
 export function keyCosts(stack: readonly { node: Node }[], xText: string, yText: string): KeyTable {
   const table: KeyTable = {};
+  for (const [id, caption] of keyCostEntries(stack, xText, yText)) table[id] = caption;
+  return table;
+}
+
+/**
+ * keyCosts one key at a time. Each caption builds that key's whole circuit on
+ * the current arguments, about 0.3 ms a key on a large stack, so the calculator
+ * runs this in slices between frames instead of in one render.
+ */
+export function* keyCostEntries(stack: readonly { node: Node }[], xText: string, yText: string): Generator<[string, string]> {
   const label = (node: Node) => {
     const k = circuitStats(node).rpnLength;
     return k <= BigInt(9999) ? `K ${k}` : "wide";
   };
-  for (const key of CONSTANT_KEYS) {
+  const caption = (build: () => Node) => {
     try {
-      table[key.id] = label(constantNode(key.id));
+      return label(build());
     } catch {
-      table[key.id] = "";
+      return "";
     }
-  }
+  };
+  for (const key of CONSTANT_KEYS) yield [key.id, caption(() => constantNode(key.id))];
   let xNode = integerNode(2);
   let yNode = integerNode(3);
   try {
@@ -86,21 +97,8 @@ export function keyCosts(stack: readonly { node: Node }[], xText: string, yText:
     yNode = integerNode(3);
   }
   const arg = stack[stack.length - 1]?.node ?? xNode;
-  for (const key of UNARY_KEYS) {
-    try {
-      table[key.id] = label(applyUnaryNode(key.id, arg));
-    } catch {
-      table[key.id] = "";
-    }
-  }
-  for (const key of BINARY_KEYS) {
-    try {
-      table[key.id] = label(applyBinaryNode(key.id, xNode, yNode));
-    } catch {
-      table[key.id] = "";
-    }
-  }
-  return table;
+  for (const key of UNARY_KEYS) yield [key.id, caption(() => applyUnaryNode(key.id, arg))];
+  for (const key of BINARY_KEYS) yield [key.id, caption(() => applyBinaryNode(key.id, xNode, yNode))];
 }
 
 /** The tooltip on each shortcut key: the presses it stands for. It does not depend on the stack. */
