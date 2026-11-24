@@ -34,7 +34,7 @@ import { agreementNote, compileExpression } from "@/lib/eml/parse";
 import table from "@/lib/eml/best-known.json";
 import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory, type History } from "@/lib/eml/history";
 import { pressPreviewForNode } from "@/lib/eml/presses";
-import { INITIAL_X, INITIAL_Y, type KeyTables, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
+import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
 import { parseProgramInput, programIndexDigits, programNumberText, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 
 const TWO_BUTTONS_KEY = "eml-and-one-two-buttons";
@@ -569,11 +569,35 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const twoButtonsRef = useRef(false);
   twoButtonsRef.current = twoButtons;
   // The first screen uses the tables app/page.tsx built at export time. With an
-  // empty stack the captions depend only on the x and y text.
-  const costs = useMemo(
-    () => (initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y ? initialKeys.costs : keyCosts(model.stack, xText, yText)),
-    [initialKeys, model.stack, xText, yText],
-  );
+  // empty stack the captions depend only on the x and y text. Otherwise each
+  // caption builds its key's circuit on the stack, about 10 ms in all for a large
+  // result, so they are built in slices of a few ms after the result is painted
+  // and the old captions stay until the new table is whole.
+  const [costs, setCosts] = useState<KeyTable>(() => initialKeys?.costs ?? keyCosts([], INITIAL_X, INITIAL_Y));
+  useEffect(() => {
+    if (initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y) {
+      setCosts(initialKeys.costs);
+      return;
+    }
+    const entries = keyCostEntries(model.stack, xText, yText);
+    const table: KeyTable = {};
+    let handle = 0;
+    const slice = () => {
+      const until = performance.now() + 8;
+      for (;;) {
+        const next = entries.next();
+        if (next.done) {
+          setCosts(table);
+          return;
+        }
+        table[next.value[0]] = next.value[1];
+        if (performance.now() >= until) break;
+      }
+      handle = window.setTimeout(slice, 0);
+    };
+    slice();
+    return () => window.clearTimeout(handle);
+  }, [initialKeys, model.stack, xText, yText]);
 
   // The handlers are the only writers of modelRef and modeRef: each one sets the
   // ref before its setState. Syncing them from an effect let a late passive effect
