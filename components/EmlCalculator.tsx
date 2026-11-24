@@ -12,7 +12,6 @@ import {
   constantNode,
 } from "@/lib/eml/library";
 import { E, ONE, type Node, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
-import { compileExpression } from "@/lib/eml/parse";
 import table from "@/lib/eml/best-known.json";
 import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
 import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
@@ -36,6 +35,7 @@ import {
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "@/components/calculator/twoButtons";
 import { useExactJobs } from "@/components/calculator/useExactJobs";
 import { CopyNumber, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
+import { compileSubmission, nextTurn } from "@/components/submitTurn";
 
 /** False in the static HTML and during hydration, true once React owns the keys. */
 const subscribeNothing = () => () => {};
@@ -410,29 +410,38 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       fail("Enter an expression.");
       return;
     }
-    try {
-      const variables: Record<string, Node> = {};
-      const numbers: Record<string, C> = {};
-      if (/\bx\b/i.test(text)) {
-        variables.x = readScalar(textRef.current.xText, "x");
-        numbers.x = evaluateReport(variables.x).value;
+    // The compile runs in the next task (see submitTurn.ts), so the submit's own
+    // task stays short. Presses in between queue, as during a recompute.
+    const job = (jobRef.current += 1);
+    const { xText, yText } = textRef.current;
+    recomputeRef.current = true;
+    const pending = { ...current, note: "Computing…", error: null };
+    modelRef.current = pending;
+    setModel(pending);
+    nextTurn(() => {
+      if (job !== jobRef.current) return;
+      try {
+        const { node, numbers } = compileSubmission(text, xText, yText);
+        const item = { ...entry(node, text, modeRef.current), bound: numbers };
+        const bits = [noteFor(item)].filter(Boolean);
+        // An exact value for an older row can land between the submit and this
+        // turn. It is in modelRef, not in the stack read at the submit.
+        const latest = modelRef.current;
+        commit({
+          stack: [...latest.stack, item],
+          tape: [...latest.tape, text],
+          note: bits.length ? bits.join(" · ") : null,
+          error: resultError(item),
+        });
+      } catch (err) {
+        const latest = modelRef.current;
+        const next = { ...latest, note: latest.note === pending.note ? current.note : latest.note, error: failure(err) };
+        modelRef.current = next;
+        setModel(next);
       }
-      if (/\by\b/i.test(text)) {
-        variables.y = readScalar(textRef.current.yText, "y");
-        numbers.y = evaluateReport(variables.y).value;
-      }
-      const node = compileExpression(text, variables);
-      const item = { ...entry(node, text, modeRef.current), bound: numbers };
-      const bits = [noteFor(item)].filter(Boolean);
-      commit({
-        stack: [...current.stack, item],
-        tape: [...current.tape, text],
-        note: bits.length ? bits.join(" · ") : null,
-        error: resultError(item),
-      });
-    } catch (err) {
-      fail(failure(err));
-    }
+      recomputeRef.current = false;
+      drainQueue(queueRef.current);
+    });
   }
 
   function swap() {
