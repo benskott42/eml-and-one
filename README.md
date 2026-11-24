@@ -85,7 +85,7 @@ npm run eml:check
 npm run eml:smoke
 ```
 
-`npm run eml:golf` is the slow K = 35 search. It is not part of the publish check. [tools/emlsearch](tools/emlsearch) is a much faster independent search in Rust, with an mpmath checker. It reaches K 41 in about five minutes on 16 cores, and its results are in [docs/search-k41.md](docs/search-k41.md). `npm run build` writes a static site to `out/`.
+`npm run eml:golf` is the K = 35 search, about 75 s on one core ([docs/golf-k35.md](docs/golf-k35.md)). It is not part of the publish check. [tools/emlsearch](tools/emlsearch) is a much faster independent search in Rust, with an mpmath checker. It reaches K 41 in about five minutes on 16 cores, and its results are in [docs/search-k41.md](docs/search-k41.md). `npm run build` writes a static site to `out/`.
 
 `EML_SHARD=i/N npm run eml:check` runs shard i (from 0) of N. CI runs 6 shards in parallel. `EML_BLOCK_TIMES=1` prints each block's time. Copy those times into `lib/eml/check-shards.json` to rebalance the shards.
 
