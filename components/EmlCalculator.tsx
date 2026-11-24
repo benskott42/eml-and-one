@@ -365,24 +365,31 @@ function entry(node: Node, caption: string, mode: Mode): Entry {
   return { node, caption, watch: watchSerial++, ...runNode(node, mode) };
 }
 
-function readScalar(text: string): Node {
+/** The x or y field. Its own errors name the field: "Enter an expression." read as the box below. */
+function readScalar(text: string, field: "x" | "y"): Node {
   const trimmed = text.trim();
+  if (!trimmed) throw new EmlError(`Give ${field} a value.`);
   try {
     return scalarNode(trimmed);
   } catch {
-    return compileExpression(trimmed, {});
+    try {
+      return compileExpression(trimmed, {});
+    } catch (err) {
+      if (err instanceof EmlError) throw new EmlError(`In ${field}: ${err.message}`);
+      throw err;
+    }
   }
 }
 
 function valuesOf(xText: string, yText: string): Record<string, C> {
   const bound: Record<string, C> = {};
   try {
-    bound.x = evaluateReport(readScalar(xText)).value;
+    bound.x = evaluateReport(readScalar(xText, "x")).value;
   } catch {
     /* the field is not a value yet */
   }
   try {
-    bound.y = evaluateReport(readScalar(yText)).value;
+    bound.y = evaluateReport(readScalar(yText, "y")).value;
   } catch {
     /* the field is not a value yet */
   }
@@ -576,10 +583,10 @@ export function EmlCalculator() {
         yNode = model.stack[model.stack.length - 1]?.node ?? yNode;
       } else if (model.stack.length === 1) {
         xNode = model.stack[0]?.node ?? xNode;
-        yNode = readScalar(yText);
+        yNode = readScalar(yText, "y");
       } else {
-        xNode = readScalar(xText);
-        yNode = readScalar(yText);
+        xNode = readScalar(xText, "x");
+        yNode = readScalar(yText, "y");
       }
     } catch {
       xNode = integerNode(2);
@@ -976,7 +983,7 @@ export function EmlCalculator() {
         return;
       }
       try {
-        const node = readScalar(text);
+        const node = readScalar(text, tapeLabel === "y" ? "y" : "x");
         const item = {
           ...entry(node, text.trim(), modeRef.current),
           bound: valuesOf(textRef.current.xText, textRef.current.yText),
@@ -1012,8 +1019,8 @@ export function EmlCalculator() {
         const rawX = textRef.current.xText;
         const rawY = textRef.current.yText;
         const numbers = valuesOf(rawX, rawY);
-        x = { ...entry(readScalar(rawX), rawX.trim() || "x", modeRef.current), bound: numbers };
-        y = { ...entry(readScalar(rawY), rawY.trim() || "y", modeRef.current), bound: numbers };
+        x = { ...entry(readScalar(rawX, "x"), rawX.trim() || "x", modeRef.current), bound: numbers };
+        y = { ...entry(readScalar(rawY, "y"), rawY.trim() || "y", modeRef.current), bound: numbers };
         rest = [];
       } else {
         const next = {
@@ -1061,7 +1068,7 @@ export function EmlCalculator() {
       } else {
         const raw = textRef.current.xText;
         arg = {
-          ...entry(readScalar(raw), raw.trim() || "x", modeRef.current),
+          ...entry(readScalar(raw, "x"), raw.trim() || "x", modeRef.current),
           bound: valuesOf(raw, textRef.current.yText),
         };
         rest = [];
@@ -1098,8 +1105,8 @@ export function EmlCalculator() {
         const rawX = textRef.current.xText;
         const rawY = textRef.current.yText;
         const numbers = valuesOf(rawX, rawY);
-        x = { ...entry(readScalar(rawX), rawX.trim() || "x", modeRef.current), bound: numbers };
-        y = { ...entry(readScalar(rawY), rawY.trim() || "y", modeRef.current), bound: numbers };
+        x = { ...entry(readScalar(rawX, "x"), rawX.trim() || "x", modeRef.current), bound: numbers };
+        y = { ...entry(readScalar(rawY, "y"), rawY.trim() || "y", modeRef.current), bound: numbers };
         rest = [];
       } else {
         fail("Push a second value. The older one is x and the top one is y.");
@@ -1135,11 +1142,11 @@ export function EmlCalculator() {
       const variables: Record<string, Node> = {};
       const numbers: Record<string, C> = {};
       if (/\bx\b/i.test(text)) {
-        variables.x = readScalar(textRef.current.xText);
+        variables.x = readScalar(textRef.current.xText, "x");
         numbers.x = evaluateReport(variables.x).value;
       }
       if (/\by\b/i.test(text)) {
-        variables.y = readScalar(textRef.current.yText);
+        variables.y = readScalar(textRef.current.yText, "y");
         numbers.y = evaluateReport(variables.y).value;
       }
       const node = compileExpression(text, variables);
@@ -1442,7 +1449,7 @@ export function EmlCalculator() {
                 {fullNumber ? <CopyNumber text={fullNumber} /> : null}
               </div>
             ) : null}
-            {model.error ? <p className="ti-lcd-error">{model.error}</p> : null}
+            {model.error ? <p className="ti-lcd-error" role="alert">{model.error}</p> : null}
             <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
             {heldShortcut ? <p className="ti-lcd-hold">{heldShortcut}</p> : null}
           </div>
