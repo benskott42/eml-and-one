@@ -4414,6 +4414,65 @@ if (shardTurn(76)) {
   }
 }
 
+if (shardTurn(81)) {
+  // π is its own token. πi read as the name "pii", so exp(πi) and iπ could not be
+  // typed. .5e3 and 1.e5 were "Cannot read the number", though .5 and 5. read.
+  const same: [string, string][] = [
+    ["πi", "pi*i"], ["exp(πi)", "exp(pi*i)"], ["π i", "pi*i"], ["2*πi", "2*pi*i"],
+    [".5e3", "500"], [".5e-3", "0.0005"], ["1.e5", "100000"], ["-.25E+2", "-25"],
+  ];
+  for (const [source, spelled] of same) {
+    let got = "error";
+    try {
+      got = formatC(evaluate(compileExpression(source, {})));
+    } catch (err) {
+      got = err instanceof Error ? err.message : String(err);
+    }
+    const want = formatC(evaluate(compileExpression(spelled, {})));
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL parser spelling", source, got, "want", want);
+    }
+  }
+  const messages: [string, string][] = [
+    ["2πi", "Put * between “2” and “pi”."],
+    ["iπ", "Put * between “i” and “pi”."],
+    ["ππ", "Put * between “pi” and “pi”."],
+  ];
+  for (const [source, want] of messages) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : String(err);
+    }
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL parser message", source, got, "want", want);
+    }
+  }
+  // Nesting past the JavaScript stack is an expression error, not the engine's RangeError.
+  for (const source of ["exp(".repeat(20000) + "0" + ")".repeat(20000), "-".repeat(50000) + "1"]) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : `${(err as Error).name}: ${(err as Error).message}`;
+    }
+    if (got !== "The expression is nested too deeply." && got !== "This circuit is too large to evaluate.") {
+      failed += 1;
+      console.log("FAIL deep nesting", source.slice(0, 8), got);
+    }
+  }
+  // The pole note reads tan(π/2) as it reads tan(pi/2).
+  const pole = evaluate(compileExpression("tan(π/2)", {}));
+  const poleNote = agreementNote("tan(π/2)", pole, {}, formatC(pole));
+  if (!poleNote?.startsWith("near a pole")) {
+    failed += 1;
+    console.log("FAIL tan(π/2) agreement note", poleNote);
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
