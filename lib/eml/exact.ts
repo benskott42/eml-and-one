@@ -17,6 +17,7 @@ import {
 } from "./node";
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, knownValue, mayBeInfinite } from "./lowering";
 import { evaluate as floatEvaluate, isExactUnsure, isSeriesShortcut, precisionNoteOf } from "./node";
+import { ballConfirmsValue } from "./exact-ball";
 
 /**
  * Wide-exponent complex values for EML circuits.
@@ -1074,12 +1075,16 @@ let firstBig = Number.NEGATIVE_INFINITY;
  *   value too small for the working precision (((1+1/10^130)−1)+i/2);
  * - a finite result far below a value past float range that the circuit went
  *   through ((exp(800)+1)−exp(800)), or a non-finite one reached that way (exp(800)·0).
+ *   A large value alone is not the risk: a term absorbed into it and cancelled
+ *   later is. ln(10^400) and √(4×10^(−400)) pass through 10^400 and lose nothing,
+ *   so a result an enclosure confirms is kept (see confirmedBeside).
  */
 function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): boolean {
   if (nestedTrigTooLarge(root, env)) return true;
   // A series shortcut scales its argument by its own reciprocal powers, so the
   // smallest and largest values seen say nothing about cancellation there.
   if (out.sawLead) return false;
+  if (agreesWithInteger(root, out.value)) return false;
   const v = out.value;
   const digits = out.digits ?? D.precision;
   if (v.re.isFinite() && v.im.isFinite() && v.re.isZero() !== v.im.isZero()) {
@@ -1102,9 +1107,38 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
   if (firstBig > 308) {
     if (!zFinite(v)) return out.singular === SINGULAR_NONFINITE;
     const top = exponentCeil(v);
-    if (top >= -300 && top < firstBig - (digits - 12)) return true;
+    if (top >= -300 && top < firstBig - (digits - 12)) return !confirmedBeside(root, env, budget, v);
   }
   return false;
+}
+
+/**
+ * The size rule above stands in for what it cannot see: whether a term was
+ * absorbed into a large value and then cancelled away with it. An enclosure sees
+ * it directly (exact-ball.ts): its radius carries every rounding, so an absorbed
+ * term leaves the radius as large as the value it was absorbed into. A result the
+ * enclosure confirms at 60 more digits than the pass, to all but 20 of the pass's
+ * digits, with each zero part exactly 0, is kept. (exp(800)+1)−exp(800) leaves a
+ * radius near 10^168 and stays refused; ln(10^400) is confirmed.
+ */
+function confirmedBeside(root: Node, env: Record<string, C | Z>, budget: EvalBudget, v: Z): boolean {
+  return ballConfirmsValue(root, env, v, D.precision + 60, D.precision - 20, budget);
+}
+
+/**
+ * A root the compiler built as an exact integer (a sum, product or integer power
+ * of integers; see rangeOf in lowering.ts) whose gates agree with that integer to
+ * the working precision. An integer has no imaginary part and no small real one,
+ * so the zero-part and size rules have nothing left to find there. (−10^200)^3 is
+ * −10^600: its gates pass through 10^(−5) i, and ruling out a part that small
+ * beside 10^600 needed 635 digits, past the cap.
+ */
+function agreesWithInteger(root: Node, v: Z): boolean {
+  const big = provenInteger(root);
+  if (big === undefined || !v.re.isFinite() || !v.im.isFinite() || !v.im.isZero()) return false;
+  const want = new D(big.toString());
+  if (want.isZero()) return v.re.isZero();
+  return v.re.sub(want).abs().lte(want.abs().mul(new D(10).pow(-(D.precision - 12))));
 }
 
 function nestedTrigTooLarge(root: Node, env: Record<string, C | Z>): boolean {

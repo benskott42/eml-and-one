@@ -34,13 +34,13 @@ import {
   tLn,
   tLogBase,
   tMul,
-  tNeg,
   tPi,
   tPow,
   tSqrt,
   literalNode,
   userAdd,
   userSub,
+  userNeg,
   unaryBuilders,
 } from "./library";
 import { mayBeInfinite } from "./lowering";
@@ -425,7 +425,7 @@ function foldAst(ast: Ast): Node {
   }
   if (ast.k === "pre") {
     const arg = foldAst(ast.arg);
-    return refuseFrom([arg], ast.name === "neg" ? tNeg(arg) : tSqrt(arg));
+    return refuseFrom([arg], ast.name === "neg" ? userNeg(arg) : tSqrt(arg));
   }
   if (ast.k === "call") {
     const args = ast.args.map(foldAst);
