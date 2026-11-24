@@ -10,6 +10,7 @@ import {
   type EvalBudget,
   type Node,
   dependsOnUnverified,
+  isUnverified,
   precisionMessage,
   provenInteger,
   trigArg,
@@ -1147,6 +1148,9 @@ export function exactReport(
   const out = exactReportCore(root, env, budget, pass);
   if (overflowNaN(root, env, out)) return { ...out, singular: null, unverified: true };
   if (out.unverified) return out;
+  // A value read off a node refused below the root is not certified either.
+  // An undefined result stays: (1 + 1/0) − 1/0 is still the indeterminate ∞ − ∞.
+  if (!(out.value.re.isNaN() && out.value.im.isNaN()) && dependsOnUnverified(root)) return { ...out, singular: null, unverified: true };
   if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
   return squaredTinyPart(root, env, budget, out);
 }
@@ -1311,7 +1315,7 @@ function exactReportCore(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
-  if (dependsOnUnverified(root) || isExactUnsure(root) || hidesBeside(root)) {
+  if (isUnverified(root) || isExactUnsure(root) || hidesBeside(root)) {
     return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
   }
   // The integer is the value. A later retry would rebuild the circuit and round off its units.

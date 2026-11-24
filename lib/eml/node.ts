@@ -301,7 +301,15 @@ export function expUnderflows(input: C): boolean {
 }
 
 export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: EvalBudget = {}): EvalReport {
-  if (dependsOnUnverified(root)) {
+  const report = evaluateReportAt(root, env, budget);
+  // A value read off a node refused below the root is not certified either.
+  // An undefined result stays: (1 + 1/0) − 1/0 is still the indeterminate ∞ − ∞.
+  if (report.unverified || (Number.isNaN(report.value.re) && Number.isNaN(report.value.im)) || !dependsOnUnverified(root)) return report;
+  return { value: { re: Number.NaN, im: Number.NaN }, singular: null, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, unverified: true };
+}
+
+function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget): EvalReport {
+  if (isUnverified(root)) {
     return {
       value: { re: Number.NaN, im: Number.NaN },
       singular: null,
