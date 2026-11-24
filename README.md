@@ -34,7 +34,7 @@ Ours, labelled as above:
 
 | value | K | status |
 | --- | --- | --- |
-| −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); one tower program takes a 5.5-million-bit run). Without that value, K 27 is shortest known. |
+| −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); the tower programs take runs of up to 5.5 million bits). Without that value, K 27 is shortest known: all but two K 25 programs are excluded. |
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
 | −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
