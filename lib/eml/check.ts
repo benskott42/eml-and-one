@@ -4414,6 +4414,29 @@ if (shardTurn(76)) {
   }
 }
 
+if (shardTurn(83)) {
+  // a − (a + 0) is +0. A 16-digit literal ending in 0 is (its prefix)·10 + 0, so
+  // 1234567890123456*10 − 12345678901234560 folded to −(0) = −0, and ln of it was
+  // a certified −∞ + iπ where ln(2*10 − 20) is −∞.
+  const rows: [string, string][] = [
+    ["1234567890123456*10-12345678901234560", "0"],
+    ["ln(1234567890123456*10-12345678901234560)", "−∞"],
+    ["1/(1234567890123456*10-12345678901234560)", "∞"],
+    ["12345678901234567890*10-123456789012345678900", "0"],
+    ["123456789012345678900-12345678901234567890*10", "0"],
+    ["12345678901234567891-12345678901234567890", "1"],
+  ];
+  for (const [source, want] of rows) {
+    const report = workerReport(source);
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    const floated = formatC(evaluate(compileExpression(source, {})));
+    if (got !== want || floated !== want) {
+      failed += 1;
+      console.log("FAIL sum complement zero", source, got, floated, "want", want);
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
