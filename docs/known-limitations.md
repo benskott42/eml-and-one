@@ -39,5 +39,4 @@ What the flag does not catch:
 - Rebuilding a circuit from its press string drops the low-precision, pole, and large-angle flags. Those notes sit beside the node, not in the gates.
 - The fast suite stops at the K = 21 table (K 23 without ln 0). `npm run eml:golf` runs K = 35 in about 75 s and is not part of the publish check; its last run is in [docs/golf-k35.md](golf-k35.md).
 - The constant search does not merge circuits by value. Its pool is every float-finite circuit that did not overflow or underflow, 88 M through K 35 with ln 0, so K 37 and past are left to tools/emlsearch.
-- The calculator component is still one file. Sharing one tree walk, and deleting an unreachable zero check, are left for later.
 - 0, −1, and 2 tie the lengths in arXiv:2603.21852. ±iπ at K 21 was posted publicly before this project. 3 at K 29 ties an earlier code-golf answer. Those are not claimed as first discoveries. The citations are in the EML and One README.
