@@ -41,6 +41,67 @@ const PRECISION = 120;
 
 const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
 
+/**
+ * exp, ln, cos, sin, hypot and atan2 results by working precision and argument.
+ * decimal.js values are immutable and these functions depend only on the
+ * argument, precision and rounding, so a repeat returns the same digits. A
+ * circuit computes the same gate inputs many times (rebuilt shared subcircuits,
+ * liftedGap and trigGap re-reading a gate, retries at a precision already run).
+ * The key keeps the sign, so sin(-0) stays -0. A value from another constructor
+ * (a local clone at its own precision) is not cached.
+ */
+const MEMO_LIMIT = 8192;
+const fnMemo = new Map<string, Map<string, Decimal>>();
+
+function memoKey(x: Decimal): string {
+  return (x.isNeg() ? "-" : "+") + x.toString();
+}
+
+function memoized(key: string, compute: () => Decimal): Decimal {
+  const bucketKey = `${D.precision}|${D.rounding}`;
+  let bucket = fnMemo.get(bucketKey);
+  if (!bucket) {
+    if (fnMemo.size >= 32) fnMemo.clear();
+    bucket = new Map();
+    fnMemo.set(bucketKey, bucket);
+  }
+  const known = bucket.get(key);
+  if (known !== undefined) return known;
+  const value = compute();
+  if (bucket.size >= MEMO_LIMIT) bucket.clear();
+  bucket.set(key, value);
+  return value;
+}
+
+function ownD(...parts: Decimal[]): boolean {
+  return parts.every((x) => x.constructor === D);
+}
+
+function expD(x: Decimal): Decimal {
+  return ownD(x) ? memoized(`e${memoKey(x)}`, () => x.exp()) : x.exp();
+}
+
+function lnD(x: Decimal): Decimal {
+  return ownD(x) ? memoized(`l${memoKey(x)}`, () => D.ln(x)) : D.ln(x);
+}
+
+function cosD(x: Decimal): Decimal {
+  return ownD(x) ? memoized(`c${memoKey(x)}`, () => x.cos()) : x.cos();
+}
+
+function sinD(x: Decimal): Decimal {
+  return ownD(x) ? memoized(`s${memoKey(x)}`, () => x.sin()) : x.sin();
+}
+
+function hypotD(re: Decimal, im: Decimal): Decimal {
+  return ownD(re, im) ? memoized(`h${memoKey(re)},${memoKey(im)}`, () => D.hypot(re, im)) : D.hypot(re, im);
+}
+
+function argD(y: Decimal, x: Decimal): Decimal {
+  const compute = () => atan2Fast(y, x) ?? D.atan2(y, x);
+  return ownD(y, x) ? memoized(`a${memoKey(y)},${memoKey(x)}`, compute) : compute();
+}
+
 function tol(): Decimal {
   return new D(10).pow(-(D.precision - 8));
 }
@@ -87,7 +148,7 @@ function cosSin(theta: Decimal): { c: Decimal; s: Decimal } {
     if (ax === 2) return { c: ONE.neg(), s: ZERO };
     return { c: ZERO, s: ONE.neg() };
   }
-  return { c: theta.cos(), s: theta.sin() };
+  return { c: cosD(theta), s: sinD(theta) };
 }
 
 function axisInfinity(part: Decimal): Decimal {
@@ -108,7 +169,7 @@ function expZ(v: Z): Z {
     if (v.re.isPos()) return { re: axisInfinity(trig.c), im: axisInfinity(trig.s) };
     return { re: NAN, im: NAN };
   }
-  const mag = v.re.exp();
+  const mag = expD(v.re);
   if (mag.isZero()) {
     // A finite exponent past the decimal range: exp(−10^20) is not 0. Record its
     // decade, so a result that vanished here is refused rather than certified.
@@ -132,11 +193,11 @@ function lnEml(v: Z): Z {
     if (v.re.isNeg()) return { re: NEG_INF, im: negPi };
     return { re: NEG_INF, im: v.im.isNeg() ? new D(-0) : ZERO };
   }
-  const mag = D.hypot(v.re, v.im);
+  const mag = hypotD(v.re, v.im);
   if (mag.isZero()) return { re: NEG_INF, im: v.re.isNeg() ? negPi : ZERO };
   const onCut = v.im.isZero() && v.re.isNeg();
   noteNearCut(v);
-  let arg = onCut ? negPi : (atan2Fast(v.im, v.re) ?? D.atan2(v.im, v.re));
+  let arg = onCut ? negPi : argD(v.im, v.re);
   if (!onCut && !v.im.isZero() && (arg.eq(negPi) || arg.eq(negPi.neg()))) {
     const gap = v.re.e - v.im.e;
     if (Number.isFinite(gap) && gap > 8 && gap < 2000) {
@@ -145,7 +206,7 @@ function lnEml(v: Z): Z {
     }
   }
   if (!mag.isFinite()) return { re: POS_INF, im: arg.isFinite() ? arg : ZERO };
-  return { re: D.ln(mag), im: arg };
+  return { re: lnD(mag), im: arg };
 }
 
 /**
