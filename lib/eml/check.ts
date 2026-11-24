@@ -749,7 +749,13 @@ const wantedK: Record<string, number> = {
   "2": 19,
   ipi: 21,
 };
-const searched = searchConstants(21).hits;
+const searchedRun = searchConstants(21);
+const searched = searchedRun.hits;
+// The pool keeps every finite circuit that did not overflow: 16311 through K 21, the same as v1.0.
+if (searchedRun.pool !== 16311) {
+  failed += 1;
+  console.log("FAIL K21 pool changed", searchedRun.pool);
+}
 for (const [id, k] of Object.entries(wantedK)) {
   const hit = searched.find((item) => item.id === id);
   if (!hit || hit.k !== k) {

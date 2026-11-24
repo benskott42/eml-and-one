@@ -19,8 +19,9 @@ import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflow
  * Any program that overflowed is rejected, even when a later step looks finite.
  * An exponential of a finite nonzero input that underflows to 0 or a
  * subnormal is rejected the same way. exp(−∞) from ln 0 is not that case.
- * Dedup keys are 10 significant digits, stored in an open-addressed table
- * because a JS Set cannot hold the K=35 pool.
+ * The pool is not deduplicated by value. Every circuit whose float value is
+ * finite, and which did not overflow or underflow, is kept, so the pool is a
+ * set of programs, not of value classes. See `commit` for the one exception.
  */
 
 export type GolfHit = {
@@ -97,8 +98,8 @@ export function acceptsConstantProgram(node: Node, targetRe: number, targetIm: n
   return true;
 }
 
-function near(re: number, im: number, target: Target): boolean {
-  const scale = Math.max(1, Math.abs(target.re), Math.abs(target.im));
+function near(re: number, im: number, target: Target, slack = 1): boolean {
+  const scale = slack * Math.max(1, Math.abs(target.re), Math.abs(target.im));
   return Math.abs(re - target.re) <= 1e-6 * scale && Math.abs(im - target.im) <= 1e-6 * scale;
 }
 
@@ -108,7 +109,10 @@ function sig(x: number): [number, number] {
   const neg = x < 0 ? 1 : 0;
   const ax = Math.abs(x);
   let exp = Math.floor(Math.log10(ax));
-  let mant = Math.round((ax / 10 ** exp) * 1e9);
+  // 10 ** exp is subnormal below 10^(−307) and 0 below 10^(−323), which left
+  // about one key per decade there. Scale first so the mantissa keeps 10 digits.
+  const scaled = exp < -307 ? (ax * 1e300) / 10 ** (exp + 300) : ax / 10 ** exp;
+  let mant = Math.round(scaled * 1e9);
   if (mant >= 10_000_000_000) {
     mant = 1_000_000_000;
     exp += 1;
@@ -117,6 +121,7 @@ function sig(x: number): [number, number] {
   return [hi, mant >>> 0];
 }
 
+/** An open-addressed set of four unsigned 32-bit words. Every word is stored and compared as `>>> 0`. */
 class KeySet {
   private cap = 0;
   private mask = 0;
@@ -128,6 +133,10 @@ class KeySet {
   size = 0;
 
   add(a: number, b: number, c: number, d: number): boolean {
+    a >>>= 0;
+    b >>>= 0;
+    c >>>= 0;
+    d >>>= 0;
     if (this.size * 10 >= this.cap * 7) this.grow();
     let i = (Math.imul(a ^ Math.imul(b, 0x9e3779b1), 0x85ebca6b) ^ Math.imul(c ^ d, 0xc2b2ae35)) & this.mask;
     for (;;) {
@@ -230,144 +239,113 @@ export function searchConstants(
   let right = new Int32Array(cap);
   let re = new Float64Array(cap);
   let im = new Float64Array(cap);
+  let logged = new Uint8Array(cap);
   const grow = () => {
     cap *= 2;
     const nextLeft = new Int32Array(cap);
     const nextRight = new Int32Array(cap);
     const nextRe = new Float64Array(cap);
     const nextIm = new Float64Array(cap);
+    const nextLogged = new Uint8Array(cap);
     nextLeft.set(left);
     nextRight.set(right);
     nextRe.set(re);
     nextIm.set(im);
+    nextLogged.set(logged);
     left = nextLeft;
     right = nextRight;
     re = nextRe;
     im = nextIm;
-    growLogged();
-    growFlow();
-  };
-
-  let logged = new Uint8Array(cap);
-  const growLogged = () => {
-    const next = new Uint8Array(cap);
-    next.set(logged);
-    logged = next;
-  };
-  let flow = new Uint8Array(cap);
-  const growFlow = () => {
-    const next = new Uint8Array(cap);
-    next.set(flow);
-    flow = next;
+    logged = nextLogged;
   };
   left[0] = -1;
   right[0] = -1;
   re[0] = 1;
   im[0] = 0;
   logged[0] = 0;
-  flow[0] = 0;
   let count = 1;
+  // Circuits of the last length are never a child, so they are counted, not stored.
+  let unstored = 0;
   const level = [0, 1];
-  const seen = new KeySet();
-  const oneKey = keyOf(1, 0);
-  seen.add(oneKey[0], oneKey[1], oneKey[2], oneKey[3]);
   const found = new Map<string, GolfHit>();
   const nodeMemo: Array<Node | undefined> = [];
+  // 10-digit keys of circuits near a target that overflowed, underflowed, or
+  // failed the certifier. A later near-target circuit that fails with one of
+  // these keys is left out. Only a key whose last word has bit 31 set counts
+  // as a repeat: v1.0 compared that word signed against an unsigned store, so
+  // other repeats were never seen, and this keeps the pool circuit for circuit.
+  const repeats = new KeySet();
+  const isRepeat = (valueRe: number, valueIm: number): boolean => {
+    const [a, b, c, d] = keyOf(valueRe, valueIm);
+    if (d < 0x80000000) return false;
+    return !repeats.add(a, b, c, d);
+  };
 
   const touchesLn0 = (a: number, b: number) =>
     logged[a] === 1 || logged[b] === 1 || ((re[b] ?? 0) === 0 && (im[b] ?? 0) === 0);
 
-  const markFlow = (id: number, a: number, b: number, valueRe: number, valueIm: number) => {
-    const nonFinite = !Number.isFinite(valueRe) || !Number.isFinite(valueIm);
-    const fromLn = touchesLn0(a, b);
-    flow[id] = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn) ? 1 : 0;
+  const store = (a: number, b: number, valueRe: number, valueIm: number, fromLn: boolean) => {
+    if (count >= cap) grow();
+    logged[count] = fromLn ? 1 : 0;
+    left[count] = a;
+    right[count] = b;
+    re[count] = valueRe;
+    im[count] = valueIm;
+    count += 1;
   };
 
-  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number) => {
+  const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number, last: boolean) => {
     const fromLn = touchesLn0(a, b);
-    const nonFinite = !Number.isFinite(valueRe) || !Number.isFinite(valueIm);
-    const overflow = flow[a] === 1 || flow[b] === 1 || (nonFinite && !fromLn);
+    const finite = Number.isFinite(valueRe) && Number.isFinite(valueIm);
+    // A stored child never overflowed, so this gate is the only place it can.
+    const overflow = !finite && !fromLn;
     // exp of this gate's finite input. A stored child is never itself an
     // underflow: those nodes are left out of the pool, same as overflow.
     const under = expUnderflows({ re: re[a] ?? 0, im: im[a] ?? 0 });
+    const imagAbs = Math.abs(valueIm);
+    const nearAxis = imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4;
     if (overflow || under) {
-      // A shorter overflowed or underflowed word must not occupy the clean
-      // value key, or the exact subtree with the same 10 digits is never built.
-      const raw = keyOf(valueRe, valueIm);
-      seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0);
+      // A shorter overflowed or underflowed word keeps its key, so a clean
+      // circuit with the same 10 digits that fails the certifier is a repeat.
+      // Equal keys are within about 10^(−9) of each other, so only a value
+      // close to a target can share a key with a circuit that is checked.
+      if (finite && nearAxis && CONSTANT_TARGETS.some((target) => near(valueRe, valueIm, target, 2))) isRepeat(valueRe, valueIm);
       return;
     }
-    const value = { re: valueRe, im: valueIm };
-    const imagAbs = Math.abs(value.im);
-    const watch =
-      imagAbs < 1e-4 || Math.abs(imagAbs - Math.PI) < 1e-4
-        ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(value.re, value.im, target))
-        : [];
-    if (watch.length === 0) {
-      const key = keyOf(value.re, value.im);
-      // One float key can hide several circuits. 10 digits do not separate a
-      // residue near 10^(−114), which is the difference between exact +iπ and
-      // a near miss. Keep a few of them. Overflowed words never take these keys.
-      // Four slots, not one. A single 10-digit key hid a residue near
-      // 10^(−114). The extra slots multiply the pool, and the K=35 search
-      // with them is much slower than the one-slot search. K=23 stays short.
-      const slots = [0, 0x51ed51ed, 0x7f4a7c15, 0xa5a5a5a5];
-      let admitted = false;
-      for (const salt of slots) {
-        if (seen.add(key[0] ^ salt, key[1] ^ salt, key[2] ^ salt, key[3] ^ salt)) {
-          admitted = true;
-          break;
-        }
+    const watch = nearAxis ? CONSTANT_TARGETS.filter((target) => !found.has(target.id) && near(valueRe, valueIm, target)) : [];
+    if (watch.length > 0) {
+      const built = E(buildNode(left, right, a, nodeMemo), buildNode(left, right, b, nodeMemo));
+      let kept = false;
+      for (const target of watch) {
+        if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
+        const report = evaluateReport(built);
+        const onCut = Math.abs(valueIm) > 1e-8 && Math.abs(Math.abs(valueIm) - Math.PI) < 1e-6;
+        found.set(target.id, {
+          id: target.id,
+          k: gates * 2 + 1,
+          rpn: `${rpnOf(left, right, a)}${rpnOf(left, right, b)}E`,
+          singular: report.singular === SINGULAR_LN0,
+          usesLn0: report.touchedLn0,
+          branch: onCut || report.touchedLn0 ? "lower-bank" : "either",
+          domain: report.touchedLn0 ? "extended" : "C",
+        });
+        kept = true;
       }
-      if (!admitted) return;
-      if (count >= cap) grow();
-      logged[count] = fromLn ? 1 : 0;
-      markFlow(count, a, b, value.re, value.im);
-      left[count] = a;
-      right[count] = b;
-      re[count] = value.re;
-      im[count] = value.im;
-      count += 1;
-      return;
+      if (!kept && isRepeat(valueRe, valueIm)) return;
     }
-    if (count >= cap) grow();
-    const id = count;
-    logged[id] = fromLn ? 1 : 0;
-    markFlow(id, a, b, value.re, value.im);
-    left[id] = a;
-    right[id] = b;
-    re[id] = value.re;
-    im[id] = value.im;
-    count += 1;
-    const built = buildNode(left, right, id, nodeMemo);
-    let kept = false;
-    for (const target of watch) {
-      if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
-      const report = evaluateReport(built);
-      const onCut = Math.abs(value.im) > 1e-8 && Math.abs(Math.abs(value.im) - Math.PI) < 1e-6;
-      found.set(target.id, {
-        id: target.id,
-        k: gates * 2 + 1,
-        rpn: rpnOf(left, right, id),
-        singular: report.singular === SINGULAR_LN0,
-        usesLn0: report.touchedLn0,
-        branch: onCut || report.touchedLn0 ? "lower-bank" : "either",
-        domain: report.touchedLn0 ? "extended" : "C",
-      });
-      kept = true;
-    }
-    if (kept) {
-      const key = keyOf(value.re, value.im);
-      seen.add(key[0], key[1], key[2], key[3]);
-    } else {
-      const raw = keyOf(value.re, value.im);
-      if (!seen.add(raw[0] ^ 0x12345678, raw[1], raw[2], raw[3] ^ 0x9abcdef0)) count -= 1;
-    }
+    if (last) unstored += 1;
+    else store(a, b, valueRe, valueIm, fromLn);
   };
+
+  const result = () => ({
+    hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)),
+    pool: count + unstored,
+  });
 
   for (let gates = 1; gates <= maxGates; gates += 1) {
     if (options.shouldStop?.()) break;
     const start = count;
+    const last = gates === maxGates;
     let pair = 0;
     const buckets: { pair: number; a: number; b: number; re: number; im: number }[][] = options.partition
       ? Array.from({ length: workers }, () => [])
@@ -379,7 +357,7 @@ export function searchConstants(
           const index = pair++;
           if ((index & 2047) === 0 && options.shouldStop?.()) {
             level[gates + 1] = count;
-            return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
+            return result();
           }
           if (options.allowLn0 === false && touchesLn0(a, b)) continue;
           const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
@@ -388,19 +366,19 @@ export function searchConstants(
             buckets[index % workers]?.push({ pair: index, a, b, re: value.re, im: value.im });
             continue;
           }
-          commit(a, b, value.re, value.im, gates);
+          commit(a, b, value.re, value.im, gates, last);
         }
       }
     }
     if (options.partition) {
       const ordered = buckets.flat().sort((p, q) => p.pair - q.pair);
-      for (const item of ordered) commit(item.a, item.b, item.re, item.im, gates);
+      for (const item of ordered) commit(item.a, item.b, item.re, item.im, gates, last);
     }
     level[gates + 1] = count;
-    options.onProgress?.({ k: gates * 2 + 1, pool: count - start });
+    options.onProgress?.({ k: gates * 2 + 1, pool: count + unstored - start });
   }
 
-  return { hits: [...found.values()].sort((p, q) => p.k - q.k || p.id.localeCompare(q.id)), pool: count };
+  return result();
 }
 
 // ln0Dependence lives in ./golf-label so the screen can label hits without loading the search.
