@@ -35,6 +35,7 @@ import {
   tagReal,
   tagValue,
   installIntegerBuilder,
+  markExactInt,
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
@@ -453,10 +454,71 @@ export function userSub(a: Node, b: Node): Node {
 }
 
 /**
+ * The exact value of a decimal literal, and of sums and differences of them, as
+ * n·10^(−s). The gates compute 0.1 as 1/10 through exp and ln, so 0.1 + 0.2 and
+ * 0.3 differ in their last digits at every precision, and (0.1 + 0.2) − 0.3 kept
+ * a residue at each of them up to 480 digits and was refused. The literals are
+ * exact decimals and their sum is exact, so a sum that comes to 0 is marked as the
+ * integer 0, which exact mode reads (float keeps the gates' own value). A node
+ * reached by two different values is poisoned (null) rather than trusted.
+ */
+type ExactDecimal = { n: bigint; s: number };
+const exactDecimals = new WeakMap<Node, ExactDecimal | null>();
+const DECIMAL_SCALE_MAX = 1000;
+
+function noteExactDecimal(node: Node, value: ExactDecimal): Node {
+  const known = exactDecimals.get(node);
+  if (known === null) return node;
+  if (known !== undefined) {
+    const s = Math.max(known.s, value.s);
+    const same = known.n * BigInt(10) ** BigInt(s - known.s) === value.n * BigInt(10) ** BigInt(s - value.s);
+    if (!same) exactDecimals.set(node, null);
+    return node;
+  }
+  exactDecimals.set(node, value);
+  return node;
+}
+
+function exactDecimalOf(node: Node): ExactDecimal | null {
+  const known = exactDecimals.get(node);
+  if (known !== undefined) return known;
+  const int = rangeOf(node).int;
+  return int === undefined ? null : { n: int, s: 0 };
+}
+
+function decimalSum(a: Node, b: Node, sub: boolean): ExactDecimal | null {
+  const x = exactDecimalOf(a);
+  const y = exactDecimalOf(b);
+  if (!x || !y) return null;
+  const s = Math.max(x.s, y.s);
+  const xn = x.n * BigInt(10) ** BigInt(s - x.s);
+  const yn = y.n * BigInt(10) ** BigInt(s - y.s);
+  return { n: sub ? xn - yn : xn + yn, s };
+}
+
+/** The user's −b keeps b's exact decimal. */
+export function userNeg(b: Node): Node {
+  const node = tNeg(b);
+  const x = exactDecimalOf(b);
+  if (x && !isUnverified(node) && !isExactUnsure(node)) noteExactDecimal(node, { n: -x.n, s: x.s });
+  return node;
+}
+
+/**
  * Classify, then build. The add circuit is the same node as ln of a zero argument,
  * and building it overwrites that range. Reading ln(0) afterwards would miss −∞.
  */
 function userSum(a: Node, b: Node, sub: boolean): Node {
+  const node = userSumBuild(a, b, sub);
+  const exact = decimalSum(a, b, sub);
+  if (exact && !isUnverified(node) && !isExactUnsure(node)) {
+    noteExactDecimal(node, exact);
+    if (exact.n === BigInt(0) && exactDecimals.get(node) !== null && rangeOf(node).int === undefined) markExactInt(node, BigInt(0));
+  }
+  return node;
+}
+
+function userSumBuild(a: Node, b: Node, sub: boolean): Node {
   const same = a === b;
   const negation = !sub && isNegationPair(a, b);
   // Classify before any sum or negation is built. Adding 0 reuses the ln(0)
@@ -1469,6 +1531,10 @@ function literalNodeBuild(text: string): Node {
       expAdj >= 0 ? tMul(digitsToInteger(1, digits), pow10(expAdj)) : tDiv(digitsToInteger(1, digits), pow10(-expAdj));
     const signed = sign < 0 ? tNeg(magnitude) : magnitude;
     noteDecade(signed, expAdj);
+    if (Math.abs(expAdj) <= DECIMAL_SCALE_MAX) {
+      const n = BigInt(sign) * BigInt(digits) * (expAdj > 0 ? BigInt(10) ** BigInt(expAdj) : BigInt(1));
+      noteExactDecimal(signed, { n, s: expAdj < 0 ? -expAdj : 0 });
+    }
     const numeric = Number(trimmed);
     if (!Number.isFinite(numeric) || numeric === 0) return signed;
     // The float is the decimal only when it is an integer the float holds exactly:
@@ -1493,7 +1559,8 @@ function literalNodeBuild(text: string): Node {
     }
     if (digits.length <= 40 && frac.length <= 40) {
       const magnitude = tDiv(digitsToInteger(1, digits), pow10(frac.length));
-      return sign < 0 ? tNeg(magnitude) : magnitude;
+      const signed = sign < 0 ? tNeg(magnitude) : magnitude;
+      return noteExactDecimal(signed, { n: BigInt(sign) * BigInt(digits), s: frac.length });
     }
   }
   throw new EmlError(`Cannot read the number ${text}.`);
