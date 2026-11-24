@@ -4285,7 +4285,7 @@ if (shardTurn(56)) {
   }
 }
 
-if (shardTurn(57)) {
+if (shardTurn(73)) {
   // A part made of a square or product of tiny inputs is not certified as 0. cosh(10^(−100))
   // is 1 + 5×10^(−201), which rounds to 1 at 120 digits, so cosh(10^(−100))^i certified 1.
   // A part that a raised reading shows and keeps is certified; past 480 digits it is refused.
@@ -4322,7 +4322,7 @@ if (shardTurn(57)) {
 
 closeBlockTimer();
 if (shardCount > 1) console.log(`shard ${shardIndex}/${shardCount}`);
-if (shardTurn(57)) {
+if (shardTurn(74)) {
   // The 671-press word for ln(1+10^(−130)) was listed as able to show an exact 0
   // depending on the cache. Built from its presses, alone, after the named
   // expression, and through the worker's wire, it is 10^(−130) every time.
