@@ -49,22 +49,26 @@ export function previewPresses(full: string, presses = BigInt(full.length), limi
   };
 }
 
-function leafKind(node: Node): "buttons" | "foreign" {
+function leafKind(node: Node): "buttons" | "variables" | "foreign" {
   const seen = new Set<number>();
+  let named = false;
   const stack: Node[] = [node];
   while (stack.length) {
     const current = stack.pop();
     if (!current || seen.has(current.id)) continue;
     seen.add(current.id);
     if (current.type === "one") continue;
-    if (current.type === "var" && (current.name === "x" || current.name === "y")) continue;
+    if (current.type === "var" && (current.name === "x" || current.name === "y")) {
+      named = true;
+      continue;
+    }
     if (current.type === "eml" && current.a && current.b) {
       stack.push(current.a, current.b);
       continue;
     }
     return "foreign";
   }
-  return "buttons";
+  return named ? "variables" : "buttons";
 }
 
 function leadingTokens(node: Node, limit: number): string[] | null {
@@ -97,7 +101,8 @@ function leadingTokens(node: Node, limit: number): string[] | null {
 
 /** Press spelling of a circuit, or null when a leaf is not 1, x, y, or EML. */
 export function pressPreviewForNode(node: Node, limit = PRESS_LIMIT): PressPreview | null {
-  if (leafKind(node) === "foreign") return null;
+  const kind = leafKind(node);
+  if (kind === "foreign") return null;
   let length = BigInt(0);
   try {
     length = circuitStats(node).rpnLength;
@@ -110,7 +115,8 @@ export function pressPreviewForNode(node: Node, limit = PRESS_LIMIT): PressPrevi
     const prefix = encodePresses(tokens);
     if (prefix === null) return null;
     const shown = previewPresses(prefix, length, limit);
-    return { ...shown, copyable: false };
+    // The prefix can end before the first x or y. The leaves say whether the string has one.
+    return { ...shown, usesVariables: kind === "variables", copyable: false };
   }
   const tokens = rpnTokens(node, Number(length));
   if (!tokens) return null;

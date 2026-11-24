@@ -4158,6 +4158,39 @@ if (shardTurn(55)) {
   }
 }
 
+if (shardTurn(56)) {
+  // A scaled add rebuilds its operands, so the add note's term is not a gate.
+  // 2x + 1 near x = −1/2 kept no low-precision flag; x + 1 near −1 had one.
+  // 10^(−300)·x + 1 printed 6.35×10^(−13) for 10^(−12) with no note.
+  const vars = { x: V("x") };
+  const lowRows: Array<[string, number]> = [["x+1", -1 + 1e-12], ["2*x+1", -0.5 + 1e-13], ["1e-300*x+1", -1e300 * (1 - 1e-12)]];
+  for (const [source, x] of lowRows) {
+    const report = evaluateReport(compileExpression(source, vars), { x: c(x) });
+    if (report.singular !== SINGULAR_PRECISION) {
+      failed += 1;
+      console.log("FAIL add precision note", source, report.value, report.singular);
+    } else console.log("add precision note", source);
+  }
+  const plain = evaluateReport(compileExpression("2*x+1", vars), { x: c(3) });
+  if (plain.singular !== null || Math.abs(plain.value.re - 7) > 1e-12) {
+    failed += 1;
+    console.log("FAIL add precision note away from 0", plain);
+  }
+  // A preview past 20000 presses shows a prefix. The x in sin(sin(x)) is past it.
+  const nested = pressPreviewForNode(compileExpression("sin(sin(x))", vars));
+  if (!nested || nested.copyable || !nested.usesVariables || nested.preview.includes("x")) {
+    failed += 1;
+    console.log("FAIL long press preview names its variables", nested && { ...nested, full: nested.full.slice(0, 40), presses: nested.presses.toString() });
+  }
+  let tower: Node = ONE;
+  for (let i = 0; i < 16; i += 1) tower = E(tower, tower);
+  const constant = pressPreviewForNode(tower);
+  if (!constant || constant.usesVariables) {
+    failed += 1;
+    console.log("FAIL long constant press preview", constant?.presses.toString());
+  }
+}
+
 closeBlockTimer();
 if (shardCount > 1) console.log(`shard ${shardIndex}/${shardCount}`);
 if (failed) {
