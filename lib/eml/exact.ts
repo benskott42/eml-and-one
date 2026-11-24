@@ -9,7 +9,7 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
-  isUnverified,
+  dependsOnUnverified,
   precisionMessage,
   provenInteger,
   trigArg,
@@ -1311,7 +1311,7 @@ function exactReportCore(
   // zero once those magnitudes fit is real, unless a series shortcut produced it.
   // A non-zero result stays, so 10^300 and asinh(10^155) keep the digits the
   // rest of the suite compares exactly.
-  if (isUnverified(root) || isExactUnsure(root) || hidesBeside(root)) {
+  if (dependsOnUnverified(root) || isExactUnsure(root) || hidesBeside(root)) {
     return { value: { re: NAN, im: NAN }, singular: null, touchedLn0: false, unverified: true };
   }
   // The integer is the value. A later retry would rebuild the circuit and round off its units.
