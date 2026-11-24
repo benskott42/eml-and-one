@@ -1,6 +1,6 @@
 {
   "name": "eml-and-one",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "EML and One, a two-button calculator",
   "scripts": {
