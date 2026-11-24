@@ -1410,8 +1410,9 @@ function literalNodeBuild(text: string): Node {
     const negative = trimmed.startsWith("-");
     return noteNonfinite(input({ re: negative ? -Infinity : Infinity, im: 0 }, trimmed), negative ? -1 : 1);
   }
-  const sci = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(trimmed);
-  if (sci) {
+  // The expression box reads .5e3 and 1.e5 as numbers, as it reads .5 and 5.
+  const sci = /^([+-]?)(\d*)(?:\.(\d*))?[eE]([+-]?\d+)$/.exec(trimmed);
+  if (sci && (sci[2] || sci[3])) {
     const sign = sci[1] === "-" ? -1 : 1;
     const exp = Number(sci[4]);
     const frac = sci[3] ?? "";
