@@ -589,20 +589,28 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     void (async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (job !== jobRef.current) return;
+      // A compare result for an older row can land during the wait. It is in
+      // modelRef, so build on that, with the note and error the wait replaced.
+      const latest = modelRef.current;
+      const base: Model = {
+        ...latest,
+        note: latest.note === pending.note ? previous.note : latest.note,
+        error: latest.error ?? previous.error,
+      };
       try {
         const item = entry(node, caption, mode, bound);
-        const rest = replace && previous.stack.length > 0 ? previous.stack.slice(0, -1) : previous.stack;
+        const rest = replace && base.stack.length > 0 ? base.stack.slice(0, -1) : base.stack;
         const next: Model = {
           stack: [...rest, item],
-          tape: [...previous.tape, caption],
+          tape: [...base.tape, caption],
           note: [noteFor(item), notice].filter(Boolean).join(" · ") || null,
           error: resultError(item),
         };
-        historyRef.current = commitHistory({ ...historyRef.current, current: previous }, next);
+        historyRef.current = commitHistory({ ...historyRef.current, current: base }, next);
         modelRef.current = next;
         setModel(next);
       } catch (err) {
-        const next = { ...previous, note: previous.note, error: failure(err) };
+        const next = { ...base, error: failure(err) };
         modelRef.current = next;
         setModel(next);
       }
