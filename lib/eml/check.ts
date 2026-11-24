@@ -4451,6 +4451,19 @@ if (shardTurn(81)) {
       console.log("FAIL parser message", source, got, "want", want);
     }
   }
+  // Nesting past the JavaScript stack is an expression error, not the engine's RangeError.
+  for (const source of ["exp(".repeat(20000) + "0" + ")".repeat(20000), "-".repeat(50000) + "1"]) {
+    let got = "compiled";
+    try {
+      compileExpression(source, {});
+    } catch (err) {
+      got = err instanceof EmlError ? err.message : `${(err as Error).name}: ${(err as Error).message}`;
+    }
+    if (got !== "The expression is nested too deeply." && got !== "This circuit is too large to evaluate.") {
+      failed += 1;
+      console.log("FAIL deep nesting", source.slice(0, 8), got);
+    }
+  }
   // The pole note reads tan(π/2) as it reads tan(pi/2).
   const pole = evaluate(compileExpression("tan(π/2)", {}));
   const poleNote = agreementNote("tan(π/2)", pole, {}, formatC(pole));
