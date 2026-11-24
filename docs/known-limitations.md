@@ -34,6 +34,17 @@ What the flag does not catch:
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
 
+## Exact mode: wrong values still certified
+
+A fuzz against mpmath for 1.0.3 found these. They are certified in exact mode and are wrong. Each one adds or subtracts terms of very different sizes, where one has already rounded away:
+
+- 1e−400 + exp(−800) shows 1×10^−400. The value is 3.67×10^−348.
+- (1e200 + 0.5) − (1e200 − 0.5) shows 0.9999…657. The value is 1.
+- ((exp(−300) + 0.1/10^−130) − 0.1/10^−130) − exp(−300) shows −5.1×10^−131. The value is 0.
+- sqrt(sqrt(1e−40 + exp(−800)) − 1e−20) shows 2.4×10^−129. The value is 1.35×10^−164.
+- hypot((1e−5)², −1e−200) − (1e−5)² shows 0. The value is 5×10^−391.
+- ln((1e−20 + 0.5^i) − 0.5^i − 1e−20) shows −273.2 + 0.87i. The value is ln 0 = −∞.
+
 ## Circuits and search
 
 - Rebuilding a circuit from its press string drops the low-precision, pole, and large-angle flags. Those notes sit beside the node, not in the gates.
