@@ -137,8 +137,16 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
 
   useEffect(() => {
     const snapshot = modelRef.current.stack.map((item) => ({ ...item }));
-    if (snapshot.length === 0) return;
+    if (snapshot.length === 0) {
+      // requestMode held the queue for this effect. With nothing to rebuild, release it.
+      if (recomputeRef.current) {
+        recomputeRef.current = false;
+        drainQueue(queueRef.current);
+      }
+      return;
+    }
     let cancel = false;
+    let done = false;
     jobRef.current += 1;
     recomputeRef.current = true;
     setModel((current) => ({
@@ -191,12 +199,14 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       historyRef.current = { ...historyRef.current, current: next };
       modelRef.current = next;
       setModel(next);
+      done = true;
       recomputeRef.current = false;
       drainQueue(queueRef.current);
     })();
     return () => {
       cancel = true;
-      recomputeRef.current = false;
+      // The next switch has already set the flag for itself; only an unfinished run releases it.
+      if (!done) recomputeRef.current = false;
     };
   }, [mode]);
 
@@ -496,6 +506,10 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     }
     if (step.current === modeRef.current) return;
     modeRef.current = step.current;
+    // The rebuild runs in the effect on mode, after this render. A press drained
+    // behind this click (an undo, a submit) waits for it too; started first, it
+    // was cancelled by the effect's job, and an undo lost its step from the history.
+    recomputeRef.current = true;
     setMode(step.current);
   }, []);
 
@@ -539,6 +553,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       const top = applied.stack[applied.stack.length - 1];
       const restored: Model = {
         ...previous,
+        // A fresh tape, so a long-press caption read on that earlier screen does not come back.
+        tape: previous.tape.slice(),
         stack: applied.stack,
         note: applied.error ? null : top ? noteFor(top) : previous.note,
         error: applied.error,
@@ -557,7 +573,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       return;
     }
     setExpr("");
-    commit(EMPTY);
+    // A fresh tape: a long-press caption read on an earlier empty screen stays gone.
+    commit({ ...EMPTY, tape: [] });
   }
 
   function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null, bound?: Record<string, C>) {

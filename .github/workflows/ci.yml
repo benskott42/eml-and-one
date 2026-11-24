@@ -508,6 +508,59 @@ jobs:
               if (String(shown.text).startsWith("−") || String(shown.text).startsWith("-")) fail(`${source} leading minus ${shownText(shown)}`);
             }
 
+            // A mode click and an Undo pressed while a mode switch rebuilds the stack
+            // are queued. The undo ran first and the second switch's effect cancelled
+            // it: the screen kept its row, and the history lost a step.
+            const queuedUndo = await evalJs(`(async () => {
+              const button = (name) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === name);
+              const tape = () => document.querySelector(".ti-tape")?.textContent?.trim() ?? "";
+              const settle = async (want) => {
+                const deadline = Date.now() + 20000;
+                while (Date.now() < deadline && tape() !== want) await new Promise((resolve) => setTimeout(resolve, 40));
+                await new Promise((resolve) => setTimeout(resolve, 500));
+              };
+              button("Clear").click();
+              for (let i = 0; i < 3; i += 1) document.querySelector(".ti-btn-one").click();
+              await settle("1  1  1");
+              button("hardware").click();
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              button("exact").click();
+              button("Undo").click();
+              await settle("1  1");
+              const first = tape();
+              button("Undo").click();
+              await settle("1");
+              return { first, second: tape(), mode: document.querySelector(".ti-lcd-status span")?.textContent ?? "" };
+            })()`);
+            console.log("queued mode and undo", JSON.stringify(queuedUndo));
+            if (queuedUndo.first !== "1  1" || queuedUndo.second !== "1" || queuedUndo.mode !== "exact") fail(`queued mode switch and undo ${JSON.stringify(queuedUndo)}`);
+
+            // A long-press caption read on an empty screen came back after a press and Clear.
+            const keyCenter = await evalJs(`(() => {
+              const key = [...document.querySelectorAll(".ti-key button")].find((b) => b.textContent.trim() === "π");
+              key.scrollIntoView({ block: "center" });
+              const r = key.getBoundingClientRect();
+              return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+            })()`);
+            await evalJs(`[...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Clear").click()`);
+            await delay(300);
+            const mouse = (type) => send("Input.dispatchMouseEvent", { type, x: keyCenter.x, y: keyCenter.y, button: "left", clickCount: 1 }, sessionId);
+            await mouse("mousePressed");
+            await delay(700);
+            await mouse("mouseReleased");
+            await delay(200);
+            const heldCaption = await evalJs(`document.querySelector(".ti-lcd-hold")?.textContent ?? ""`);
+            const afterClear = await evalJs(`(async () => {
+              document.querySelector(".ti-btn-one").click();
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Clear").click();
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              return document.querySelector(".ti-lcd-hold")?.textContent ?? "";
+            })()`);
+            console.log("long-press caption", JSON.stringify({ heldCaption, afterClear }));
+            if (!heldCaption.startsWith("π.")) fail(`long-press on π showed ${JSON.stringify(heldCaption)}`);
+            if (afterClear) fail(`long-press caption came back after a press and Clear: ${JSON.stringify(afterClear)}`);
+
             const workers = await evalJs(`window.__workerUrls || []`);
             console.log("workers", JSON.stringify(workers));
             if (!Array.isArray(workers) || workers.length === 0) fail("exact worker was not created");
