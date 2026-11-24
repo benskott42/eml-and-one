@@ -33,7 +33,6 @@ What the flag does not catch:
 - 0 minus the smallest positive float, 5×10^(−324). Float keeps a signed zero and exact keeps 0. The comparison treats those magnitudes as equal.
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
-- Raising precision for a value near 10^(−130) makes that exact evaluation slow. Cancel stops it. A newer exact expression pre-empts the one already running.
 
 ## Circuits and search
 
