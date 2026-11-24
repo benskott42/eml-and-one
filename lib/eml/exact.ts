@@ -1032,6 +1032,10 @@ function settleResidue(
  * node's gates hold only the bare integer, so any circuit built on it drops the
  * small term. The walk covers the whole DAG: a depth-8 / 64-step cap missed the
  * marker under the product word, and (10^400+i)·2 was certified as 2×10^400.
+ * The refused-sum placeholder (`unverified:`, an input 0) counts too. A user-level
+ * sum that returns it is refused, but a library word builds on it as a plain 0:
+ * atanh(exp(−50) − 10^400) adds 1 inside its own circuit, and √0/√0 printed
+ * undefined, and so did atan(10^400 − 6 + i).
  */
 function hidesBeside(root: Node): boolean {
   const known = besideMemo.get(root);
@@ -1044,7 +1048,7 @@ function hidesBeside(root: Node): boolean {
     if (!node || seen.has(node)) continue;
     seen.add(node);
     if (node.type === "input") {
-      if (node.label.startsWith("beside:")) {
+      if (node.label.startsWith("beside:") || node.label.startsWith("unverified:")) {
         found = true;
         break;
       }
@@ -1142,8 +1146,125 @@ export function exactReport(
   firstBig = Number.NEGATIVE_INFINITY;
   const out = exactReportCore(root, env, budget, pass);
   if (overflowNaN(root, env, out)) return { ...out, singular: null, unverified: true };
-  if (out.unverified || !refusedResult(root, env, budget, out)) return out;
-  return { ...out, unverified: true };
+  if (out.unverified) return out;
+  if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
+  return squaredTinyPart(root, env, budget, out);
+}
+
+/**
+ * The probe pass in squaredTinyPart. `limit` is the decade below which a value's
+ * square no longer fits the working precision; `low` is the smallest decade lifted.
+ */
+let probe: { limit: number; low: number; follows: WeakSet<Z> } | null = null;
+
+function wholeTiny(v: Z, limit: number): boolean {
+  return zFinite(v) && !zZero(v) && exponentCeil(v) < limit;
+}
+
+/**
+ * In the probe pass, a tiny value made from operands that are not tiny (a leaf, or
+ * exp of a large negative real such as the 1/10^100 word) is lifted to about
+ * 10^(−30), each component on its own: 10^(−100) + 10^(−150) i lifted as one keeps
+ * its 50-decade gap, and the product of the two parts would still not fit. Values
+ * computed from lifted ones follow them and are not lifted again.
+ */
+function lifted(v: Z, x?: Z, y?: Z): Z {
+  if (!probe) return v;
+  if (x && y && (probe.follows.has(x) || probe.follows.has(y))) {
+    probe.follows.add(v);
+    return v;
+  }
+  if (!wholeTiny(v, probe.limit)) return v;
+  if (x && y) {
+    // Only exp of a large negative real makes a new tiny value. A residue of a
+    // cancellation is the circuit's rounding, and lifting it would invent a part.
+    if (!x.re.isFinite() || !x.re.lt(probe.limit * LN10_APPROX) || wholeTiny(x, probe.limit) || wholeTiny(y, probe.limit)) return v;
+  }
+  probe.low = Math.min(probe.low, exponentCeil(v));
+  // The nearest decade, not the exponent: 9.99…×10^(−301) and 10^(−300) are one value
+  // reached by two words, and must be lifted by the same factor.
+  const lift = (part: Decimal) => {
+    if (part.isZero() || !part.isFinite() || part.e >= -30) return part;
+    const mant = part.abs().div(new D(10).pow(part.e)).toNumber();
+    const decade = part.e + Math.round(Math.log10(mant));
+    return part.mul(new D(10).pow(-30 - decade));
+  };
+  const out = { re: lift(v.re), im: lift(v.im) };
+  probe.follows.add(out);
+  return out;
+}
+
+/**
+ * A component 0 beside a nonzero one, when the circuit holds an input so small that
+ * its square is below the working precision. Second-order parts are rounded away
+ * before any cancellation sees them: cosh(10^(−100)) is 1 + 5×10^(−201), which is 1
+ * at 120 digits, so cosh(10^(−100))^i certified 1 (true 1 + 5×10^(−201) i), and
+ * cos(10^(−100) + 10^(−150) i) lost −10^(−250) i. The tally of tiny values is per
+ * channel, and ·i moves a real one into the other channel.
+ * A probe pass lifts each such input to about 10^(−30), where squares and cubes fit.
+ * A component that stays 0 there does not depend on them (cos(10^(−300)) stays real).
+ * One that appears is read again where the square fits, and kept if it holds still;
+ * past 480 digits, or if it moves, the result is not certified.
+ */
+function squaredTinyPart(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): ExactReport {
+  const v = out.value;
+  if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() === v.im.isZero()) return out;
+  const which: "re" | "im" = v.re.isZero() ? "re" : "im";
+  const other = which === "re" ? "im" : "re";
+  const limit = -Math.floor((D.precision - 24) / 2);
+  if (Math.min(firstTinyParts.re, firstTinyParts.im) >= limit) return out;
+  // The probe's verdict: the part depends on the lifted inputs, does not, or the
+  // lifted circuit gave no usable reading (a 10^k lift word overflows once its
+  // operand is lifted), in which case only a raised reading can show the part.
+  let seen: Z | null = null;
+  let low = 0;
+  try {
+    probe = { limit, low: 0, follows: new WeakSet() };
+    seen = exactReportOnce(root, env, budget).value;
+    low = probe.low;
+  } catch {
+    seen = null;
+  } finally {
+    probe = null;
+  }
+  if (seen && low >= limit) return out;
+  // A large angle leaves as many more decades of noise (see dustPart): sinh(10^300 i)
+  // reads 5×10^(−87) in the lifted real part, and it is noise.
+  const lost = Math.max(0, out.trigGap ?? 0);
+  const usable = !!seen && zFinite(seen) && !seen[other].isZero();
+  if (usable && seen) {
+    const part = seen[which];
+    // Measured against 1 as well: the gates work near 1, so their noise is about
+    // 10^(−precision) even beside a small part (tanh of 10^(−30) i leaves 6×10^(−121)).
+    if (part.isZero() || part.e <= Math.max(seen[other].e, 0) - (D.precision - 24 - lost)) return out;
+  }
+  const dependent = usable;
+  const floor = Math.min(low, firstTinyParts.re, firstTinyParts.im);
+  const need = -2 * floor + 48;
+  const first = Math.min(PRECISION_CAP - 24, Math.max(D.precision + 24, need));
+  // A reading that fits the square and shows no part settles it: the part is 0.
+  // One that cannot fit it (past 480 digits) refuses when the probe saw the part.
+  const refuse = (): ExactReport => (dependent && need > first ? { ...out, unverified: true } : out);
+  let a: ExactReport;
+  let b: ExactReport;
+  try {
+    a = atPrecision(first, root, env, budget, false);
+    if (a.unverified) return { ...out, unverified: true };
+    // A part under the noise of terms near 1 is not a reading: tanh(10^(−100) i/3)
+    // leaves about 10^(−452) in the real part at 450 digits, and it moves.
+    const shown = a.value[which];
+    const scale = Math.max(a.value[other].isZero() ? 0 : a.value[other].e, 0);
+    if (shown.isZero() || !shown.isFinite() || shown.e <= scale - (first - 24 - lost)) return refuse();
+    const work = which === "re" ? a.workRe : a.workIm;
+    const fits = (work !== undefined && Number.isFinite(work) ? work : 0) - a.value[which].e + 36;
+    b = atPrecision(Math.min(PRECISION_CAP, Math.max(first + 24, fits)), root, env, budget, false);
+  } catch {
+    // Out of budget: a part the probe saw is not certified as 0.
+    return dependent ? { ...out, unverified: true } : out;
+  }
+  // A part that appears and then moves is rounding, and the result is not certified.
+  if (b.unverified || residueMoved(a.value[which], b.value[which]) || residueMoved(a.value[other], b.value[other])) return { ...out, unverified: true };
+  return { ...out, value: a.value, digits: a.digits };
 }
 
 /**
@@ -1358,7 +1479,9 @@ function exactReportOnce(
   biggest = Number.NEGATIVE_INFINITY;
   const risk = new Map<Node, GateRisk>();
   let steps = 0;
-  const nocache = cacheOff();
+  // The probe's lifted values must not reach the caches.
+  const probing = probe !== null;
+  const nocache = cacheOff() || probing;
   let cache = pureCache.get(D.precision);
   if (!cache) {
     cache = new WeakMap();
@@ -1407,7 +1530,7 @@ function exactReportOnce(
           continue;
         }
       }
-      const leaf = z(n.value.re, n.value.im);
+      const leaf = lifted(z(n.value.re, n.value.im));
       memo.set(n, leaf);
       noteSeen(leaf);
       why.set(n, null);
@@ -1420,7 +1543,7 @@ function exactReportOnce(
       }
       const bound = env[n.name];
       if (!bound) throw new EmlError(`This expression needs a value for ${n.name}.`);
-      const boundZ = asZ(bound);
+      const boundZ = lifted(asZ(bound));
       memo.set(n, boundZ);
       noteSeen(boundZ);
       why.set(n, null);
@@ -1495,7 +1618,7 @@ function exactReportOnce(
     // An angle under the rounding noise of the gates that produced it is that
     // noise, and turns as 0 (cosSin no longer snaps a tiny angle to the axis).
     const turn = angleNoise(a, work.get(n.a)) ? { re: a.re, im: ZERO } : a;
-    const value = angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b);
+    const value = lifted(angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b), a, b);
     const ownLoss = lossGap;
     lossGap = Math.max(outerLoss, ownLoss);
     const subAbsorb = Math.max(absorbIm, absorbOf.get(n.a) ?? 0, absorbOf.get(n.b) ?? 0);
@@ -1548,6 +1671,7 @@ function exactReportOnce(
       trigGap: angleInfinite ? 0 : angleDecades(turn),
     };
     risk.set(n, gate);
+    if (probing) continue;
     if (!(n.a.type === "var" || hasVarOf.get(n.a) === true || n.b.type === "var" || hasVarOf.get(n.b) === true)) store.set(n, gate);
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;

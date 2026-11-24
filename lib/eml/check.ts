@@ -4191,6 +4191,41 @@ if (shardTurn(56)) {
   }
 }
 
+if (shardTurn(57)) {
+  // A part made of a square or product of tiny inputs is not certified as 0. cosh(10^(−100))
+  // is 1 + 5×10^(−201), which rounds to 1 at 120 digits, so cosh(10^(−100))^i certified 1.
+  // A part that a raised reading shows and keeps is certified; past 480 digits it is refused.
+  // A part that does not depend on the tiny inputs (a real function of a real) stays 0.
+  const squareRows: Array<[string, string]> = [
+    ["cosh(10^(-100))^i", "1 + 5×10^−201i"],
+    ["cos(10^(-100))^i", "1 − 5×10^−201i"],
+    ["cosh(10^(-100)*(1+i))", "1 + 1×10^−200i"],
+    ["(1+2*10^(-120)*i)^(i/3)", "1 + 6.666666666667×10^−241i"],
+    ["((1+10^(-110))-1)+i/2", "1×10^−110 + 0.5i"],
+    ["cos(10^(-300))", "1"],
+    ["cos(10^(-300))^2", "1"],
+    ["tanh((1/3)*10^(-100)*i)", "3.333333333333×10^−101i"],
+    ["cos(1+10^(-200)*i)", "0.540302305868 − 8.414709848079×10^−201i"],
+  ];
+  for (const [source, want] of squareRows) {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 400_000 });
+    const got = formatExact(report.value);
+    if (report.unverified || got !== want) {
+      failed += 1;
+      console.log("FAIL squared tiny part", source, got, report.unverified ? "unverified" : "certified", "want", want);
+    } else console.log("squared tiny part", source, got);
+  }
+  // True parts 2×10^(−500) i and 5×10^(−601) i: past the cap, so not certified.
+  // A refused huge sum inside atanh or atan is refused, not undefined (it was √0/√0).
+  for (const source of ["cos(2*10^(-250))^(-i)", "cosh(10^(-300))^i", "atanh(exp(-50)-10^400)", "atan(10^400-6+i)", "atan(10^400+i)"]) {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 400_000 });
+    if (!report.unverified || report.singular !== null) {
+      failed += 1;
+      console.log("FAIL refused tiny or huge part", source, formatExact(report.value), report.singular);
+    } else console.log("refused", source);
+  }
+}
+
 closeBlockTimer();
 if (shardCount > 1) console.log(`shard ${shardIndex}/${shardCount}`);
 if (failed) {
