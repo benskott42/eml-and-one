@@ -20,6 +20,8 @@
 - A value is named (this is π, · e) only when it is within 5×10^(−12) of the constant, the bound float-differs uses. A relative 10^(−9) named a typed 3.141592654 π. Every record program and golden row that was named still is.
 - Copy number goes back from Copied when the number changes. After a copy, stepping to the next long program kept saying Copied.
 - Exact mode is about 1.5× faster from a cold start, with every result unchanged. exp, ln, cos, sin, hypot and atan2 keep their results by precision and argument: most calls in a circuit repeat an argument already computed. sinh(10^300 i) takes 6.8 s instead of 12.2 s, tan(1.5) 0.23 s instead of 0.40 s, and the golden corpus 187 s instead of 284 s.
+- A sum of a variable term whose range is unknown gets the low-precision note whenever it nearly cancels. 2x + 1 for x just above −1/2 had no note, though x + 1 for x just above −1 had one, and 10^(−300)·x + 1 printed 6.35×10^(−13) for a value of 10^(−12) with no note. The scaled sum rebuilds its terms, so the noted term was not a gate the evaluation had read.
+- The press line says "x and y stay in the string" for a program past 20000 presses. The preview is a 30-press prefix, and the note was read from that prefix: sin(sin(x)) left it out.
 
 ## 1.0.2 — 2026-11-22
 

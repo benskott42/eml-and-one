@@ -401,7 +401,18 @@ export function evaluateReport(root: Node, env: Record<string, C> = {}, budget: 
   const out = memo.get(root);
   if (!out) throw new EmlError("Could not evaluate this circuit.");
   let singular = why.get(root) ?? null;
-  const flag = precisionMessage(root, (n) => memo.get(n));
+  // A scaled add can rebuild its operands, so a noted term need not be a gate
+  // here. Evaluate it on its own: without that, 2x + 1 near x = −1/2 lost the
+  // low-precision flag that x + 1 near x = −1 gets.
+  const flag = precisionMessage(root, (n) => {
+    const hit = memo.get(n);
+    if (hit !== undefined) return hit;
+    try {
+      return evaluateReport(n, env, budget).value;
+    } catch {
+      return undefined;
+    }
+  });
   if (flag === SINGULAR_POLE) singular = flag;
   else if (!singular && flag) singular = flag;
   return {
