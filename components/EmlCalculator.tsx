@@ -1,12 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type C } from "@/lib/eml/complex";
-import { beyondFloatBound } from "@/lib/eml/float-bound";
-import { packCircuit } from "@/lib/eml/wire";
-import { captionName, formatC, isUsable, recognize } from "@/lib/eml/format";
-import type { GolfHit } from "@/lib/eml/golf";
-import { ln0Dependence } from "@/lib/eml/golf-label";
+import { captionName, recognize } from "@/lib/eml/format";
 import {
   BINARY_KEYS,
   CONSTANT_KEYS,
@@ -14,120 +10,35 @@ import {
   applyBinaryNode,
   applyUnaryNode,
   constantNode,
-  seriesShortcutNote,
 } from "@/lib/eml/library";
-import {
-  E,
-  EmlError,
-  EmlLimitError,
-  ONE,
-  SINGULAR_LN0,
-  type Node,
-  circuitStats,
-  describe,
-  evaluateReport,
-  isPure,
-  nodeFromRpn,
-  rpnTokens,
-} from "@/lib/eml/node";
-import { agreementNote, compileExpression } from "@/lib/eml/parse";
+import { E, ONE, type Node, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
 import table from "@/lib/eml/best-known.json";
-import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory, type History } from "@/lib/eml/history";
-import { pressPreviewForNode } from "@/lib/eml/presses";
+import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
 import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
-import { parseProgramInput, programIndexDigits, programNumberText, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
-
-const TWO_BUTTONS_KEY = "eml-and-one-two-buttons";
-let twoButtonsStored = false;
-let twoButtonsLoaded = false;
-const twoButtonsListeners = new Set<() => void>();
+import { parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
+import {
+  EMPTY,
+  type Entry,
+  type Mode,
+  type Model,
+  binaryCaption,
+  clip,
+  entry,
+  failure,
+  noteFor,
+  programDigits,
+  resultError,
+  shownSingular,
+  unaryCaption,
+  valuesOf,
+} from "@/components/calculator/entry";
+import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "@/components/calculator/twoButtons";
+import { useExactJobs } from "@/components/calculator/useExactJobs";
+import { CopyNumber, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
+import { compileSubmission, nextTurn } from "@/components/submitTurn";
 
 /** False in the static HTML and during hydration, true once React owns the keys. */
 const subscribeNothing = () => () => {};
-
-function subscribeTwoButtons(listener: () => void) {
-  twoButtonsListeners.add(listener);
-  return () => {
-    twoButtonsListeners.delete(listener);
-  };
-}
-
-function readTwoButtons() {
-  if (!twoButtonsLoaded) {
-    twoButtonsLoaded = true;
-    try {
-      twoButtonsStored = window.localStorage.getItem(TWO_BUTTONS_KEY) === "1";
-    } catch {
-      twoButtonsStored = false;
-    }
-  }
-  return twoButtonsStored;
-}
-
-function writeTwoButtons(value: boolean) {
-  twoButtonsStored = value;
-  twoButtonsLoaded = true;
-  try {
-    window.localStorage.setItem(TWO_BUTTONS_KEY, value ? "1" : "0");
-  } catch {
-    /* private mode and blocked storage still toggle for this visit */
-  }
-  document.documentElement.classList.toggle("ti-two-buttons", value);
-  for (const listener of twoButtonsListeners) listener();
-}
-
-type Mode = "float" | "exact";
-
-type Entry = {
-  value: C;
-  text: string;
-  singular: string | null;
-  mode: Mode;
-  node: Node;
-  caption: string;
-  bound?: Record<string, C>;
-  touchedLn0?: boolean;
-  overflowed?: boolean;
-  underflowed?: boolean;
-  nearCut?: boolean;
-  pendingExact?: boolean;
-  cancelled?: boolean;
-  floatDiffers?: boolean;
-  exactBeside?: string;
-  notice?: string | null;
-  watch?: number;
-};
-
-type Model = {
-  stack: Entry[];
-  tape: string[];
-  note: string | null;
-  error: string | null;
-};
-
-const EMPTY: Model = { stack: [], tape: [], note: null, error: null };
-
-// The exact engine (decimal.js) runs in exact.worker. The screen loads it only
-// for the fallback: no Worker, or a worker that failed. Once loaded it is kept,
-// and a delivery runs synchronously as before.
-type ExactEngine = typeof import("@/lib/eml/exact");
-let exactEngine: ExactEngine | null = null;
-let exactEngineLoad: Promise<ExactEngine> | null = null;
-
-function loadExactEngine(): Promise<ExactEngine> {
-  exactEngineLoad ??= import("@/lib/eml/exact").then(
-    (engine) => {
-      exactEngine = engine;
-      return engine;
-    },
-    (err: unknown) => {
-      // A failed chunk fetch is retried on the next delivery.
-      exactEngineLoad = null;
-      throw err;
-    },
-  );
-  return exactEngineLoad;
-}
 
 const EXAMPLES = [
   { label: "e", expr: "e" },
@@ -139,411 +50,6 @@ const EXAMPLES = [
   { label: "2^10", expr: "2^10" },
   { label: "φ", expr: "(1+sqrt(5))/2" },
 ];
-
-function failure(err: unknown): string {
-  if (err instanceof EmlError) return err.message;
-  if (err instanceof Error && err.message) return err.message;
-  return "That calculation failed.";
-}
-
-function isOneAndE(token: string): boolean {
-  return token === "1" || token === "E" || token === "x" || token === "y";
-}
-
-/** Nested eml text whose leaves are only 1, x, and y — no repaired numbers. */
-function pureDescribe(text: string): boolean {
-  const leaves = text.split(/eml|[(),\s]+/).filter(Boolean);
-  return leaves.length > 0 && leaves.every((leaf) => leaf === "1" || leaf === "x" || leaf === "y");
-}
-
-function programText(node: Node): string | null {
-  if (node.type !== "eml") return null;
-  const stats = circuitStats(node);
-  const summary = `K ${stats.rpnLength} · ${stats.dagGates} shared · depth ${stats.depth}`;
-  if (stats.dagGates <= 12 && stats.depth <= 10 && stats.rpnLength <= BigInt(48)) {
-    const tokens = rpnTokens(node, 48);
-    if (tokens && tokens.every(isOneAndE)) return `${tokens.join(" ")} · ${summary}`;
-    const nested = describe(node);
-    if (nested && pureDescribe(nested)) return nested;
-  }
-  return summary;
-}
-
-function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
-  if (node.type === "one") {
-    return { value: { re: 1, im: 0 }, text: "1", singular: null, mode, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, pendingExact: false, notice: null };
-  }
-  if (mode === "exact") {
-    const blank = exactScreen("computing");
-    return {
-      value: { re: Number.NaN, im: Number.NaN },
-      text: blank.text,
-      singular: null,
-      mode,
-      touchedLn0: false,
-      overflowed: false,
-      underflowed: false,
-      nearCut: false,
-      pendingExact: true,
-      notice: null,
-    };
-  }
-  try {
-    const report = evaluateReport(node, env, { maxNodes: 80_000 });
-    if (report.unverified) {
-      return {
-        value: { re: Number.NaN, im: Number.NaN },
-        text: "—",
-        singular: null,
-        mode,
-        touchedLn0: false,
-        overflowed: false,
-        underflowed: false,
-        nearCut: false,
-        pendingExact: false,
-        notice: "couldn't verify",
-      };
-    }
-    return {
-      value: report.value,
-      text: formatC(report.value),
-      singular: report.singular,
-      mode,
-      touchedLn0: report.touchedLn0,
-      overflowed: report.overflowed,
-      underflowed: report.underflowed,
-      nearCut: report.nearCut,
-      pendingExact: false,
-      notice: null,
-    };
-  } catch (err) {
-    if (!(err instanceof EmlLimitError)) throw err;
-    return {
-      value: { re: Number.NaN, im: Number.NaN },
-      text: "—",
-      singular: null,
-      mode,
-      touchedLn0: false,
-      overflowed: false,
-      underflowed: false,
-      nearCut: false,
-      pendingExact: false,
-      notice: "couldn't verify",
-    };
-  }
-}
-
-function programFlags(item: Entry): string | null {
-  const bits: string[] = [];
-  if (item.value.re === Infinity) bits.push("+∞");
-  else if (item.value.re === -Infinity) bits.push("−∞");
-  if (item.value.im === Infinity) bits.push("+∞i");
-  else if (item.value.im === -Infinity) bits.push("−∞i");
-  if (item.touchedLn0) bits.push("ln 0");
-  return bits.length ? bits.join(" · ") : null;
-}
-
-function agreementText(caption: string, value: C, variables: Record<string, C>, text: string): string | null {
-  return agreementNote(caption, value, variables, text);
-}
-
-function shownSingular(item: Entry): string | null {
-  if (
-    item.singular === SINGULAR_LN0 &&
-    Number.isFinite(item.value.re) &&
-    Number.isFinite(item.value.im)
-  ) {
-    return null;
-  }
-  return item.singular;
-}
-
-function noteFor(item: Entry): string | null {
-  const number = programNumberText(item.node);
-  const bits = [
-    programText(item.node),
-    number,
-    number ? programFlags(item) : null,
-    item.pendingExact ? exactScreen("computing").note : null,
-    item.cancelled ? exactScreen("cancelled").note : null,
-    item.floatDiffers && item.exactBeside ? `${FLOAT_DIFFERS} · ${item.exactBeside}` : null,
-    item.notice,
-    item.overflowed ? "overflow" : null,
-    underflowDisclosure(item.value, item.underflowed === true),
-    item.nearCut ? "on or very near the branch cut" : null,
-    seriesShortcutNote(item.node),
-    isPure(item.node) ? "pure" : null,
-    shownSingular(item),
-    agreementText(item.caption, item.value, item.bound ?? {}, item.text),
-  ].filter(Boolean);
-  return bits.length ? bits.join(" · ") : null;
-}
-
-function CopyNumber({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      className="ti-lcd-btn"
-      title={text}
-      aria-label={`Copy ${text}`}
-      onClick={() => {
-        const clip = navigator.clipboard;
-        if (!clip) return;
-        void clip.writeText(text).then(() => setCopied(true)).catch(() => undefined);
-      }}
-    >
-      {copied ? "Copied" : "Copy number"}
-    </button>
-  );
-}
-
-function PressLine({ node }: { node: Node | null }) {
-  const [copied, setCopied] = useState(false);
-  if (!node) return null;
-  const view = pressPreviewForNode(node);
-  if (!view) {
-    return <p className="ti-press">Binary applies only to programs of the 1 and EML keys.</p>;
-  }
-  return (
-    <div>
-      <p className="ti-press">
-        {view.preview} ({view.presses.toString()} presses)
-      </p>
-      <div className="ti-press-meta">
-        <span>1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</span>
-        {view.usesVariables ? <span>x and y stay in the string</span> : null}
-        {view.copyable ? (
-          <button
-            type="button"
-            className="ti-lcd-btn"
-            onClick={() => {
-              // No clipboard outside a secure context; that must not throw.
-              const clip = navigator.clipboard;
-              if (!clip) return;
-              void clip.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
-            }}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function golfLabel(id: string): string {
-  if (id === "ipi") return "+iπ";
-  if (id === "-ipi") return "−iπ";
-  return id;
-}
-
-function clip(text: string, max = 72): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
-function unaryCaption(id: string, label: string, arg: string): string {
-  if (id === "inv") return `1/(${arg})`;
-  if (id === "minus") return `−(${arg})`;
-  if (id === "sqr") return `(${arg})²`;
-  if (id === "sqrt") return `√(${arg})`;
-  return `${label}(${arg})`;
-}
-
-function binaryCaption(id: string, x: string, y: string): string {
-  if (id === "add") return `${x} + ${y}`;
-  if (id === "sub") return `${x} − ${y}`;
-  if (id === "mul") return `${x} × ${y}`;
-  if (id === "div") return `${x} ÷ ${y}`;
-  if (id === "pow") return `${x}^${y}`;
-  if (id === "log") return `log(${x}, ${y})`;
-  if (id === "avg") return `avg(${x}, ${y})`;
-  if (id === "hypot") return `hypot(${x}, ${y})`;
-  return `${x} ${id} ${y}`;
-}
-
-let watchSerial = 1;
-
-function resultError(item: Entry): string | null {
-  if (item.pendingExact || item.cancelled) return null;
-  // (10^400+1)/7 is finite in exact arithmetic and only overflows as a float.
-  // The printed exact value stays, without a second "left the finite numbers".
-  return finiteLossMessage({
-    usable: isUsable(item.value),
-    notice: item.notice,
-    singular: shownSingular(item),
-    mode: item.mode,
-    text: item.text,
-  });
-}
-
-/** bound holds the x and y values a word of x and y leaves reads, in float as in exact. */
-function entry(node: Node, caption: string, mode: Mode, bound?: Record<string, C>): Entry {
-  const item: Entry = { node, caption, watch: watchSerial++, ...runNode(node, mode, bound) };
-  if (bound) item.bound = bound;
-  return item;
-}
-
-function valuesOf(xText: string, yText: string): Record<string, C> {
-  const bound: Record<string, C> = {};
-  try {
-    bound.x = evaluateReport(readScalar(xText, "x")).value;
-  } catch {
-    /* the field is not a value yet */
-  }
-  try {
-    bound.y = evaluateReport(readScalar(yText, "y")).value;
-  } catch {
-    /* the field is not a value yet */
-  }
-  return bound;
-}
-
-function KeyButton({
-  children,
-  onClick,
-  title,
-  ariaLabel,
-  disabled = false,
-  tone = "plain",
-  secondary,
-  onReveal,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  title?: string;
-  ariaLabel?: string;
-  disabled?: boolean;
-  tone?: "plain" | "one" | "eml";
-  secondary?: string;
-  onReveal?: (text: string) => void;
-}) {
-  const revealed = useRef(false);
-  return (
-    <div className="ti-key">
-      {secondary ? (
-        <span className={tone === "plain" ? "ti-key-alt" : "ti-key-alt ti-key-alt-strong"}>{secondary}</span>
-      ) : (
-        <span className="ti-key-alt" aria-hidden="true" />
-      )}
-      <button
-        type="button"
-        title={title}
-        aria-label={ariaLabel}
-        aria-disabled={disabled || undefined}
-        onClick={() => {
-          if (revealed.current) {
-            revealed.current = false;
-            return;
-          }
-          if (disabled) return;
-          onClick();
-        }}
-        onPointerDown={() => {
-          if (!title || !onReveal) return;
-          revealed.current = false;
-          const timer = window.setTimeout(() => {
-            revealed.current = true;
-            onReveal(title);
-          }, 450);
-          const end = () => {
-            window.clearTimeout(timer);
-            if (!revealed.current) return;
-            // pointerup outside the button does not deliver a click, so the
-            // flag would swallow the next key. Drop it on the next turn if
-            // this click does not consume it first.
-            window.setTimeout(() => {
-              revealed.current = false;
-            }, 0);
-          };
-          window.addEventListener("pointerup", end, { once: true });
-          window.addEventListener("pointercancel", end, { once: true });
-        }}
-        className={disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}
-      >
-        {children}
-      </button>
-    </div>
-  );
-}
-
-function GolfPanel() {
-  const [line, setLine] = useState("Search constants up to K 21. The slow script runs through K 35.");
-  const [busy, setBusy] = useState(false);
-  const workerRef = useRef<Worker | null>(null);
-  const requestRef = useRef(0);
-
-  useEffect(() => () => {
-    workerRef.current?.terminate();
-    workerRef.current = null;
-  }, []);
-
-  function stop() {
-    requestRef.current += 1;
-    // The search loop does not yield, so a stop message never arrives. Ending the worker is the cancel.
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    setBusy(false);
-  }
-
-  function start(allowLn0: boolean) {
-    stop();
-    const request = requestRef.current;
-    const worker = new Worker(new URL("../lib/eml/golf.worker.ts", import.meta.url));
-    workerRef.current = worker;
-    setBusy(true);
-    setLine("Searching…");
-    worker.onmessage = (event: MessageEvent<{ type: string; request?: number; k?: number; pool?: number; hits?: GolfHit[]; message?: string }>) => {
-      const data = event.data;
-      if (data.request !== request) return;
-      if (data.type === "progress") setLine(`K ${data.k} · ${data.pool} new circuits`);
-      if (data.type === "error") {
-        setLine(data.message ?? "The search worker failed.");
-        setBusy(false);
-        worker.terminate();
-        if (workerRef.current === worker) workerRef.current = null;
-      }
-      if (data.type === "done") {
-        const text = (data.hits ?? [])
-          .map((hit) => {
-            const dependence = ln0Dependence(hit);
-            return `${golfLabel(hit.id)} = K ${hit.k}${dependence ? ` · ${dependence}` : ""}`;
-          })
-          .join(" · ");
-        setLine(text || "No constants in range.");
-        setBusy(false);
-        worker.terminate();
-        if (workerRef.current === worker) workerRef.current = null;
-      }
-    };
-    worker.onerror = () => {
-      if (requestRef.current !== request) return;
-      setLine("The search worker failed.");
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-      setBusy(false);
-    };
-    worker.postMessage({ maxK: 21, request, allowLn0 });
-  }
-
-  return (
-    <details className="ti-fold">
-      <summary>Circuit golf</summary>
-      <p>{line}</p>
-      <div className="ti-manual-actions">
-        <button type="button" onClick={() => start(true)} disabled={busy} className="ti-text-btn ti-text-btn-strong">
-          Search with ln 0
-        </button>
-        <button type="button" onClick={() => start(false)} disabled={busy} className="ti-text-btn">
-          Search without ln 0
-        </button>
-        <button type="button" onClick={stop} disabled={!busy} className="ti-text-btn">
-          Cancel
-        </button>
-      </div>
-    </details>
-  );
-}
 
 export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {}) {
   const [model, setModel] = useState<Model>(EMPTY);
@@ -575,11 +81,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   // and the old captions stay until the new table is whole.
   const [costs, setCosts] = useState<KeyTable>(() => initialKeys?.costs ?? keyCosts([], INITIAL_X, INITIAL_Y));
   useEffect(() => {
-    if (initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y) {
-      setCosts(initialKeys.costs);
-      return;
-    }
-    const entries = keyCostEntries(model.stack, xText, yText);
+    const atStart = initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y;
+    const entries = atStart ? Object.entries(initialKeys.costs)[Symbol.iterator]() : keyCostEntries(model.stack, xText, yText);
     const table: KeyTable = {};
     let handle = 0;
     const slice = () => {
@@ -606,265 +109,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   // typing reads the new text.
   textRef.current = { xText, yText };
 
-  const followedRef = useRef(new Set<number>());
-  type JobKind = "fill" | "compare";
-  const exactWorkers = useRef<Record<JobKind, Worker | null>>({ fill: null, compare: null });
-  const inflight = useRef<Record<JobKind, Map<number, number>>>({ fill: new Map(), compare: new Map() });
-  const exactJobs = useRef(new Map<number, { watch: number; kind: JobKind; floated: C }>());
-  const exactSerial = useRef(0);
-  const startFillWorker = useRef<(() => void) | null>(null);
+  const { cancelExact } = useExactJobs({ stack: model.stack, modelRef, historyRef, recomputeRef, queueRef, setModel });
 
-  const publishWatch = useCallback((token: number, next: Entry) => {
-    const current = modelRef.current;
-    if (!current.stack.some((row) => row.watch === token)) return;
-    const stack = current.stack.map((row) => (row.watch === token ? next : row));
-    const top = stack[stack.length - 1];
-    const updated: Model = {
-      ...current,
-      stack,
-      note: top?.watch === token ? noteFor(next) : current.note,
-      // "Swap needs two values." pressed while the top computed stays up.
-      error: top?.watch === token ? (resultError(next) ?? current.error) : current.error,
-    };
-    modelRef.current = updated;
-    historyRef.current = { ...historyRef.current, current: updated };
-    setModel(updated);
-  }, []);
-
-  const finishExact = useCallback(
-    (request: number, payload: { text: string; re: number; im: number; singular: string | null; touchedLn0: boolean; underflowedExact?: boolean; unverified?: boolean } | { error: string }) => {
-      const job = exactJobs.current.get(request);
-      exactJobs.current.delete(request);
-      inflight.current.fill.delete(request);
-      inflight.current.compare.delete(request);
-      if (!job) return;
-      const current = modelRef.current.stack.find((row) => row.watch === job.watch);
-      if (!current || current.cancelled) return;
-      if ("error" in payload) {
-        if (job.kind !== "fill") {
-          publishWatch(job.watch, { ...current, notice: "couldn't verify" });
-          return;
-        }
-        const blank = exactScreen("cancelled");
-        publishWatch(job.watch, { ...current, pendingExact: false, cancelled: true, text: blank.text, singular: payload.error });
-        return;
-      }
-      const exact = { re: payload.re, im: payload.im };
-      if (job.kind === "compare") {
-        if (payload.unverified) {
-          publishWatch(job.watch, { ...current, notice: "couldn't verify" });
-          return;
-        }
-        if (!payload.underflowedExact && !beyondFloatBound(job.floated, exact)) return;
-        publishWatch(job.watch, { ...current, floatDiffers: true, exactBeside: payload.text });
-        return;
-      }
-      if (payload.unverified) {
-        publishWatch(job.watch, { ...current, pendingExact: false, text: "—", value: { re: Number.NaN, im: Number.NaN }, notice: "couldn't verify" });
-        return;
-      }
-      if (!current.pendingExact) return;
-      publishWatch(job.watch, {
-        ...current,
-        pendingExact: false,
-        value: exact,
-        text: payload.text,
-        singular: payload.singular,
-        touchedLn0: payload.touchedLn0,
-      });
-    },
-    [publishWatch],
-  );
-
-  const cancelExact = useCallback(function cancel() {
-    // A mode switch or undo shows "computing" before its rows exist. A cancel
-    // then waits for them, or the rows it lands would start computing again.
-    if (recomputeRef.current) {
-      queueRef.current.push(() => cancel());
-      return;
-    }
-    exactJobs.current.clear();
-    for (const kind of ["fill", "compare"] as const) {
-      exactWorkers.current[kind]?.terminate();
-      exactWorkers.current[kind] = null;
-      inflight.current[kind].clear();
-    }
-    const blank = exactScreen("cancelled");
-    const stack = modelRef.current.stack.map((item) =>
-      item.pendingExact ? { ...item, pendingExact: false, cancelled: true, text: blank.text, value: { re: Number.NaN, im: Number.NaN } } : item,
-    );
-    const top = stack[stack.length - 1];
-    const updated: Model = {
-      ...modelRef.current,
-      stack,
-      note: top?.cancelled ? blank.note : modelRef.current.note,
-      error: null,
-    };
-    modelRef.current = updated;
-    historyRef.current = { ...historyRef.current, current: updated };
-    setModel(updated);
-  }, []);
-
-  useEffect(() => {
-    const workers = exactWorkers.current;
-    // Without workers every exact result comes from the fallback; fetch it before the first press.
-    if (typeof Worker === "undefined") void loadExactEngine().catch(() => undefined);
-    return () => {
-      workers.fill?.terminate();
-      workers.compare?.terminate();
-    };
-  }, []);
-
-  useEffect(() => {
-    const run = ({ exactReport, exactToFloat, exactUnderflowsFloat, formatExact }: ExactEngine, request: number, node: Node, bound: Record<string, C>) => {
-      try {
-        const report = exactReport(node, bound, { maxNodes: 80_000 });
-        const exact = exactToFloat(report.value);
-        finishExact(request, {
-          text: formatExact(report.value),
-          re: exact.re,
-          im: exact.im,
-          singular: report.singular,
-          touchedLn0: report.touchedLn0,
-          underflowedExact: exactUnderflowsFloat(report.value),
-          unverified: report.unverified === true,
-        });
-      } catch (err) {
-        finishExact(request, { error: failure(err) });
-      }
-    };
-    const deliver = (request: number, node: Node, bound: Record<string, C>) => {
-      if (exactEngine) {
-        run(exactEngine, request, node, bound);
-        return;
-      }
-      loadExactEngine().then(
-        (engine) => run(engine, request, node, bound),
-        (err: unknown) => finishExact(request, { error: failure(err) }),
-      );
-    };
-    const accept = (data: { type?: string; request?: number; text?: string; re?: number; im?: number; singular?: string | null; touchedLn0?: boolean; underflowedExact?: boolean; unverified?: boolean; message?: string }) => {
-      if (data.request === undefined || !exactJobs.current.has(data.request)) return;
-      inflight.current.fill.delete(data.request);
-      inflight.current.compare.delete(data.request);
-      if (data.type === "error") {
-        finishExact(data.request, { error: data.message ?? "Exact evaluation failed." });
-        return;
-      }
-      finishExact(data.request, {
-        text: data.text ?? "—",
-        re: data.re ?? Number.NaN,
-        im: data.im ?? Number.NaN,
-        singular: data.singular ?? null,
-        touchedLn0: data.touchedLn0 === true,
-        underflowedExact: data.underflowedExact === true,
-        unverified: data.unverified === true,
-      });
-    };
-    const onStack = (watch: number) => model.stack.some((item) => item.watch === watch);
-    for (const watch of followedRef.current) {
-      if (!onStack(watch)) followedRef.current.delete(watch);
-    }
-    // A cleared job must not stay queued in front of the next one. Fill and
-    // compare use different workers, and a worker holding a stale job is replaced.
-    // Only the top pending exact row is filled. A newer expression pre-empts
-    // the one already running, so 1+1 does not wait behind a slow tiny subtraction.
-    const topFill = [...model.stack].reverse().find((item) => item.pendingExact === true && item.cancelled !== true)?.watch;
-    for (const kind of ["fill", "compare"] as const) {
-      const pending = inflight.current[kind];
-      const stale = [...pending.values()].some((watch) => !onStack(watch));
-      if (!stale) continue;
-      exactWorkers.current[kind]?.terminate();
-      exactWorkers.current[kind] = null;
-      for (const [request, watch] of pending) {
-        exactJobs.current.delete(request);
-        if (onStack(watch)) followedRef.current.delete(watch);
-      }
-      pending.clear();
-    }
-    const fillBusy = [...inflight.current.fill.values()];
-    if (topFill !== undefined && fillBusy.some((watch) => watch !== topFill)) {
-      exactWorkers.current.fill?.terminate();
-      exactWorkers.current.fill = null;
-      for (const [request, watch] of inflight.current.fill) {
-        exactJobs.current.delete(request);
-        followedRef.current.delete(watch);
-      }
-      inflight.current.fill.clear();
-    }
-    const ensure = (kind: JobKind): Worker | null => {
-      const existing = exactWorkers.current[kind];
-      if (existing) return existing;
-      if (typeof Worker === "undefined") return null;
-      try {
-        const created = new Worker(new URL("../lib/eml/exact.worker.ts", import.meta.url));
-        created.onmessage = (event: MessageEvent<Parameters<typeof accept>[0]>) => accept(event.data);
-        created.onerror = () => {
-          created.terminate();
-          // A worker that fails once (blocked script, CSP) will likely fail again: have the fallback ready.
-          void loadExactEngine().catch(() => undefined);
-          if (exactWorkers.current[kind] === created) exactWorkers.current[kind] = null;
-          const pending = [...exactJobs.current.entries()].filter(([, job]) => job.kind === kind);
-          for (const [request, job] of pending) {
-            const row = modelRef.current.stack.find((item) => item.watch === job.watch);
-            if (!row) {
-              exactJobs.current.delete(request);
-              inflight.current[kind].delete(request);
-              continue;
-            }
-            deliver(request, row.node, row.bound ?? {});
-          }
-        };
-        exactWorkers.current[kind] = created;
-        return created;
-      } catch {
-        return null;
-      }
-    };
-    for (const item of model.stack) {
-      if (item.watch === undefined || followedRef.current.has(item.watch)) continue;
-      const fill = item.pendingExact === true && item.cancelled !== true && item.watch === topFill;
-      const compare = item.mode === "float" && item.floatDiffers !== true && item.pendingExact !== true && item.notice !== "couldn't verify";
-      if (!fill && !compare) {
-        if (!(item.pendingExact === true && item.cancelled !== true)) followedRef.current.add(item.watch);
-        continue;
-      }
-      followedRef.current.add(item.watch);
-      const request = ++exactSerial.current;
-      const kind: JobKind = fill ? "fill" : "compare";
-      const bound = item.bound ?? {};
-      exactJobs.current.set(request, { watch: item.watch, kind, floated: item.value });
-      inflight.current[kind].set(request, item.watch);
-      const worker = ensure(kind);
-      if (!worker) {
-        const node = item.node;
-        window.setTimeout(() => deliver(request, node, bound), 0);
-        continue;
-      }
-      const packed = packCircuit(item.node);
-      const env: Record<string, { re: number; im: number }> = {};
-      for (const [name, value] of Object.entries(bound)) env[name] = { re: value.re, im: value.im };
-      worker.postMessage({ request, tokens: packed.tokens, root: packed.root, env });
-    }
-    startFillWorker.current = () => {
-      if (!exactWorkers.current.fill) ensure("fill");
-    };
-  }, [finishExact, model.stack]);
-
-  // The fill worker starts on the first exact job. Its startup (fetching and
-  // compiling decimal.js and the exact engine) was most of the wait for the first
-  // result, so it is started once the page is idle instead. Jobs still create one if
-  // it is missing or was replaced.
-  useEffect(() => {
-    if (typeof Worker === "undefined") return;
-    const start = () => startFillWorker.current?.();
-    if (typeof window.requestIdleCallback === "function") {
-      const handle = window.requestIdleCallback(start, { timeout: 3000 });
-      return () => window.cancelIdleCallback(handle);
-    }
-    const handle = window.setTimeout(start, 500);
-    return () => window.clearTimeout(handle);
-  }, []);
 
   const expansions = useMemo(() => initialKeys?.expansions ?? keyExpansions(), [initialKeys]);
 
@@ -1164,29 +410,38 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       fail("Enter an expression.");
       return;
     }
-    try {
-      const variables: Record<string, Node> = {};
-      const numbers: Record<string, C> = {};
-      if (/\bx\b/i.test(text)) {
-        variables.x = readScalar(textRef.current.xText, "x");
-        numbers.x = evaluateReport(variables.x).value;
+    // The compile runs in the next task (see submitTurn.ts), so the submit's own
+    // task stays short. Presses in between queue, as during a recompute.
+    const job = (jobRef.current += 1);
+    const { xText, yText } = textRef.current;
+    recomputeRef.current = true;
+    const pending = { ...current, note: "Computing…", error: null };
+    modelRef.current = pending;
+    setModel(pending);
+    nextTurn(() => {
+      if (job !== jobRef.current) return;
+      try {
+        const { node, numbers } = compileSubmission(text, xText, yText);
+        const item = { ...entry(node, text, modeRef.current), bound: numbers };
+        const bits = [noteFor(item)].filter(Boolean);
+        // An exact value for an older row can land between the submit and this
+        // turn. It is in modelRef, not in the stack read at the submit.
+        const latest = modelRef.current;
+        commit({
+          stack: [...latest.stack, item],
+          tape: [...latest.tape, text],
+          note: bits.length ? bits.join(" · ") : null,
+          error: resultError(item),
+        });
+      } catch (err) {
+        const latest = modelRef.current;
+        const next = { ...latest, note: latest.note === pending.note ? current.note : latest.note, error: failure(err) };
+        modelRef.current = next;
+        setModel(next);
       }
-      if (/\by\b/i.test(text)) {
-        variables.y = readScalar(textRef.current.yText, "y");
-        numbers.y = evaluateReport(variables.y).value;
-      }
-      const node = compileExpression(text, variables);
-      const item = { ...entry(node, text, modeRef.current), bound: numbers };
-      const bits = [noteFor(item)].filter(Boolean);
-      commit({
-        stack: [...current.stack, item],
-        tape: [...current.tape, text],
-        note: bits.length ? bits.join(" · ") : null,
-        error: resultError(item),
-      });
-    } catch (err) {
-      fail(failure(err));
-    }
+      recomputeRef.current = false;
+      drainQueue(queueRef.current);
+    });
   }
 
   function swap() {
@@ -1439,7 +694,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "0";
   const named = top ? captionName(top.text, top.value, top.caption) : null;
-  const fullDigits = top ? programIndexDigits(top.node) : null;
+  const fullDigits = top ? programDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
   return (

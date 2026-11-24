@@ -77,6 +77,7 @@ import { packCircuit, unpackCircuit } from "./wire";
 import { SHORT_PROGRAMS, applyProgram, nodeFromCompact, programK, programNode } from "./programs";
 import table from "./best-known.json";
 import { keyCostEntries, keyCosts } from "../../components/keyTables";
+import { compileSubmission } from "../../components/submitTurn";
 import { runCertifyChecks } from "./check-certify";
 import shardWeights from "./check-shards.json";
 
@@ -4367,6 +4368,49 @@ if (shardTurn(75)) {
       failed += 1;
       console.log("FAIL key captions", stack.length, binary);
     }
+  }
+}
+
+if (shardTurn(76)) {
+  // A submit compiles in the turn after the event (components/submitTurn.ts),
+  // so key captions and other circuits can be built in between. Compiling
+  // starts its own isolateCircuit, and what the screen reads from the node
+  // must not depend on what was built before or after it.
+  const summary = (node: Node) => {
+    const stats = circuitStats(node);
+    const packed = packCircuit(node);
+    const report = evaluateReport(node, {}, { maxNodes: 80_000 });
+    return JSON.stringify([
+      stats.rpnLength.toString(), stats.dagGates, stats.depth, programNumberText(node),
+      packed.tokens.length, packed.root, formatC(report.value), report.singular, report.unverified ?? false,
+    ]);
+  };
+  const four = { node: compileExpression("2*2", {}) };
+  for (const source of ["tan(10^(-5000))", "x+y", "ln(-1)"]) {
+    const alone = summary(compileSubmission(source, "0.5", "2").node);
+    for (const [id] of keyCostEntries([four], "0.5", "2")) if (id === "add") break;
+    const late = compileSubmission(source, "0.5", "2");
+    for (const entry of keyCostEntries([four, { node: late.node }], "0.5", "2")) void entry;
+    const after = summary(late.node);
+    if (alone !== after) {
+      failed += 1;
+      console.log("FAIL submit compiled between other circuits", source, alone, after);
+    }
+  }
+  const bound = compileSubmission("x*y", "0.5", "2").numbers;
+  if (!close(bound.x, c(0.5, 0), 1e-12) || !close(bound.y, c(2, 0), 1e-12) || "y" in compileSubmission("x+1", "0.5", "").numbers) {
+    failed += 1;
+    console.log("FAIL submit x and y", JSON.stringify(bound));
+  }
+  let missing = "";
+  try {
+    compileSubmission("x+y", "0.5", " ");
+  } catch (err) {
+    missing = err instanceof EmlError ? err.message : String(err);
+  }
+  if (missing !== "Give y a value.") {
+    failed += 1;
+    console.log("FAIL submit empty y", missing);
   }
 }
 
