@@ -30,11 +30,12 @@ import {
   nodeFromRpn,
   rpnTokens,
 } from "@/lib/eml/node";
-import { agreementNote, compileExpression } from "@/lib/eml/parse";
+import { agreementNote } from "@/lib/eml/parse";
 import table from "@/lib/eml/best-known.json";
 import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory, type History } from "@/lib/eml/history";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
+import { compileSubmission, nextTurn } from "@/components/submitTurn";
 import { parseProgramInput, programIndexDigits, programNumberText, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 
 const TWO_BUTTONS_KEY = "eml-and-one-two-buttons";
@@ -1164,29 +1165,34 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       fail("Enter an expression.");
       return;
     }
-    try {
-      const variables: Record<string, Node> = {};
-      const numbers: Record<string, C> = {};
-      if (/\bx\b/i.test(text)) {
-        variables.x = readScalar(textRef.current.xText, "x");
-        numbers.x = evaluateReport(variables.x).value;
+    // The compile runs in the next task (see submitTurn.ts), so the submit's own
+    // task stays short. Presses in between queue, as during a recompute.
+    const job = (jobRef.current += 1);
+    const { xText, yText } = textRef.current;
+    recomputeRef.current = true;
+    const pending = { ...current, note: "Computing…", error: null };
+    modelRef.current = pending;
+    setModel(pending);
+    nextTurn(() => {
+      if (job !== jobRef.current) return;
+      try {
+        const { node, numbers } = compileSubmission(text, xText, yText);
+        const item = { ...entry(node, text, modeRef.current), bound: numbers };
+        const bits = [noteFor(item)].filter(Boolean);
+        commit({
+          stack: [...current.stack, item],
+          tape: [...current.tape, text],
+          note: bits.length ? bits.join(" · ") : null,
+          error: resultError(item),
+        });
+      } catch (err) {
+        const next = { ...current, error: failure(err) };
+        modelRef.current = next;
+        setModel(next);
       }
-      if (/\by\b/i.test(text)) {
-        variables.y = readScalar(textRef.current.yText, "y");
-        numbers.y = evaluateReport(variables.y).value;
-      }
-      const node = compileExpression(text, variables);
-      const item = { ...entry(node, text, modeRef.current), bound: numbers };
-      const bits = [noteFor(item)].filter(Boolean);
-      commit({
-        stack: [...current.stack, item],
-        tape: [...current.tape, text],
-        note: bits.length ? bits.join(" · ") : null,
-        error: resultError(item),
-      });
-    } catch (err) {
-      fail(failure(err));
-    }
+      recomputeRef.current = false;
+      drainQueue(queueRef.current);
+    });
   }
 
   function swap() {
