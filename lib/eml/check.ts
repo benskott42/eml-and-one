@@ -3334,7 +3334,11 @@ if (shardTurn(65)) {
     neg15?.label !== "proven minimal (uses ln 0)" ||
     neg17?.label !== "proven minimal without ln 0" ||
     two?.label !== "proven minimal" ||
-    !two.note.includes("2056")
+    !two.note.includes("2056") ||
+    byKey.get("+iπ on this cut (−iπ on the principal log)@23")?.label !== "proven minimal without ln 0" ||
+    byKey.get("−2@25")?.label !== "proven minimal (uses ln 0)" ||
+    !byKey.get("−2@25")?.note.includes("82500") ||
+    byKey.get("−2@27")?.label !== "shortest known"
   ) {
     failed += 1;
     console.log("FAIL minimality labels", zero, neg15, neg17, two);
