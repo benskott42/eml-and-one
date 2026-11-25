@@ -497,23 +497,12 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       if (job !== jobRef.current) return;
       try {
         const { node, numbers } = compileSubmission(text, xText, yText);
-        // Yield a task between compiling a large circuit and committing/packing it
-        // so neither task crosses the 50 ms long-task limit under 6x CPU throttling.
-        cancelTurnRef.current = nextTurn(() => {
-          cancelTurnRef.current = null;
-          if (job !== jobRef.current) return;
-          try {
-            const item = { ...entry(node, text, modeRef.current), bound: numbers };
-            dispatch({ type: "FINISH_SUBMIT", item, tapeLabel: text });
-          } catch (err) {
-            dispatch({ type: "FAIL_PENDING", pendingNote, fallbackNote: current.note, error: failure(err) });
-          }
-          drainQueue(queueRef.current);
-        });
+        const item = { ...entry(node, text, modeRef.current), bound: numbers };
+        dispatch({ type: "FINISH_SUBMIT", item, tapeLabel: text });
       } catch (err) {
         dispatch({ type: "FAIL_PENDING", pendingNote, fallbackNote: current.note, error: failure(err) });
-        drainQueue(queueRef.current);
       }
+      drainQueue(queueRef.current);
     });
   }
 

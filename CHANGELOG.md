@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-- Improved the rigorous ball enclosure (`lib/eml/exact-ball.ts`) with cached precision contexts, fast `atan2`, exact unit-circle `ln`, per-component even/odd symbolic keys, generalized `ln(exp(a + i·qπ))`, and Step 1 exact facts (now also carried across the worker wire): golden confirmation rose from 43/162 (26.5%) to 112/162 (69.1%) with p50 latency dropping from 1,070 ms to 287 ms and 0 timeouts. Exact mode now uses the ball to certify rescued absorbed-term results (`10^(−500) + 10^400`, `avg(10^(−400), 10^400)`, `hypot(exp(700), 10^350)`, `arsinh(exp(−1000) + 2)`) and refuse vanished second-order cancellations (`sqrt(1 + 10^(−250)) − 1 − 10^(−250)/2`).
+## 1.0.5 — 2026-11-25
 
+- Improved the rigorous ball enclosure (`lib/eml/exact-ball.ts`) with cached precision contexts, fast `atan2`, exact unit-circle `ln`, per-component even/odd symbolic keys, generalized `ln(exp(a + i·qπ))`, exact π-multiple quotients, and Step 1 exact facts (including `ipiNode()` and wire serialization): golden confirmation rose from 43/162 (26.5%) to 148/162 (91.4%) with p50 latency dropping from 1,070 ms to 272 ms and 0 timeouts. Exact mode now uses the ball to certify rescued absorbed-term results (`10^(−500) + 10^400`, `avg(10^(−400), 10^400)`, `hypot(exp(700), 10^350)`, `arsinh(exp(−1000) + 2)`) and refuse vanished or precision-floor second-order cancellations (`sqrt(1 + 10^(−250)) − 1 − 10^(−250)/2`, `exp(10^(−237)) − 1 − 10^(−237)`).
+- Unified all build-time node facts into `lib/eml/facts.ts` (angle, infinity, exact decimal, exact integer, refused marks, scale/series, structure memos) with single-point `packFacts`/`unpackFacts` wire serialization.
 - Exact recognition shortcuts (`x^0`, `(±i)^n`, `exp(i·kπ/2)`, odd functions at `±0`, `sin`/`cos` at rational multiples of `π/6`, `tan` at `kπ/4`, `arcsin(±1)`, `arccos(±1)`, `arsinh(±i)`) now mark their result node in `facts.ts` and show `"recognized exactly"` in the screen note (documented in `docs/shortcuts.md`).
 - Refused operands that overflowed float to 0 are no longer treated as 0 by `exactZero`/`signedZero`/`arsinh` (fixing keypad `×`, `xʸ`, and `arsinh` certifying 0 or 1 on a refused stack item).
 - Exact decimals now propagate through products, terminating-decimal quotients, and small integer powers via `facts.ts` (`1/10 + 2/10 − 3/10`, `0.1·3 − 0.3`, `0.5² − 0.25` are exact 0; `cos(0.5·π)` and `cos((1/2)·π)` resolve to exact 0).
 - `(-i)^n`, `(±1 · i)^n`, and `exp(π / i)` now resolve cleanly via `facts.ts`, `learn()` refuses derived facts on shared `input` nodes, and a `<details>` fold opened before hydration keeps its body visible.
+- Unified calculator UI state, history, and async worker replies into a pure reducer (`components/calculator/reducer.ts`), tightened key-cost slicing to 4 ms to prevent main-thread long tasks, extracted headless Chrome regression into `scripts/site-check.mjs` (`npm run eml:site`), split `lib/eml/check.ts` from 4,989 lines to 135 lines across topic modules under `lib/eml/checks/`, and committed the deterministic fuzzer in `tools/fuzz/`.
 
 ## 1.0.4 — 2026-11-25
 
