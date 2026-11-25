@@ -37,9 +37,9 @@ import {
   installIntegerBuilder,
   markExactInt,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isolateCircuit, markSeriesError, markSeriesShortcut, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, learn, noteExactDecimal, provenInteger, recordedDirection } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markUnverified, noteExactDecimal, provenInteger, recordedDirection } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.

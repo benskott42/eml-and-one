@@ -1,4 +1,4 @@
-import { isExactUnsure, isUnverified, type Node } from "./node";
+import type { Node } from "./node";
 
 /**
  * What is known about a node from how it was built, in one record per node.
@@ -39,6 +39,19 @@ export type IntegerFact = {
   marked?: boolean;
 };
 
+/**
+ * Refused-node marks (replaces unverifiedNodes, exactUnsureNodes, dependsCache in node.ts).
+ * `dependsUnverified` is propagated at E(a, b) build time so dependsOnUnverified is O(1).
+ */
+export type RefusedFact = {
+  /** A result that dropped a term; refused in both exact and float modes. Crosses the wire as `unver`. */
+  unverified?: boolean;
+  /** Exact mode cannot certify this value; float keeps its own. Crosses the wire as `xu`. */
+  exactUnsure?: boolean;
+  /** Built on an unverified descendant. */
+  dependsUnverified?: boolean;
+};
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
@@ -48,12 +61,16 @@ export type Facts = {
   decimal?: ExactDecimal | null;
   /** Exact integer value; `marked: true` means exact evaluation reads it directly. */
   integer?: IntegerFact;
+  /** Refusal marks for exact and float certification. */
+  refused?: RefusedFact;
 };
 
 export type WireFacts = {
   inf?: 1;
   int?: string;
   pint?: string;
+  unver?: 1;
+  xu?: 1;
 };
 
 export type Op = "add" | "sub" | "mul" | "div" | "neg";
@@ -113,10 +130,45 @@ export function learn(node: Node, facts: Facts): Node {
       ...(prev?.integer?.marked || facts.integer.marked ? { marked: true } : {}),
     };
   }
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer) {
+  if (facts.refused) {
+    next.refused = { ...prev?.refused, ...facts.refused };
+  }
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused) {
     table.set(node, next);
   }
   return node;
+}
+
+/** A result that dropped a term. The screen says it could not verify, in either mode. */
+export function markUnverified(node: Node): Node {
+  return learn(node, { refused: { unverified: true, dependsUnverified: true } });
+}
+
+export function isUnverified(node: Node): boolean {
+  return factsOf(node).refused?.unverified === true;
+}
+
+/** Record that `node` has an unverified descendant (propagated at E(a, b) build time). */
+export function noteDependsUnverified(node: Node): Node {
+  return learn(node, { refused: { dependsUnverified: true } });
+}
+
+/**
+ * True when the circuit uses a node marked unverified anywhere, not only at its root.
+ * Propagated at build time in E(a, b) so this check is O(1).
+ */
+export function dependsOnUnverified(node: Node): boolean {
+  const r = factsOf(node).refused;
+  return r?.unverified === true || r?.dependsUnverified === true;
+}
+
+/** Exact mode cannot certify this node's value; float mode still shows its own. */
+export function markExactUnsure(node: Node): Node {
+  return learn(node, { refused: { exactUnsure: true } });
+}
+
+export function isExactUnsure(node: Node): boolean {
+  return factsOf(node).refused?.exactUnsure === true;
 }
 
 /** The integer a node was built as. `ONE` is always 1. */
@@ -170,6 +222,8 @@ export function packFacts(node: Node, target: WireFacts, isRoot = false): void {
   if (f.infinity?.maybe) target.inf = 1;
   if (f.integer?.marked) target.int = f.integer.value.toString();
   else if (isRoot && node.type !== "one" && f.integer !== undefined) target.pint = f.integer.value.toString();
+  if (f.refused?.unverified) target.unver = 1;
+  if (f.refused?.exactUnsure) target.xu = 1;
 }
 
 /** Restore facts that crossed the worker wire onto an unpacked node. */
@@ -177,6 +231,8 @@ export function unpackFacts(node: Node, source: WireFacts, isRoot = false): void
   if (source.inf) learn(node, { infinity: { maybe: true } });
   if (source.int !== undefined) learn(node, { integer: { value: BigInt(source.int), marked: true } });
   else if (isRoot && source.pint !== undefined) learn(node, { integer: { value: BigInt(source.pint) } });
+  if (source.unver) markUnverified(node);
+  if (source.xu) markExactUnsure(node);
 }
 
 export function mayBeInfinite(node: Node): boolean {
