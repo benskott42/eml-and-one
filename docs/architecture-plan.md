@@ -123,10 +123,10 @@ Small, independent, and each its own pull request:
 | 1c exact decimal | done | #92 |
 | 1d exact integer | done | #93 |
 | 1e refused marks | done | #94 |
-| 1f scale facts | done | |
+| 1f scale facts | done | #95 |
 | 1g structure memos | open | |
 | 2 enclosure as certifier | open | |
-| 3 shortcut policy | open | |
+| 3 shortcut policy | done | |
 | 4 split check.ts | open | |
 | 5 site check script | open | |
 | 6 calculator reducer | open | |

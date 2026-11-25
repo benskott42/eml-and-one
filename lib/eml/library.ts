@@ -37,9 +37,9 @@ import {
   installIntegerBuilder,
   markExactInt,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, noteExactDecimal, provenInteger, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -108,14 +108,21 @@ function piTwelfths(arg: Node): number | null {
  * sin(π/6) − 1/2 said "couldn't verify". The angle is the recorded multiple of π,
  * not a float near it. ±√3/2 keeps its circuit.
  */
+/** Mark an exact-recognition result without mutating the shared `ONE` singleton or interned input leaves. */
+function recognized(node: Node): Node {
+  if (node === ONE) return markRecognized(freshOne());
+  if (node.type === "input") return markRecognized(freshInput(node.value, node.label));
+  return markRecognized(node);
+}
+
 function sinAtPiMultiple(twelfths: number | null): Node | null {
   if (twelfths === null || twelfths % 2 !== 0) return null;
   const sixths = (twelfths / 2) % 12;
-  if (sixths === 0 || sixths === 6) return tZero();
-  if (sixths === 3) return tagInteger(ONE, BigInt(1));
-  if (sixths === 9) return tMinusOne();
-  if (sixths === 1 || sixths === 5) return tHalf();
-  if (sixths === 7 || sixths === 11) return tNeg(tHalf());
+  if (sixths === 0 || sixths === 6) return recognized(tZero());
+  if (sixths === 3) return recognized(ONE);
+  if (sixths === 9) return recognized(tMinusOne());
+  if (sixths === 1 || sixths === 5) return recognized(tHalf());
+  if (sixths === 7 || sixths === 11) return recognized(tNeg(tHalf()));
   return null;
 }
 
@@ -128,10 +135,10 @@ function imagPiOf(node: Node): Rational | null {
 /** i^n for an integer n. */
 function unitPower(quarter: number): Node {
   const q = ((quarter % 4) + 4) % 4;
-  if (q === 0) return tagInteger(ONE, BigInt(1));
-  if (q === 1) return tI();
-  if (q === 2) return tMinusOne();
-  return tNeg(tI());
+  if (q === 0) return recognized(ONE);
+  if (q === 1) return recognized(tI());
+  if (q === 2) return recognized(tMinusOne());
+  return recognized(tNeg(tI()));
 }
 
 /**
@@ -235,6 +242,11 @@ function markSeries(node: Node, note: string): Node {
 /** The note for a result whose circuit used a series shortcut. Null when it did not. */
 export function seriesShortcutNote(root: Node): string | null {
   return seriesShortcutNoteFrom(root);
+}
+
+/** "recognized exactly" when the circuit used an exact recognition shortcut (see docs/shortcuts.md). */
+export function recognizedNote(root: Node): string | null {
+  return recognizedNoteFrom(root);
 }
 
 /** Decade of a real known to sit in one power of ten, or null when it might not. */
@@ -776,7 +788,7 @@ export function tPow(a: Node, b: Node): Node {
   // The power word evaluates ln(0) for a zero base and printed 0^0 as undefined.
   // An infinite base (ln(0)^0) keeps the word and stays undefined.
   // −0 is that zero too: IEEE pow(0, −0) is 1, and 0^−0 printed undefined.
-  if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return tagInteger(ONE, BigInt(1));
+  if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return recognized(ONE);
   // An integer power multiplies the quarter turn. ^2 was the only case, so
   // (∞i)^3 stayed the power word and came out a real infinity.
   // A negative integer power is 0, the same zero as 1 over that infinity.
@@ -1079,8 +1091,8 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
  * "couldn't verify", and arcsin(−0) was undefined in float.
  */
 function oddAtZero(t: Node): Node | null {
-  if (provenInteger(t) === BigInt(0)) return tZero();
-  if (t.type === "input" && Object.is(t.value.re, -0) && t.value.im === 0) return t;
+  if (provenInteger(t) === BigInt(0)) return recognized(tZero());
+  if (t.type === "input" && Object.is(t.value.re, -0) && t.value.im === 0) return recognized(t);
   return null;
 }
 
@@ -1114,9 +1126,9 @@ export function tTan(t: Node): Node {
   if (zero) return zero;
   // tan(kπ) is 0 and tan(π/4 + kπ/2) is ±1. The pole at π/2 + kπ is handled below.
   const twelfths = piTwelfths(t);
-  if (twelfths !== null && twelfths % 12 === 0) return tZero();
-  if (twelfths !== null && twelfths % 12 === 3) return tagInteger(ONE, BigInt(1));
-  if (twelfths !== null && twelfths % 12 === 9) return tMinusOne();
+  if (twelfths !== null && twelfths % 12 === 0) return recognized(tZero());
+  if (twelfths !== null && twelfths % 12 === 3) return recognized(ONE);
+  if (twelfths !== null && twelfths % 12 === 9) return recognized(tMinusOne());
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TAN_ODD, SERIES_WIDE);
@@ -1239,9 +1251,9 @@ export function tArcsin(t: Node): Node {
   if (tiny > 0 && tiny < 1e-60) return markSeries(t, SMALL_NOTE);
   if (known && (known.im === 0 || Object.is(known.im, -0)) && (known.re === 1 || known.re === -1)) {
     const half = tHalfOf(tPi());
-    return known.re < 0 ? tNeg(half) : half;
+    return recognized(known.re < 0 ? tNeg(half) : half);
   }
-  if (provenInteger(t) === BigInt(0)) return tZero();
+  if (provenInteger(t) === BigInt(0)) return recognized(tZero());
   const box = asinhBox(t);
   // Below 10^(−4), the adaptive factored Horner series avoids float64 cancellation
   // while keeping the truncation tail past 124 digits. Below 10^(−60) the x³/6
@@ -1278,8 +1290,8 @@ function arccosNearOne(t: Node): Node {
 
 export function tArccos(t: Node): Node {
   const exact = knownValue(t);
-  if (exact && imagZero(exact) && exact.re === 1) return tZero();
-  if (exact && imagZero(exact) && exact.re === -1) return tPi();
+  if (exact && imagZero(exact) && exact.re === 1) return recognized(tZero());
+  if (exact && imagZero(exact) && exact.re === -1) return recognized(tPi());
   // Near ±1 the range midpoint cannot tell 1 from 1 + 10^(−16): returning 0 printed
   // 0 for arccos(1 + 10^(−16)), which is 1.414×10^(−8) i. π/2 − arcsin cancels to a
   // zero exact mode cannot certify at 2/2, so near +1 the value is −i·Log(z + i·S),
@@ -1343,11 +1355,11 @@ export function tArsinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
   const known = knownValue(t);
-  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || provenInteger(t) === BigInt(0))) return tZero();
+  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || provenInteger(t) === BigInt(0))) return recognized(tZero());
   const unit = factsOf(t).imaginaryUnit;
   if (unit) {
     const quarter = tMul(tI(), tHalfOf(tPi()));
-    return unit === 1 ? quarter : tNeg(quarter);
+    return recognized(unit === 1 ? quarter : tNeg(quarter));
   }
   const node = tMul(tNeg(tI()), tArcsin(tMul(tI(), t)));
   if (!asinhOutside(t, 1e-4)) notePrecision(node, { kind: "asinh", arg: t });

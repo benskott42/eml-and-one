@@ -25,6 +25,16 @@ let nextId = 1;
 
 export const ONE: Node = Object.freeze({ type: "one", id: nextId++ });
 
+/** A distinct `1` node so per-node facts (e.g. `recognized`) never mutate the shared `ONE` singleton. */
+export function freshOne(): Node {
+  return Object.freeze({ type: "one", id: nextId++ });
+}
+
+/** An un-interned input leaf so per-node facts (e.g. `recognized` on `-0`) never leak across expressions. */
+export function freshInput(value: C, label: string): Node {
+  return Object.freeze({ type: "input", value, label, id: nextId++ });
+}
+
 const vars = new Map<string, Node>();
 const inputs = new Map<string, WeakRef<Node>>();
 const cons = new Map<string, WeakRef<Node>>();
