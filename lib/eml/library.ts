@@ -39,6 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
+import { type Rational, derive, factsOf, learn } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -76,88 +77,10 @@ function imagZero(v: { re: number; im: number }): boolean {
   return v.im === 0 || Object.is(v.im, -0);
 }
 
-/**
- * A rational multiple of π, recorded when the node is built.
- * tan(π/2 + kπ) is recognized from this, not from a float near the pole.
- */
-type PiQ = { n: bigint; d: bigint };
-
-const piCoeff = new WeakMap<Node, PiQ>();
-
-function gcdBig(a: bigint, b: bigint): bigint {
-  let x = a < BigInt(0) ? -a : a;
-  let y = b < BigInt(0) ? -b : b;
-  while (y !== BigInt(0)) {
-    const next = x % y;
-    x = y;
-    y = next;
-  }
-  return x;
-}
-
-function piQ(n: bigint, d: bigint): PiQ | null {
-  if (d === BigInt(0)) return null;
-  if (d < BigInt(0)) {
-    n = -n;
-    d = -d;
-  }
-  const g = gcdBig(n, d);
-  return { n: n / g, d: d / g };
-}
-
-function piOf(node: Node): PiQ | null {
-  return piCoeff.get(node) ?? null;
-}
-
-function tagPi(node: Node, coeff: PiQ | null): Node {
-  if (coeff && rangeOf(node).int === undefined) piCoeff.set(node, coeff);
-  return node;
-}
-
-function intFactor(node: Node): bigint | null {
-  if (piCoeff.has(node)) return null;
-  const n = rangeOf(node).int;
-  return n === undefined ? null : n;
-}
-
-function piAdd(a: Node, b: Node): PiQ | null {
-  const left = piOf(a);
-  const right = piOf(b);
-  if (left && right) return piQ(left.n * right.d + right.n * left.d, left.d * right.d);
-  if (left && intFactor(b) === BigInt(0)) return left;
-  if (right && intFactor(a) === BigInt(0)) return right;
-  return null;
-}
-
-function piSub(a: Node, b: Node): PiQ | null {
-  const left = piOf(a);
-  const right = piOf(b);
-  if (left && right) return piQ(left.n * right.d - right.n * left.d, left.d * right.d);
-  if (left && intFactor(b) === BigInt(0)) return left;
-  if (right && intFactor(a) === BigInt(0)) return piQ(-right.n, right.d);
-  return null;
-}
-
-function piMul(a: Node, b: Node): PiQ | null {
-  const left = piOf(a);
-  const right = piOf(b);
-  const ia = intFactor(a);
-  const ib = intFactor(b);
-  if (left && ib !== null) return piQ(left.n * ib, left.d);
-  if (right && ia !== null) return piQ(right.n * ia, right.d);
-  return null;
-}
-
-function piDiv(a: Node, b: Node): PiQ | null {
-  const left = piOf(a);
-  const ib = intFactor(b);
-  if (!left || ib === null || ib === BigInt(0)) return null;
-  return piQ(left.n, left.d * ib);
-}
-
-function piNeg(node: Node): PiQ | null {
-  const coeff = piOf(node);
-  return coeff ? piQ(-coeff.n, coeff.d) : null;
+/** The recorded multiple of π on the real axis (q·π), or null. See facts.ts. */
+function piOf(node: Node): Rational | null {
+  const angle = factsOf(node).angle;
+  return angle && angle.unit === "real" ? angle.q : null;
 }
 
 /** π/2 + kπ, written as an odd multiple of π/2. A nearby float is not this. */
@@ -196,11 +119,11 @@ function sinAtPiMultiple(twelfths: number | null): Node | null {
   return null;
 }
 
-/**
- * i times a rational multiple of π, recorded when the product is built, so that
- * exp(iπ) is −1 and exp(iπ) + 1 is 0 (it said "couldn't verify").
- */
-const imagPiCoeff = new WeakMap<Node, PiQ>();
+/** The recorded multiple of π on the imaginary axis (q·π·i), or null: exp(iπ) is −1 from this. */
+function imagPiOf(node: Node): Rational | null {
+  const angle = factsOf(node).angle;
+  return angle && angle.unit === "imag" ? angle.q : null;
+}
 
 /** i^n for an integer n. */
 function unitPower(quarter: number): Node {
@@ -231,7 +154,7 @@ function tightValue(t: Node): { re: number; im: number } | null {
 
 export function tExp(t: Node): Node {
   // exp(i·kπ/2) is i^k.
-  const turn = imagPiCoeff.get(t);
+  const turn = imagPiOf(t);
   if (turn && (BigInt(2) * turn.n) % turn.d === BigInt(0)) return unitPower(Number(((BigInt(2) * turn.n) / turn.d) % BigInt(4)));
   return expGates(t);
 }
@@ -439,19 +362,16 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
 
 export function tSub(a: Node, b: Node): Node {
   const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
-  if (series) return tagPi(markMaybeInfinite(series, a, b), piSub(a, b));
+  if (series) return derive("sub", markMaybeInfinite(series, a, b), a, b);
   const node = domainSub(a, b);
   if (isOneNode(a)) oneMinus.set(node, b);
-  return tagPi(markMaybeInfinite(node, a, b), piSub(a, b));
+  return derive("sub", markMaybeInfinite(node, a, b), a, b);
 }
 
 export function tNeg(b: Node): Node {
   const dir = directionOf(b);
   if (dir) return rememberDirection(dir.magnitude, dir.quarter + 2);
-  const negated = tagPi(domainNeg(b), piNeg(b));
-  const imagTurn = imagPiCoeff.get(b);
-  if (imagTurn) imagPiCoeff.set(negated, { n: -imagTurn.n, d: imagTurn.d });
-  return negated;
+  return derive("neg", domainNeg(b), b);
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -469,11 +389,11 @@ export function tAdd(a: Node, b: Node): Node {
   const cancelled = sumOfNegation(a, b);
   if (cancelled) return cancelled;
   const large = largeRealSum(a, b);
-  if (large) return tagPi(markMaybeInfinite(large, a, b), piAdd(a, b));
+  if (large) return derive("add", markMaybeInfinite(large, a, b), a, b);
   const node = domainAdd(a, b);
   if (isOneNode(a)) onePlus.set(node, b);
   else if (isOneNode(b)) onePlus.set(node, a);
-  return tagPi(node, piAdd(a, b));
+  return derive("add", node, a, b);
 }
 
 /**
@@ -849,15 +769,7 @@ export function tMul(a: Node, b: Node): Node {
   if (turned(a, quarterB) || turned(b, quarterA)) {
     return markUnverified(markInfiniteSource(rawMul(a, b)));
   }
-  const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
-  // i·(qπ), and an integer times it: 2·π·i is built as 2·(π·i).
-  const ia = imagPiCoeff.get(a);
-  const ib = imagPiCoeff.get(b);
-  const na = intFactor(a);
-  const nb = intFactor(b);
-  const imagTurn =
-    a === tI() ? piOf(b) : b === tI() ? piOf(a) : ia && nb !== null ? piQ(ia.n * nb, ia.d) : ib && na !== null ? piQ(ib.n * na, ib.d) : null;
-  if (imagTurn) imagPiCoeff.set(product, imagTurn);
+  const product = derive("mul", carryTinyScale(rawMul(a, b), a, b, "mul"), a, b);
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
   // product of the two signs. An infinity on the right already has that sign.
@@ -896,12 +808,7 @@ export function tDiv(a: Node, b: Node): Node {
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
   const quotient = integerQuotient(a, b);
   if (quotient) return quotient;
-  const divided = tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
-  const imagTop = imagPiCoeff.get(a);
-  const under = intFactor(b);
-  const imagTurn = imagTop && under !== null && under !== BigInt(0) ? piQ(imagTop.n, imagTop.d * under) : null;
-  if (imagTurn) imagPiCoeff.set(divided, imagTurn);
-  return divided;
+  return derive("div", carryTinyScale(rawDiv(a, b), a, b, "div"), a, b);
 }
 
 /** A proven integer exponent, including negatives. A float that is not integral is not one. */
@@ -1013,11 +920,11 @@ export function tSqrt(t: Node): Node {
 
 export const tSqrt2 = memo(() => tagReal(programNode("sqrt2"), Math.SQRT2));
 
-export const tI = memo(() => tagValue(programNode("i"), { re: 0, im: 1 }));
+export const tI = memo(() => learn(tagValue(programNode("i"), { re: 0, im: 1 }), { imaginaryUnit: 1 }));
 
 export const tPi = memo(() => {
   const node = tagReal(programNode("pi"), Math.PI);
-  piCoeff.set(node, { n: BigInt(1), d: BigInt(1) });
+  learn(node, { angle: { q: { n: BigInt(1), d: BigInt(1) }, unit: "real" } });
   return node;
 });
 
