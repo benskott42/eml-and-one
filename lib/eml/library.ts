@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { type Rational, derive, factsOf, learn, recordedDirection } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, learn, noteExactDecimal, recordedDirection } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -410,55 +410,9 @@ export function userSub(a: Node, b: Node): Node {
   return userSum(a, b, true);
 }
 
-/**
- * The exact value of a decimal literal, and of sums and differences of them, as
- * n·10^(−s). The gates compute 0.1 as 1/10 through exp and ln, so 0.1 + 0.2 and
- * 0.3 differ in their last digits at every precision, and (0.1 + 0.2) − 0.3 kept
- * a residue at each of them up to 480 digits and was refused. The literals are
- * exact decimals and their sum is exact, so a sum that comes to 0 is marked as the
- * integer 0, which exact mode reads (float keeps the gates' own value). A node
- * reached by two different values is poisoned (null) rather than trusted.
- */
-type ExactDecimal = { n: bigint; s: number };
-const exactDecimals = new WeakMap<Node, ExactDecimal | null>();
-const DECIMAL_SCALE_MAX = 1000;
-
-function noteExactDecimal(node: Node, value: ExactDecimal): Node {
-  const known = exactDecimals.get(node);
-  if (known === null) return node;
-  if (known !== undefined) {
-    const s = Math.max(known.s, value.s);
-    const same = known.n * BigInt(10) ** BigInt(s - known.s) === value.n * BigInt(10) ** BigInt(s - value.s);
-    if (!same) exactDecimals.set(node, null);
-    return node;
-  }
-  exactDecimals.set(node, value);
-  return node;
-}
-
-function exactDecimalOf(node: Node): ExactDecimal | null {
-  const known = exactDecimals.get(node);
-  if (known !== undefined) return known;
-  const int = rangeOf(node).int;
-  return int === undefined ? null : { n: int, s: 0 };
-}
-
-function decimalSum(a: Node, b: Node, sub: boolean): ExactDecimal | null {
-  const x = exactDecimalOf(a);
-  const y = exactDecimalOf(b);
-  if (!x || !y) return null;
-  const s = Math.max(x.s, y.s);
-  const xn = x.n * BigInt(10) ** BigInt(s - x.s);
-  const yn = y.n * BigInt(10) ** BigInt(s - y.s);
-  return { n: sub ? xn - yn : xn + yn, s };
-}
-
-/** The user's −b keeps b's exact decimal. */
+/** The user's −b keeps b's exact decimal via derive("neg", ...). */
 export function userNeg(b: Node): Node {
-  const node = tNeg(b);
-  const x = exactDecimalOf(b);
-  if (x && !isUnverified(node) && !isExactUnsure(node)) noteExactDecimal(node, { n: -x.n, s: x.s });
-  return node;
+  return tNeg(b);
 }
 
 /**
@@ -467,10 +421,11 @@ export function userNeg(b: Node): Node {
  */
 function userSum(a: Node, b: Node, sub: boolean): Node {
   const node = userSumBuild(a, b, sub);
-  const exact = decimalSum(a, b, sub);
-  if (exact && !isUnverified(node) && !isExactUnsure(node)) {
-    noteExactDecimal(node, exact);
-    if (exact.n === BigInt(0) && exactDecimals.get(node) !== null && rangeOf(node).int === undefined) markExactInt(node, BigInt(0));
+  if (!isUnverified(node) && !isExactUnsure(node)) {
+    const exact = exactDecimalOf(node);
+    if (exact && exact.n === BigInt(0) && factsOf(node).decimal !== null && rangeOf(node).int === undefined) {
+      markExactInt(node, BigInt(0));
+    }
   }
   return node;
 }
@@ -845,6 +800,7 @@ export function tPow(a: Node, b: Node): Node {
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
     return tagInteger(node, ia ** ib);
   }
+  derivePow(node, a, b);
   const va = knownValue(a);
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0 && va.re > 0 && Number.isFinite(vb.re)) {
@@ -870,7 +826,7 @@ export function tPow(a: Node, b: Node): Node {
 export function tSqr(t: Node): Node {
   const dir = directionOf(t);
   if (dir) return rememberDirection(dir.magnitude, dir.quarter * 2);
-  const node = applyProgram("sqr", { x: t });
+  const node = derive("mul", applyProgram("sqr", { x: t }), t, t);
   const v = knownValue(t);
   if (!v) return node;
   // A square that underflowed to 0 is not the integer 0.
@@ -883,7 +839,7 @@ export const tMinusOne = memo(() => tagReal(programNode("-1"), -1));
 
 export const tTwo = memo(() => tagReal(programNode("2"), 2));
 
-export const tHalf = memo(() => tagReal(programNode("1/2"), 0.5));
+export const tHalf = memo(() => noteExactDecimal(tagReal(programNode("1/2"), 0.5), { n: BigInt(5), s: 1 }));
 
 export const tThree = memo(() => tagReal(programNode("3"), 3));
 

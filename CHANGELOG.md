@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Refused operands that overflowed float to 0 are no longer treated as 0 by `exactZero`/`signedZero`/`arsinh` (fixing keypad `×`, `xʸ`, and `arsinh` certifying 0 or 1 on a refused stack item).
+- Exact decimals now propagate through products, terminating-decimal quotients, and small integer powers via `facts.ts` (`1/10 + 2/10 − 3/10`, `0.1·3 − 0.3`, `0.5² − 0.25` are exact 0; `cos(0.5·π)` and `cos((1/2)·π)` resolve to exact 0).
 - `(-i)^n`, `(±1 · i)^n`, and `exp(π / i)` now resolve cleanly via `facts.ts`, `learn()` refuses derived facts on shared `input` nodes, and a `<details>` fold opened before hydration keeps its body visible.
 
 ## 1.0.4 — 2026-11-25

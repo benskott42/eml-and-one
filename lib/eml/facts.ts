@@ -1,5 +1,5 @@
 import { rangeOf } from "./lowering";
-import type { Node } from "./node";
+import { isExactUnsure, isUnverified, type Node } from "./node";
 
 /**
  * What is known about a node from how it was built, in one record per node.
@@ -26,11 +26,18 @@ export type InfinityFact = {
   magnitude?: Node;
 };
 
+/** An exact terminating decimal n·10^(−s), with s >= 0. */
+export type ExactDecimal = { n: bigint; s: number };
+
+export const DECIMAL_SCALE_MAX = 1000;
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
   imaginaryUnit?: 1 | -1;
   infinity?: InfinityFact;
+  /** Exact terminating decimal n·10^(−s); null means poisoned by conflicting values on the same node. */
+  decimal?: ExactDecimal | null;
 };
 
 export type WireFacts = {
@@ -46,19 +53,64 @@ export function factsOf(node: Node): Facts {
   return table.get(node) ?? NONE;
 }
 
-/** Record facts on a node. Shared finite input leaves and proven integers carry no derived angle/unit facts. */
+function normalizeDecimal(value: ExactDecimal): ExactDecimal | null {
+  let { n, s } = value;
+  if (s < 0) return null;
+  if (n === BigInt(0)) return { n: BigInt(0), s: 0 };
+  while (s > 0 && n % BigInt(10) === BigInt(0)) {
+    n /= BigInt(10);
+    s -= 1;
+  }
+  if (s > DECIMAL_SCALE_MAX) return null;
+  // Cap mantissa width so repeated products/powers cannot build huge BigInts.
+  const digits = (n < BigInt(0) ? -n : n).toString().length;
+  if (digits > DECIMAL_SCALE_MAX + 20) return null;
+  return { n, s };
+}
+
+function sameDecimal(a: ExactDecimal, b: ExactDecimal): boolean {
+  const s = Math.max(a.s, b.s);
+  return a.n * BigInt(10) ** BigInt(s - a.s) === b.n * BigInt(10) ** BigInt(s - b.s);
+}
+
+/** Record facts on a node. Shared finite input leaves and proven integers carry no derived angle/unit/decimal facts. */
 export function learn(node: Node, facts: Facts): Node {
   const prev = table.get(node);
   const next: Facts = { ...prev };
   if (node.type !== "input") {
     if (facts.angle && rangeOf(node).int === undefined) next.angle = facts.angle;
     if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
+    if (facts.decimal !== undefined && !isUnverified(node) && !isExactUnsure(node)) {
+      if (facts.decimal === null || prev?.decimal === null) {
+        next.decimal = null;
+      } else {
+        const norm = normalizeDecimal(facts.decimal);
+        if (norm) {
+          if (prev?.decimal !== undefined && !sameDecimal(prev.decimal, norm)) next.decimal = null;
+          else next.decimal = norm;
+        }
+      }
+    }
   }
   if (facts.infinity) {
     next.infinity = { ...prev?.infinity, ...facts.infinity };
   }
-  if (next.angle || next.imaginaryUnit || next.infinity) table.set(node, next);
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined) table.set(node, next);
   return node;
+}
+
+/** Exact terminating decimal of a node, or null if unknown or poisoned. */
+export function exactDecimalOf(node: Node): ExactDecimal | null {
+  const known = factsOf(node).decimal;
+  if (known !== undefined) return known;
+  if (isUnverified(node) || isExactUnsure(node)) return null;
+  const int = rangeOf(node).int;
+  return int === undefined ? null : { n: int, s: 0 };
+}
+
+/** Record an exact decimal on `node`, poisoning if a conflicting value was already recorded. */
+export function noteExactDecimal(node: Node, value: ExactDecimal): Node {
+  return learn(node, { decimal: value });
 }
 
 /** Pack facts that cross the worker wire onto a wire token. */
@@ -176,6 +228,10 @@ function angleOf(op: Op, a: Node, b: Node | undefined): Angle | null {
     const ib = integerOf(b);
     if (left && ib !== null) return scale(left, ib, BigInt(1));
     if (right && ia !== null) return scale(right, ia, BigInt(1));
+    const da = !left ? exactDecimalOf(a) : null;
+    const db = !right ? exactDecimalOf(b) : null;
+    if (left && db && db.s <= 20) return scale(left, db.n, BigInt(10) ** BigInt(db.s));
+    if (right && da && da.s <= 20) return scale(right, da.n, BigInt(10) ** BigInt(da.s));
     const ua = factsOf(a).imaginaryUnit;
     const ub = factsOf(b).imaginaryUnit;
     if (left && ub) return turn(left, ub);
@@ -215,10 +271,91 @@ function unitOf(op: Op, a: Node, b: Node | undefined): 1 | -1 | undefined {
   return undefined;
 }
 
+function decimalDiv(a: ExactDecimal, b: ExactDecimal): ExactDecimal | null {
+  if (b.n === BigInt(0)) return null;
+  // (a.n * 10^(-a.s)) / (b.n * 10^(-b.s)) = (a.n / b.n) * 10^(b.s - a.s).
+  let num = a.n;
+  let den = b.n;
+  if (den < BigInt(0)) {
+    num = -num;
+    den = -den;
+  }
+  // Reduce num / den by gcd.
+  let x = num < BigInt(0) ? -num : num;
+  let y = den;
+  while (y !== BigInt(0)) {
+    const next = x % y;
+    x = y;
+    y = next;
+  }
+  num /= x;
+  den /= x;
+  // Terminating decimal iff reduced denominator is 2^twos * 5^fives.
+  let twos = 0;
+  let fives = 0;
+  while (den % BigInt(2) === BigInt(0)) {
+    den /= BigInt(2);
+    twos += 1;
+  }
+  while (den % BigInt(5) === BigInt(0)) {
+    den /= BigInt(5);
+    fives += 1;
+  }
+  if (den !== BigInt(1)) return null;
+  const extra = Math.max(twos, fives);
+  const scale = a.s - b.s + extra;
+  const factor = twos >= fives ? BigInt(5) ** BigInt(twos - fives) : BigInt(2) ** BigInt(fives - twos);
+  if (scale < 0) {
+    if (-scale > DECIMAL_SCALE_MAX) return null;
+    return normalizeDecimal({ n: num * factor * BigInt(10) ** BigInt(-scale), s: 0 });
+  }
+  if (scale > DECIMAL_SCALE_MAX) return null;
+  return normalizeDecimal({ n: num * factor, s: scale });
+}
+
+function decimalOf(op: Op, a: Node, b: Node | undefined): ExactDecimal | null {
+  const x = exactDecimalOf(a);
+  if (op === "neg") return x ? normalizeDecimal({ n: -x.n, s: x.s }) : null;
+  if (!b) return null;
+  const y = exactDecimalOf(b);
+  if (!x || !y) return null;
+  if (op === "add" || op === "sub") {
+    const s = Math.max(x.s, y.s);
+    if (s > DECIMAL_SCALE_MAX) return null;
+    const xn = x.n * BigInt(10) ** BigInt(s - x.s);
+    const yn = y.n * BigInt(10) ** BigInt(s - y.s);
+    return normalizeDecimal({ n: op === "sub" ? xn - yn : xn + yn, s });
+  }
+  if (op === "mul") {
+    const s = x.s + y.s;
+    if (s > DECIMAL_SCALE_MAX) return null;
+    return normalizeDecimal({ n: x.n * y.n, s });
+  }
+  return decimalDiv(x, y);
+}
+
+/** Record exact decimal for a^b when a is an exact decimal and b is a small non-negative integer. */
+export function derivePow(out: Node, a: Node, b: Node): Node {
+  const x = exactDecimalOf(a);
+  const p = integerOf(b);
+  if (!x || p === null || p < BigInt(0) || p > BigInt(100)) return out;
+  const exp = Number(p);
+  if (x.s * exp > DECIMAL_SCALE_MAX) return out;
+  const digits = (x.n < BigInt(0) ? -x.n : x.n).toString().length;
+  if (digits * exp > DECIMAL_SCALE_MAX + 20) return out;
+  const value = normalizeDecimal({ n: x.n ** p, s: x.s * exp });
+  return value ? learn(out, { decimal: value }) : out;
+}
+
 /** Record on `out` the facts that follow from the operation and its operands. Returns `out`. */
 export function derive(op: Op, out: Node, a: Node, b?: Node): Node {
   const angle = angleOf(op, a, b);
   const unit = unitOf(op, a, b);
-  if (!angle && !unit) return out;
-  return learn(out, { ...(angle ? { angle } : {}), ...(unit ? { imaginaryUnit: unit } : {}) });
+  const decimal = decimalOf(op, a, b);
+  if (!angle && !unit && !decimal) return out;
+  return learn(out, {
+    ...(angle ? { angle } : {}),
+    ...(unit ? { imaginaryUnit: unit } : {}),
+    ...(decimal ? { decimal } : {}),
+  });
 }

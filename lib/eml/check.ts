@@ -4945,6 +4945,14 @@ if (shardTurn(99)) {
     ["((-1)*i)^2 + 1", "0"],
     ["exp(pi/i) + 1", "0"],
     ["exp(pi/(-i)) + 1", "0"],
+    ["1/10 + 2/10 - 3/10", "0"],
+    ["0.1*3 - 0.3", "0"],
+    ["0.5^2 - 0.25", "0"],
+    ["cos(0.5*pi)", "0"],
+    ["cos((1/2)*pi)", "0"],
+    ["sin(0.5*pi)", "1"],
+    ["tan(0.25*pi)", "1"],
+    ["exp(0.5*pi*i)", "i"],
   ];
   for (const [source, want] of rows99) {
     const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
