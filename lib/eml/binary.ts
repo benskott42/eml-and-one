@@ -12,7 +12,7 @@
  * strings partition into C_n disjoint cyclic orbits of size 2n + 1, each
  * containing exactly one valid EML program.
  */
-import { isProgram, rotateToProgram } from "./programIndex";
+import { MAX_RANK_GATES, isProgram, rankRpn, rotateToProgram, unrankRpn } from "./programIndex";
 
 export type BinaryProgramInfo = {
   hex: string;
@@ -26,6 +26,12 @@ export type CycleOrbit = {
   canonical: string;
   rotation: number;
   orbitSize: number;
+};
+
+export type BinaryTreeMetrics = {
+  gates: number;
+  maxStack: number;
+  depth: number;
 };
 
 /** Convert a constant RPN word over {1, E} to its binary press string over {1, 0}. */
@@ -153,4 +159,47 @@ export function nextBinaryProgram(n: bigint): bigint {
     if (isProgram(binaryToRpn(candidate))) return BigInt(`0b${candidate}`);
   }
   return minBinaryProgram(gates + 1);
+}
+
+/**
+ * Direct bijection from a valid binary EML program integer to its Catalan program rank (#N).
+ * Throws if `n` is not a valid binary EML program.
+ */
+export function binaryToRank(n: bigint): bigint {
+  if (!isValidBinaryProgram(n)) throw new RangeError("Not a valid binary EML program.");
+  return rankRpn(binaryToRpn(n.toString(2)));
+}
+
+/**
+ * Inverse bijection from a Catalan program rank (#N) to its binary EML program integer.
+ * For example: #0 -> 1 (0x1), #1 -> 6 (0x6), #5 -> 116 (0x74).
+ */
+export function rankToBinary(rank: bigint, maxGates = MAX_RANK_GATES): bigint {
+  return BigInt(`0b${rpnToBinary(unrankRpn(rank, maxGates))}`);
+}
+
+/**
+ * Structural metrics of a valid constant binary EML program:
+ * gate count, RPN stack high-water mark, and expression tree depth (0 for `1`).
+ */
+export function binaryTreeMetrics(bits: string): BinaryTreeMetrics {
+  const rpn = binaryToRpn(bits);
+  if (!isProgram(rpn)) throw new RangeError("Not a valid binary EML program.");
+  const depths: number[] = [];
+  let maxStack = 0;
+  for (let i = 0; i < rpn.length; i += 1) {
+    if (rpn[i] === "1") {
+      depths.push(0);
+      if (depths.length > maxStack) maxStack = depths.length;
+    } else {
+      const b = depths.pop()!;
+      const a = depths.pop()!;
+      depths.push(Math.max(a, b) + 1);
+    }
+  }
+  return {
+    gates: (rpn.length - 1) / 2,
+    maxStack,
+    depth: depths[0] ?? 0,
+  };
 }

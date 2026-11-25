@@ -1,14 +1,19 @@
 import {
   binaryProgramInfo,
+  binaryToRank,
   binaryToRpn,
+  binaryTreeMetrics,
   cycleOrbit,
   isValidBinaryProgram,
   maxBinaryProgram,
   minBinaryProgram,
   nextBinaryProgram,
+  rankToBinary,
   rpnToBinary,
 } from "../binary";
 import best from "../best-known.json";
+import { exactReport, formatExact } from "../exact";
+import { compileExpression } from "../parse";
 import { catalan, parseProgramInput, rankRpn } from "../programIndex";
 import type { CheckModule } from "./_types";
 
@@ -100,6 +105,49 @@ const checkModule: CheckModule = {
     const rotatedHex = parseProgramInput("0x4e");
     if (rotatedHex.kind !== "word" || rotatedHex.word !== "111E1EE" || rotatedHex.rotatedFrom !== "1001110") {
       ctx.fail(`FAIL parse-hex-rotate 0x4e got=${JSON.stringify(rotatedHex)}`);
+    }
+
+    // Malformed 0x / 0b prefixes report clear errors instead of falling through to variable 'x'.
+    for (const bad of ["0x", "0xZZ", "0b", "0b102"]) {
+      let msg = "";
+      try {
+        parseProgramInput(bad);
+      } catch (err) {
+        msg = err instanceof Error ? err.message : String(err);
+      }
+      if (!msg.includes("Write hex") && !msg.includes("Write binary")) {
+        ctx.fail(`FAIL parse-bad-prefix ${bad} msg=${msg}`);
+      }
+    }
+
+    // Binary <-> Catalan rank bijection round-trip over #0..#200.
+    for (let r = 0; r <= 200; r += 1) {
+      const rank = BigInt(r);
+      const bin = rankToBinary(rank);
+      if (!isValidBinaryProgram(bin) || binaryToRank(bin) !== rank) {
+        ctx.fail(`FAIL binary-rank-bijection rank=${r} bin=${bin.toString(16)}`);
+      }
+    }
+
+    // Binary tree metrics on known constants: 1 (depth 0), e (depth 1, maxStack 2), 0 (depth 3, maxStack 3).
+    const mOne = binaryTreeMetrics("1");
+    const mE = binaryTreeMetrics("110");
+    const mZero = binaryTreeMetrics("1110100");
+    if (mOne.gates !== 0 || mOne.depth !== 0 || mOne.maxStack !== 1) ctx.fail(`FAIL metrics 1 ${JSON.stringify(mOne)}`);
+    if (mE.gates !== 1 || mE.depth !== 1 || mE.maxStack !== 2) ctx.fail(`FAIL metrics e ${JSON.stringify(mE)}`);
+    if (mZero.gates !== 3 || mZero.depth !== 3 || mZero.maxStack !== 3) ctx.fail(`FAIL metrics 0 ${JSON.stringify(mZero)}`);
+
+    // Signed-zero positive powers: (-0)^2 = 0, (-0)^3 = -0, (-0)^(1/2) = 0.
+    for (const [src, want] of [
+      ["(-0)^2", "0"],
+      ["(-0)^3", "−0"],
+      ["(-0)^(1/2)", "0"],
+    ] as const) {
+      const rep = exactReport(compileExpression(src, {}), {}, { maxNodes: 800_000 });
+      const gotText = formatExact(rep.value);
+      if (rep.unverified || gotText !== want) {
+        ctx.fail(`FAIL neg-zero-pow ${src} got=${rep.unverified ? "unverified" : gotText} want=${want}`);
+      }
     }
   },
 };

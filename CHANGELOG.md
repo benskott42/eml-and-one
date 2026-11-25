@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed positive powers of `−0` (`(−0)^2 = 0`, `(−0)^3 = −0`, `(−0)^(1/2) = 0`) instead of returning unverified when `exp(b·ln(−0))` dropped its angle, and fixed malformed `0x`/`0b` prefixes in `parseProgramInput` falling through to variable `x`.
+- Added Binary ↔ Catalan rank bijection (`binaryToRank` / `rankToBinary`) and structural metrics (`binaryTreeMetrics`) in `lib/eml/binary.ts`.
+
 - Deepened the binary program representation (`lib/eml/binary.ts`): `PressLine` now shows the binary integer value (`0x74 (116)` for `0`, `0x6 (6)` for `e`, `0x7d0c (32012)` for `−1`, etc.), `parseProgramInput` accepts `0x...` hex and `0b...` binary inputs (with Cycle Lemma rotation), and `isValidBinaryProgram` / `nextBinaryProgram` / `cycleOrbit` expose the Catalan Dyck-prefix binary sequence (`1, 6, 26, 28, 106, 108, 114, 116, 120, ...`).
 - The calculator LCD note now displays the exact reduced fraction (`= 1/3`, `= −2/3`, `= 4/9`) for non-terminating exact rationals.
 - Extended `lib/eml/exact-ball.ts` with 4-axis `exp(ln(A) + i·kπ/2)` exact magnitude preservation and promoted the ball enclosure as first judge for zero-component refusal checks in `lib/eml/exact.ts`.

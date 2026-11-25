@@ -786,6 +786,20 @@ export function tPow(a: Node, b: Node): Node {
   // An infinite base (ln(0)^0) keeps the word and stays undefined.
   // −0 is that zero too: IEEE pow(0, −0) is 1, and 0^−0 printed undefined.
   if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return recognized(ONE);
+  // (−0)^b for a positive real b: −0 for odd positive integers, +0 otherwise (matching IEEE pow).
+  // Without this, applyProgram("pow", −0, 2) evaluates exp(2·ln(−0)) = exp(−∞ + 2πi) and loses its angle.
+  if (signedZero(a) && !isUnverified(b) && !isExactUnsure(b)) {
+    const exp = integerExponent(b);
+    if (exp !== null && exp > BigInt(0)) {
+      return recognized(exp % BigInt(2) === BigInt(1) ? negativeZero() : tZero());
+    }
+    const rb = exactRationalOf(b);
+    if (rb && rb.n > BigInt(0)) return recognized(tZero());
+    const vb = knownValue(b);
+    if (vb && vb.im === 0 && vb.re > 0 && Number.isFinite(vb.re)) {
+      return recognized(tZero());
+    }
+  }
   // An integer power multiplies the quarter turn. ^2 was the only case, so
   // (∞i)^3 stayed the power word and came out a real infinity.
   // A negative integer power is 0, the same zero as 1 over that infinity.

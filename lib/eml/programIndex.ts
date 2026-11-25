@@ -315,13 +315,19 @@ export function parseProgramInput(source: string): ParsedProgram {
     throw new RangeError("A program number cannot contain spaces. Write it as # followed by the digits.");
   }
   const compact = raw.replace(/\s+/g, "");
-  if (/^0[xX][0-9a-fA-F]+$/.test(compact)) {
+  if (/^0[xX]/.test(compact)) {
+    if (!/^0[xX][0-9a-fA-F]+$/.test(compact)) {
+      throw new RangeError("Write hex as 0x followed by 0-9 and a-f.");
+    }
     const bits = BigInt(compact).toString(2);
     const pressed = bits.replace(/0/g, "E");
     const turned = rotateToProgram(pressed);
     return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : bits };
   }
-  if (/^0[bB][01]+$/.test(compact)) {
+  if (/^0[bB]/.test(compact)) {
+    if (!/^0[bB][01]+$/.test(compact)) {
+      throw new RangeError("Write binary as 0b followed by 0 and 1.");
+    }
     const bits = compact.slice(2);
     const pressed = bits.replace(/0/g, "E");
     const turned = rotateToProgram(pressed);
