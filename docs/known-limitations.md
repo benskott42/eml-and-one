@@ -34,9 +34,19 @@ What the flag does not catch:
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
 
-## Exact mode: absorbed-term and serial-cancellation checks
+## Exact mode: wrong values still certified, and refusals that are too strict
 
-The six wrong certifications found by the 1.0.3 fuzz against mpmath (`1e-400 + exp(-800)`, `(1e200 + 0.5) - (1e200 - 0.5)`, `((exp(-300) + 0.1/10^-130) - 0.1/10^-130) - exp(-300)`, `sqrt(sqrt(1e-40 + exp(-800)) - 1e-20)`, `hypot((1e-5)^2, -1e-200) - (1e-5)^2`, and `ln((1e-20 + 0.5^i) - 0.5^i - 1e-20)`) are fixed: exact mode now tracks absorbed real terms and deep/serial cancellations, raising precision up to 480 digits or refusing when the result cannot be stabilized inside the cap. Very deep towers whose extra term sits far beyond the 480-digit cap (e.g. `111E1E1E1EE11EE`, differing from −1 by ~10^(−1656520)) remain outside this check.
+A fuzz of about 7,800 expressions against mpmath on 2026-11-25 (in-process and through the worker wire, which never disagreed) found no wrong certified value in random trees, absorbed-term sums, decimal sums, or results past the float range. The six wrong values listed for 1.0.3 are fixed or refused. Two further causes were fixed in 1.0.4: a refused term dropped from a sum as if it were 0, and the x²/2 term of exp and cos rounded into 1.
+
+These are still certified and wrong. All sit where a term near 10^(−240) or smaller is cancelled against its own leading terms:
+
+- exp(10^(−237)) − 1 − 10^(−237) shows 1×10^(−357). The value is 5×10^(−475). exp(3×10^(−238)) − 1 − 3×10^(−238) is the same case.
+- ln(exp(7×10^(−120))) − 7×10^(−120) shows 1.4×10^(−475). The value is 0.
+- sqrt(1 + 10^(−250)) − 1 − 10^(−250)/2 shows 0. The value is −1.25×10^(−501). sqrt(1 + 1.5×10^(−239)) − 1 − 1.5×10^(−239)/2 is the same case.
+- tanh(z) − z and arctan(z) − z for a pure imaginary z near 10^(−122) i or smaller show a real part that is rounding dust, or wrong digits: (arctan(−3×10^(−122) i) + 3×10^(−122) i)·10^100 shows 3×10^(−22) i, and the value is −9×10^(−266) i.
+- ln(tanh(10^(−236) + 10^(−236) i)) shows −543.410081946595 + 1.570796326795i. The value is −543.063508356315 + 0.785398163397i.
+
+These are correct in 1.0.3 and say they could not verify since the stricter absorbed-term checks: 10^(−500) + 10^400, hypot(10^400, 10^400), hypot(10^(−400), 10^400), avg(10^(−400), 10^400), hypot(exp(700), 10^350), arctan(exp(−800)) − π/2, cosh(0.7 − 10^(−400)), exp(3.5×10^(−479)) − 1, arsinh(exp(−1000) + 2), and (exp(−300) + 10^(−20) + 10^(−400)) − exp(−300). In a random set of 3,200 expressions, 38 went from a correct certified value to a refusal and 30 went from a refusal to a correct value. A refusal is not a wrong answer. Both lists are what step 2 of docs/architecture-plan.md is for.
 
 ## Circuits and search
 

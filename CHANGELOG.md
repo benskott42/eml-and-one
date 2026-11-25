@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.0.4 — 2026-11-25
+
 - sin(π), cos(π/2), tan(π), exp(iπ) + 1 and i² + 1 are 0 in both modes. They said "couldn't verify": the gates leave a residue near 10^(−16) at these points, and exact mode refuses a zero it cannot tell from one. sin and cos at a multiple of π/6 where the value is 0, ±1/2 or ±1, tan at kπ and π/4 + kπ/2, exp of i·kπ/2, and i^n for an integer n are now read from the recorded multiple of π. A float near π, or π plus a small term, keeps its circuit: sin(π + 10^(−30)) is −10^(−30). ±√3/2 and the tan pole keep their circuits too.
 - Exact mode no longer certifies a 0 or rounding dust where a second-order term of exp or cos was rounded into 1. exp(−10^−200) − 1 + 10^−200 printed 0 and is 5×10^−401, ln(cos(10^−242 i)) and cos(10^−240 i) − 1 printed 0 (true 5×10^−485 and 5×10^−481), and exp(−10^−240) − 1 + 10^−240 printed 5×10^−465 (true 5×10^−481). Precision now rises until the term fits, and results whose term is past the 480-digit cap say they could not verify.
 - Exact mode no longer certifies a sum whose other addend was refused. (((0.2 + exp(300)) + exp(800)) + 1e310) + exp(300) printed 1.942426395241×10^130 (the true value is about 2.7×10^347): the refused inner sum overflowed float to a known 0, the outer add treated it as the additive identity, and the refusal went with it. A refused operand is no longer dropped as 0.
