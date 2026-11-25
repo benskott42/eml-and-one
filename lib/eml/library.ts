@@ -513,7 +513,10 @@ function userSumBuild(a: Node, b: Node, sub: boolean): Node {
   const right = negation ? null : infinityClass(b);
   // Exact 0 is an identity. Passing the other operand through keeps a
   // directed infinity such as ∞i + 0, which the refusal path would drop.
-  if (!same && !negation) {
+  // An operand refused as unverified can carry a float-known 0 (its overflowed terms read as 0).
+  // It is not an identity: dropping it would certify the other operand as the whole sum.
+  const refused = isUnverified(a) || isUnverified(b) || isExactUnsure(a) || isExactUnsure(b);
+  if (!same && !negation && !refused) {
     if (exactZero(b)) return a;
     if (!sub && exactZero(a)) return b;
     if (sub && exactZero(a)) return tNeg(b);
