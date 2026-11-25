@@ -119,8 +119,8 @@ Small, independent, and each its own pull request:
 | Step | State | Pull request |
 |---|---|---|
 | 1a angle facts | done | #90 |
-| 1b infinity facts | open | |
-| 1c exact decimal | open | |
+| 1b infinity facts | done | |
+| 1c exact decimal | done | |
 | 1d exact integer | open | |
 | 1e refused marks | open | |
 | 1f scale facts | open | |

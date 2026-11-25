@@ -1679,7 +1679,7 @@ function absorbedOrder(turn: Z, realIsNoise: boolean): { gap: number; term: numb
   const limit = -(D.precision - 12);
   let best: { gap: number; term: number } | null = null;
   const scan = (part: Decimal): void => {
-    if (!part.isFinite() || part.isZero() || part.e >= 0) return;
+    if (!part.isFinite() || part.isZero() || part.e >= 0 || 2 * part.e > limit + 1) return;
     const term = part.abs().pow(2).div(2).e;
     if (term < limit && (best === null || term > best.term)) best = { gap: -term, term };
   };
