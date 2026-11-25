@@ -55,6 +55,8 @@ The plan removes cause 1 by construction, replaces the rules behind cause 2 with
 2. Where the ball confirms every certified golden row, make the ball the first judge, and keep the old rules only as a fallback for results the ball is unsure of.
 3. Delete each old rule once a fuzz shows no result depends on it.
 
+**Starting point (fuzz of 2026-11-25).** docs/known-limitations.md lists the 10 results still certified wrong (second-order terms near 10^(−240) and smaller, and tanh, arctan and ln(tanh) of tiny imaginary or complex arguments) and the kinds of correct results the stricter rules now refuse (38 in a random set of 3,200, such as hypot(10^400, 10^400)). A rule-based fix for the first group was tried and also refused sin(2/exp(200)), where the tiny angle is noise and not data. Both groups are the test set for this step: the wrong ones must become right or refused, and the refused ones certified.
+
 **Risks.** Speed: the ball runs at 180 digits or more. The exact worker is off the main thread, so a slower certify is acceptable up to a point; measure the p95 on the golden set. Coverage: the ball cannot take ln of a 0 it cannot prove exact, which is why hypot(10^160, −1) is still refused. Step 1's exact-zero facts are what feed it.
 
 **Done when** `refusedResult` is a call to the ball plus the trig large-angle check, and a 5,000-expression fuzz against mpmath shows no certified wrong value and no certified value lost.
@@ -129,4 +131,4 @@ Small, independent, and each its own pull request:
 | 5 site check script | open | |
 | 6 calculator reducer | open | |
 | 7 limitations list | open | |
-| 8 housekeeping (1.0.4, fuzz tool, bumps, old branches) | open | |
+| 8 housekeeping (fuzz tool, bumps, old branches) | open; 1.0.4 released | |
