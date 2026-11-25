@@ -4815,6 +4815,33 @@ if (shardTurn(96)) {
   }
 }
 
+if (shardTurn(97)) {
+  // Second-order terms of exp and cos rounded into 1: a cancellation that exposes x^2/2 below the
+  // working precision must raise precision, or refuse past the cap, not certify 0 or dust.
+  const show97 = (source: string): string => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    return report.unverified ? "unverified" : formatExact(report.value).replace(/​/g, "");
+  };
+  const rows97: [string, string][] = [
+    ["exp(-1e-200) - 1 + 1e-200", "5×10^−401"],
+    ["exp(1e-100) - 1 - 1e-100", "5×10^−201"],
+    ["cos(1e-100*i) - 1", "5×10^−201"],
+    ["ln(cos(1e-100*i))", "5×10^−201"],
+    ["exp(-1e-240) - 1 + 1e-240", "unverified"],
+    ["exp(5e-243) - 1 - 5e-243", "unverified"],
+    ["ln(cos(1e-242*i))", "unverified"],
+    ["cos(1e-240*i) - 1", "unverified"],
+    ["sqrt(1 + 1e-130) - 1 - 0.5e-130", "−1.25×10^−261"],
+  ];
+  for (const [source, want] of rows97) {
+    const got = show97(source);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL second-order absorption", source, got, "want", want);
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
