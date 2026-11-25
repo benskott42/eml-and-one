@@ -1,6 +1,6 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { clearProvenInt, decadeOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign } from "./facts";
+import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
 
 export { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isTwoScaled, markInfiniteSource, markMaybeInfinite, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteNonfinite, noteOverflow, noteScaledShell };
 
@@ -48,16 +48,9 @@ export type Range = {
 
 const UNKNOWN: Range = { re: null, im: null };
 const ranges = new WeakMap<Node, Range>();
-/**
- * Build-time only: (left + right) − left is the other summand. Evaluation never reads this.
- * Cleared with each top-level expression, so one expression cannot fold another's sum.
- */
-let realSum = new WeakMap<Node, { left: Node; right: Node }>();
-let realSub = new WeakMap<Node, { left: Node; right: Node }>();
 
 onCircuitIsolate(() => {
-  realSum = new WeakMap();
-  realSub = new WeakMap();
+  resetExpressionFacts();
   negZero = undefined;
   minusOne = undefined;
   two = undefined;
@@ -649,13 +642,13 @@ function noteUnresolvedHuge(node: Node, a: Node, b: Node): void {
 
 function noteRealSum(node: Node, left: Node, right: Node): void {
   if (node === left || node === right) return;
-  realSum.set(node, { left, right });
+  noteBuiltSum(node, left, right);
   noteUnresolvedHuge(node, left, right);
 }
 
 function rememberSub(node: Node, left: Node, right: Node): Node {
   if (node === left || node === right) return node;
-  realSub.set(node, { left, right });
+  noteBuiltSub(node, left, right);
   noteUnresolvedHuge(node, left, right);
   return node;
 }
@@ -672,7 +665,7 @@ function unverifiedResult(): Node {
 
 /** a − (a + c) = −c, when the sum was recorded and both summands are finite. */
 function sumComplement(subtrahend: Node, minuend: Node): Node | null {
-  const parts = realSum.get(subtrahend);
+  const parts = builtSumOf(subtrahend);
   if (!parts || !provenFinite(parts.left) || !provenFinite(parts.right)) return null;
   if (parts.left === minuend) return parts.right;
   if (parts.right === minuend) return parts.left;
@@ -684,9 +677,9 @@ function sumComplement(subtrahend: Node, minuend: Node): Node | null {
  * (a − c) − c is a − 2c. Folding that arm back to a cancels one subtraction.
  */
 function subComplement(minuend: Node, subtrahend: Node): Node | null {
-  const inner = realSub.get(subtrahend);
+  const inner = builtSubOf(subtrahend);
   if (inner && provenFinite(inner.left) && provenFinite(inner.right) && inner.left === minuend) return inner.right;
-  const outer = realSub.get(minuend);
+  const outer = builtSubOf(minuend);
   if (!outer || !provenFinite(outer.left) || !provenFinite(outer.right)) return null;
   if (outer.left === subtrahend) return zeroValued(outer.right) ? zeroNode() : domainNeg(outer.right);
   return null;
@@ -735,7 +728,7 @@ export function provenFinite(node: Node): boolean {
 }
 
 function cancelledSummand(sum: Node, part: Node): Node | null {
-  const parts = realSum.get(sum);
+  const parts = builtSumOf(sum);
   // (1 + ∞) − ∞ is ∞ − ∞, not 1. Fold only when both summands are finite.
   if (!parts || !provenFinite(parts.left) || !provenFinite(parts.right)) return null;
   if (parts.left === part) return parts.right;
@@ -1047,8 +1040,6 @@ function liftedFloat(x: number, k: number): number {
   return liftSteps(k).reduce((acc, step) => acc * 10 ** step, x);
 }
 
-const negationOf = new WeakMap<Node, Node>();
-
 /** An underflow with no decade and no known nonzero value. Raising precision cannot recover it. */
 export function hiddenUnderflow(node: Node): boolean {
   if (decadeOf(node) !== undefined) return false;
@@ -1058,8 +1049,7 @@ export function hiddenUnderflow(node: Node): boolean {
 }
 
 function noteNegation(node: Node, arg: Node): Node {
-  negationOf.set(node, arg);
-  return node;
+  return noteBuiltFrom(node, { negationOf: arg });
 }
 
 /** floor(log10 |z|) when the node is a known nonzero real or a known integer. */
@@ -1209,7 +1199,7 @@ function domainAddBuild(a: Node, b: Node): Node {
   // product is the same node as a written 2·exp, so the difference folds to 0.
   if (a === b && decadeOf(a) === undefined && (isLostTiny(a) || underflowedReal(a))) return rawMul(twoNode(), a);
   // (−x) + x is 0. The sum circuit cannot see a past-cap x.
-  if (negationOf.get(a) === b || negationOf.get(b) === a) return zeroNode();
+  if (factsOf(a).builtFrom?.negationOf === b || factsOf(b).builtFrom?.negationOf === a) return zeroNode();
   // 0 + b is b. The add circuit rounds an underflowed b to exact 0.
   if (provenInteger(a) === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
   if (provenInteger(b) === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
@@ -1244,16 +1234,14 @@ function domainAddBuild(a: Node, b: Node): Node {
   return tagged;
 }
 
-const negOf = new WeakMap<Node, Node>();
-
 /** b was built as −a, or a as −b. */
 export function isNegationPair(a: Node, b: Node): boolean {
-  return negOf.get(b) === a || negOf.get(a) === b;
+  return factsOf(b).builtFrom?.negOf === a || factsOf(a).builtFrom?.negOf === b;
 }
 
 /** a + (−a) is 0 when a is unmarked. A marked a falls through to the ordinary sum. */
 export function sumOfNegation(a: Node, b: Node): Node | null {
-  const base = negOf.get(b) === a ? a : negOf.get(a) === b ? b : null;
+  const base = factsOf(b).builtFrom?.negOf === a ? a : factsOf(a).builtFrom?.negOf === b ? b : null;
   if (base === null) return null;
   if (isSeriesShortcut(a) || isSeriesShortcut(b) || isExactUnsure(a) || isExactUnsure(b)) return null;
   if (mayBeInfinite(base)) return null;
@@ -1262,7 +1250,7 @@ export function sumOfNegation(a: Node, b: Node): Node | null {
 
 export function domainNeg(b: Node): Node {
   const out = markMaybeInfinite(domainNegBuild(b), b);
-  if (out !== b && !negOf.has(out)) negOf.set(out, b);
+  if (out !== b && factsOf(out).builtFrom?.negOf === undefined) noteBuiltFrom(out, { negOf: b });
   if (unresolvedHuge.has(b)) unresolvedHuge.add(out);
   return out;
 }
