@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -169,7 +169,7 @@ export function tExp(t: Node): Node {
 /** exp as its gate, with no value recognized. The tan pole is built from these gates. */
 function expGates(t: Node): Node {
   const node = noteExp(E(t, ONE), t);
-  expArg.set(node, t);
+  noteBuiltFrom(node, { expArg: t });
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
   // exp(−∞) stays a zero: exp(−∞) − exp(−∞) is 0.
   // A finite real past about 709 overflows float to +∞. Mark it as overflow,
@@ -185,8 +185,8 @@ function expGates(t: Node): Node {
 }
 
 export function tLn(t: Node): Node {
-  const plus = onePlus.get(t);
-  const minus = oneMinus.get(t);
+  const plus = factsOf(t).builtFrom?.onePlus;
+  const minus = factsOf(t).builtFrom?.oneMinus;
   // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
   if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
@@ -208,12 +208,6 @@ export function tLn(t: Node): Node {
 export const tE = memo(() => tagReal(programNode("e"), Math.E));
 
 export const tZero = memo(() => tagReal(programNode("0"), 0));
-
-const cosArg = new WeakMap<Node, Node>();
-const expArg = new WeakMap<Node, Node>();
-const sqrtArg = new WeakMap<Node, Node>();
-const onePlus = new WeakMap<Node, Node>();
-const oneMinus = new WeakMap<Node, Node>();
 
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
@@ -309,11 +303,13 @@ const COS_FACTORIAL = [
 function cosMinusOne(a: Node, b: Node): Node | null {
   let arg: Node | undefined;
   let sign = 1;
-  if (cosArg.has(a) && isOneNode(b)) {
-    arg = cosArg.get(a);
+  const cosA = factsOf(a).builtFrom?.cosArg;
+  const cosB = factsOf(b).builtFrom?.cosArg;
+  if (cosA && isOneNode(b)) {
+    arg = cosA;
     sign = 1;
-  } else if (cosArg.has(b) && isOneNode(a)) {
-    arg = cosArg.get(b);
+  } else if (cosB && isOneNode(a)) {
+    arg = cosB;
     sign = -1;
   }
   const scale = arg ? tinyScale(arg, SERIES_WIDE) : null;
@@ -352,22 +348,22 @@ function cosMinusOne(a: Node, b: Node): Node | null {
 
 /** The circuit is chosen from the structural range of a and b. */
 function expMinusOne(a: Node, b: Node): Node | null {
-  if (expArg.has(a) && isOneNode(b)) {
-    const arg = expArg.get(a);
-    if (arg && tinyScale(arg, SERIES_REL) !== null) return markSeries(arg, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  const expA = factsOf(a).builtFrom?.expArg;
+  if (expA && isOneNode(b)) {
+    if (tinyScale(expA, SERIES_REL) !== null) return markSeries(expA, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   }
-  if (expArg.has(b) && isOneNode(a)) {
-    const arg = expArg.get(b);
-    if (arg && tinyScale(arg, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), arg), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  const expB = factsOf(b).builtFrom?.expArg;
+  if (expB && isOneNode(a)) {
+    if (tinyScale(expB, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), expB), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   }
   return null;
 }
 
 function sqrtMinusOne(a: Node, b: Node): Node | null {
-  if (!sqrtArg.has(a) || !isOneNode(b)) return null;
-  const inner = sqrtArg.get(a);
-  const scale = inner ? tinyScale(inner, SERIES_REL) : null;
-  if (!inner || scale === null) return null;
+  const inner = factsOf(a).builtFrom?.sqrtArg;
+  if (!inner || !isOneNode(b)) return null;
+  const scale = tinyScale(inner, SERIES_REL);
+  if (scale === null) return null;
   const half = tHalfOf(inner);
   return markSeries(noteDecade(half, scale - 1), "series shortcut: x/2, for |x| ≤ 10^(−480)");
 }
@@ -376,7 +372,7 @@ export function tSub(a: Node, b: Node): Node {
   const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
   if (series) return derive("sub", markMaybeInfinite(series, a, b), a, b);
   const node = domainSub(a, b);
-  if (isOneNode(a)) oneMinus.set(node, b);
+  if (isOneNode(a)) noteBuiltFrom(node, { oneMinus: b });
   return derive("sub", markMaybeInfinite(node, a, b), a, b);
 }
 
@@ -403,8 +399,8 @@ export function tAdd(a: Node, b: Node): Node {
   const large = largeRealSum(a, b);
   if (large) return derive("add", markMaybeInfinite(large, a, b), a, b);
   const node = domainAdd(a, b);
-  if (isOneNode(a)) onePlus.set(node, b);
-  else if (isOneNode(b)) onePlus.set(node, a);
+  if (isOneNode(a)) noteBuiltFrom(node, { onePlus: b });
+  else if (isOneNode(b)) noteBuiltFrom(node, { onePlus: a });
   return derive("add", node, a, b);
 }
 
@@ -868,8 +864,8 @@ export function tSqrt(t: Node): Node {
   // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
   if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
-  const inner = onePlus.get(t);
-  if (inner && tinyScale(inner, SERIES_REL) !== null) sqrtArg.set(node, inner);
+  const inner = factsOf(t).builtFrom?.onePlus;
+  if (inner && tinyScale(inner, SERIES_REL) !== null) noteBuiltFrom(node, { sqrtArg: inner });
   if (!v) return node;
   if (v.im === 0 && v.re >= 0) {
     // Only the root of a proven integer square is that integer: sqrt(4.0000000000000001e0) is not 2.
@@ -1117,7 +1113,7 @@ export function tCos(t: Node): Node {
   if (special) return special;
   const it = tMul(tI(), t);
   const node = flagAngle(tHalfOf(tAdd(tExp(it), tExp(tNeg(it)))), t, false);
-  cosArg.set(node, t);
+  noteBuiltFrom(node, { cosArg: t });
   return node;
 }
 

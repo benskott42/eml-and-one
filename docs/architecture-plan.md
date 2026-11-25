@@ -124,7 +124,7 @@ Small, independent, and each its own pull request:
 | 1d exact integer | done | #93 |
 | 1e refused marks | done | #94 |
 | 1f scale facts | done | #95 |
-| 1g structure memos | open | |
+| 1g structure memos | done | |
 | 2 enclosure as certifier | open | |
 | 3 shortcut policy | done | #97 |
 | 4 split check.ts | done | #98 |

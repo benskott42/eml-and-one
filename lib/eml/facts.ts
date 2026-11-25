@@ -73,6 +73,22 @@ export type ScaleFact = {
   liftedCombine?: boolean;
 };
 
+/**
+ * Structure memos recording how a node was built (replaces cosArg, expArg, sqrtArg,
+ * onePlus, oneMinus in library.ts and realSum, realSub, negationOf, negOf in lowering.ts).
+ */
+export type BuiltFromFact = {
+  cosArg?: Node;
+  expArg?: Node;
+  sqrtArg?: Node;
+  onePlus?: Node;
+  oneMinus?: Node;
+  realSum?: { left: Node; right: Node; gen: number };
+  realSub?: { left: Node; right: Node; gen: number };
+  negationOf?: Node;
+  negOf?: Node;
+};
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
@@ -88,6 +104,8 @@ export type Facts = {
   scale?: ScaleFact;
   /** True when an exact recognition returned a short program in place of the full circuit. */
   recognized?: boolean;
+  /** How this node was built, for structural rewrites and cancellations. */
+  builtFrom?: BuiltFromFact;
 };
 
 export type WireFacts = {
@@ -109,6 +127,12 @@ export type Op = "add" | "sub" | "mul" | "div" | "neg";
 
 const NONE: Facts = Object.freeze({});
 const table = new WeakMap<Node, Facts>();
+let expressionGen = 0;
+
+/** Advance the expression generation so per-expression realSum/realSub memos expire on isolateCircuit. */
+export function resetExpressionFacts(): void {
+  expressionGen += 1;
+}
 
 export function factsOf(node: Node): Facts {
   return table.get(node) ?? NONE;
@@ -178,10 +202,45 @@ export function learn(node: Node, facts: Facts): Node {
   if (facts.recognized) {
     next.recognized = true;
   }
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused || next.scale || next.recognized) {
+  if (facts.builtFrom) {
+    next.builtFrom = { ...prev?.builtFrom, ...facts.builtFrom };
+  }
+  if (
+    next.angle ||
+    next.imaginaryUnit ||
+    next.infinity ||
+    next.decimal !== undefined ||
+    next.integer ||
+    next.refused ||
+    next.scale ||
+    next.recognized ||
+    next.builtFrom
+  ) {
     table.set(node, next);
   }
   return node;
+}
+
+export function noteBuiltFrom(node: Node, built: Omit<BuiltFromFact, "realSum" | "realSub">): Node {
+  return learn(node, { builtFrom: built });
+}
+
+export function noteBuiltSum(node: Node, left: Node, right: Node): Node {
+  return learn(node, { builtFrom: { realSum: { left, right, gen: expressionGen } } });
+}
+
+export function noteBuiltSub(node: Node, left: Node, right: Node): Node {
+  return learn(node, { builtFrom: { realSub: { left, right, gen: expressionGen } } });
+}
+
+export function builtSumOf(node: Node): { left: Node; right: Node } | undefined {
+  const s = factsOf(node).builtFrom?.realSum;
+  return s && s.gen === expressionGen ? s : undefined;
+}
+
+export function builtSubOf(node: Node): { left: Node; right: Node } | undefined {
+  const s = factsOf(node).builtFrom?.realSub;
+  return s && s.gen === expressionGen ? s : undefined;
 }
 
 /** Mark a node as produced by an exact recognition shortcut (see docs/shortcuts.md). */
