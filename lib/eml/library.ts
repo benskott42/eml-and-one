@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { type Rational, derive, factsOf, learn } from "./facts";
+import { type Rational, derive, factsOf, learn, recordedDirection } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -580,14 +580,6 @@ function pureImagDirection(node: Node): -1 | 1 | null {
   return null;
 }
 
-/**
- * An infinity's angle, in quarter turns. 0 is +∞, 1 is +∞i, 2 is −∞, 3 is −∞i.
- * The turn is the finite node whose log cancels that angle: exp(+∞ − ln(turn)).
- * Mul, sqr, and neg add to this count. The product and square words would drop it,
- * and a product of two turns is only approximately on the axis in float.
- */
-const directedInfinity = new WeakMap<Node, { magnitude: Node; quarter: number }>();
-
 function positiveRealInfinity(node: Node): Node {
   return realSignedInfinity(node) === -1 ? domainNeg(node) : node;
 }
@@ -602,13 +594,12 @@ function axisTurn(quarter: number): Node {
 
 function rememberDirection(magnitude: Node, quarter: number): Node {
   const positive = positiveRealInfinity(magnitude);
-  const node = markInfiniteSource(E(E(positive, axisTurn(quarter)), ONE));
-  directedInfinity.set(node, { magnitude: positive, quarter });
-  return node;
+  const node = E(E(positive, axisTurn(quarter)), ONE);
+  return learn(node, { infinity: { maybe: true, kind: "directed", magnitude: positive, quarter } });
 }
 
 function directionOf(node: Node): { magnitude: Node; quarter: number } | null {
-  const hit = directedInfinity.get(node);
+  const hit = recordedDirection(node);
   if (hit) return hit;
   const sign = realSignedInfinity(node);
   if (sign === 1) return { magnitude: node, quarter: 0 };

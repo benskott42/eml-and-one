@@ -1,5 +1,8 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isExactUnsure, isSeriesShortcut, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
+import { isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow, recordedPoleSign } from "./facts";
+
+export { isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow };
 
 /**
  * Structural ranges for subtraction and the exponential.
@@ -444,30 +447,7 @@ export function rawMul(a: Node, b: Node): Node {
 function poleSignOf(node: Node): -1 | 1 | null {
   const typed = realInfinitySign(node);
   if (typed !== null) return typed;
-  return poleSign.get(node) ?? null;
-}
-
-/**
- * Nodes that may be infinite or indeterminate.
- * The mark is written when the node is built. A fold never inspects values or ranges.
- * a − a and a + (−a) fold to 0 only for a node that is not in this set.
- */
-const maybeInfinite = new WeakSet<Node>();
-
-/** Mark `out` when any of `from` may be infinite. Returns `out`. */
-export function markMaybeInfinite(out: Node, ...from: Node[]): Node {
-  if (from.some((node) => mayBeInfinite(node))) maybeInfinite.add(out);
-  return out;
-}
-
-/** Mark a node that is itself an infinite or indeterminate source. */
-export function markInfiniteSource(node: Node): Node {
-  maybeInfinite.add(node);
-  return node;
-}
-
-export function mayBeInfinite(node: Node): boolean {
-  return maybeInfinite.has(node);
+  return recordedPoleSign(node);
 }
 
 function realZeroValue(v: { re: number; im: number } | null): boolean {
@@ -523,23 +503,6 @@ function denominatorMayBeZero(den: Node): boolean {
   return v !== null && realZeroValue(v);
 }
 
-/** A typed infinity. 0 · ∞ is indeterminate even when the infinity was not a division. */
-export function noteNonfinite(node: Node, sign: -1 | 1 = 1): Node {
-  nonfiniteNode.add(node);
-  poleSign.set(node, sign);
-  return node;
-}
-
-/**
- * A finite overflow such as exp(800). The node is non-finite in float, but it is
- * not a pole: exp(800) − exp(800) is 0. exp of this node is a pole, because
- * exp(exp(800)) has already left any finite range.
- */
-export function noteOverflow(node: Node): Node {
-  nonfiniteNode.add(node);
-  return node;
-}
-
 let negZero: Node | undefined;
 
 /** Literal −0. The zero program is +0, and negating it must keep the sign. */
@@ -548,17 +511,11 @@ export function negativeZero(): Node {
   return negZero;
 }
 
-export function isNonfiniteNode(node: Node): boolean {
-  return nonfiniteNode.has(node);
-}
-
 let minusOne: Node | undefined;
 let two: Node | undefined;
 let zero: Node | undefined;
 const ints = new Map<number, Node>();
 const building = new Set<number>();
-const nonfiniteNode = new WeakSet<Node>();
-const poleSign = new WeakMap<Node, -1 | 1>();
 let integerBuilder: ((n: number) => Node) | null = null;
 
 /** Library integers are built with the short programs. Scaling uses the same builder. */

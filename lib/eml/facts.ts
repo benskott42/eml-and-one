@@ -12,10 +12,29 @@ export type Rational = { n: bigint; d: bigint };
 /** The value is q·π ("real") or q·π·i ("imag"): a recorded multiple, not a float near one. */
 export type Angle = { q: Rational; unit: "real" | "imag" };
 
+/** What is known about a node's infinity/overflow status (replaces directedInfinity, poleSign, nonfiniteNode, maybeInfinite). */
+export type InfinityFact = {
+  /** Built from a ln 0, pole, or division by 0; an ∞ − ∞ here can be the value. Crosses the wire as `inf`. */
+  maybe?: boolean;
+  /** Float-nonfinite classification: a real pole (`sign`), a float overflow (finite exact value), or a directed infinity (`quarter`, `magnitude`). */
+  kind?: "pole" | "overflow" | "directed";
+  /** Sign of a real pole (`noteNonfinite`). */
+  sign?: -1 | 1;
+  /** Quarter turn (0: +∞, 1: +∞i, 2: −∞, 3: −∞i) for a directed infinity. */
+  quarter?: number;
+  /** Positive real infinity magnitude node for a directed infinity. */
+  magnitude?: Node;
+};
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
   imaginaryUnit?: 1 | -1;
+  infinity?: InfinityFact;
+};
+
+export type WireFacts = {
+  inf?: 1;
 };
 
 export type Op = "add" | "sub" | "mul" | "div" | "neg";
@@ -27,14 +46,74 @@ export function factsOf(node: Node): Facts {
   return table.get(node) ?? NONE;
 }
 
-/** Record facts on a node. Shared input leaves and proven integers carry no derived facts. */
+/** Record facts on a node. Shared finite input leaves and proven integers carry no derived angle/unit facts. */
 export function learn(node: Node, facts: Facts): Node {
-  if (node.type === "input") return node;
-  const next: Facts = { ...table.get(node) };
-  if (facts.angle && rangeOf(node).int === undefined) next.angle = facts.angle;
-  if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
-  if (next.angle || next.imaginaryUnit) table.set(node, next);
+  const prev = table.get(node);
+  const next: Facts = { ...prev };
+  if (node.type !== "input") {
+    if (facts.angle && rangeOf(node).int === undefined) next.angle = facts.angle;
+    if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
+  }
+  if (facts.infinity) {
+    next.infinity = { ...prev?.infinity, ...facts.infinity };
+  }
+  if (next.angle || next.imaginaryUnit || next.infinity) table.set(node, next);
   return node;
+}
+
+/** Pack facts that cross the worker wire onto a wire token. */
+export function packFacts(node: Node, target: WireFacts): void {
+  if (factsOf(node).infinity?.maybe) target.inf = 1;
+}
+
+/** Restore facts that crossed the worker wire onto an unpacked node. */
+export function unpackFacts(node: Node, source: WireFacts): void {
+  if (source.inf) learn(node, { infinity: { maybe: true } });
+}
+
+export function mayBeInfinite(node: Node): boolean {
+  return factsOf(node).infinity?.maybe === true;
+}
+
+export function markInfiniteSource(node: Node): Node {
+  return learn(node, { infinity: { maybe: true } });
+}
+
+export function markMaybeInfinite(out: Node, ...from: Node[]): Node {
+  if (from.some((node) => mayBeInfinite(node))) learn(out, { infinity: { maybe: true } });
+  return out;
+}
+
+/** A typed infinity. 0 · ∞ is indeterminate even when the infinity was not a division. */
+export function noteNonfinite(node: Node, sign: -1 | 1 = 1): Node {
+  return learn(node, { infinity: { kind: "pole", sign } });
+}
+
+/**
+ * A finite overflow such as exp(800). The node is non-finite in float, but it is
+ * not a pole: exp(800) − exp(800) is 0. exp of this node is a pole, because
+ * exp(exp(800)) has already left any finite range.
+ */
+export function noteOverflow(node: Node): Node {
+  return learn(node, { infinity: { kind: "overflow" } });
+}
+
+export function isNonfiniteNode(node: Node): boolean {
+  const kind = factsOf(node).infinity?.kind;
+  return kind === "pole" || kind === "overflow";
+}
+
+export function recordedPoleSign(node: Node): -1 | 1 | null {
+  const inf = factsOf(node).infinity;
+  return inf?.kind === "pole" ? (inf.sign ?? null) : null;
+}
+
+export function recordedDirection(node: Node): { magnitude: Node; quarter: number } | null {
+  const inf = factsOf(node).infinity;
+  if (inf?.kind === "directed" && inf.magnitude !== undefined && inf.quarter !== undefined) {
+    return { magnitude: inf.magnitude, quarter: inf.quarter };
+  }
+  return null;
 }
 
 export function rational(n: bigint, d: bigint): Rational | null {

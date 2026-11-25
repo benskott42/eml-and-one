@@ -1,4 +1,5 @@
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markInfiniteSource, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
+import { packFacts, unpackFacts } from "./facts";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
 import { E, ONE, V, input, isExactUnsure, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, precisionNoteOf, provenInteger, seriesErrorExp, seriesShortcutText, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
@@ -94,7 +95,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         if (isLostTiny(frame.n)) token.cap = 1;
         const decade = decadeOf(frame.n);
         if (decade !== undefined) token.dec = decade;
-        if (mayBeInfinite(frame.n)) token.inf = 1;
+        packFacts(frame.n, token);
         tokens.push(token);
       }
       continue;
@@ -142,7 +143,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     if (isUnverified(frame.n)) token.unver = 1;
     if (isExactUnsure(frame.n)) token.xu = 1;
-    if (mayBeInfinite(frame.n)) token.inf = 1;
+    packFacts(frame.n, token);
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -163,7 +164,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.se !== undefined) markSeriesError(node, tok.se);
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
-      if (tok.inf) markInfiniteSource(node);
+      unpackFacts(node, tok);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
     }
     else {
@@ -190,7 +191,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       else if (tok.pint !== undefined && tok.i === root) noteProvenInt(node, BigInt(tok.pint));
       if (tok.unver) markUnverified(node);
       if (tok.xu) markExactUnsure(node);
-      if (tok.inf) markInfiniteSource(node);
+      unpackFacts(node, tok);
     }
   }
   const node = nodes[root];
