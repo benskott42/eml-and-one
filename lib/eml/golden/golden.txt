@@ -102,7 +102,7 @@ expr: 1-cos(sqrt(1/10^130)) | exact: 5×10^−131 | exact-notes: certified,ln0 |
 expr: 1/0 | exact: ∞ | exact-notes: singular:uses ln 0 = −∞,ln0 | float: ∞ | float-notes: singular:uses ln 0 = −∞,ln0 | press: 23 | round-trip: OK
 expr: 1/2 | exact: 0.5 | exact-notes: certified | float: 0.5 | float-notes:  | press: 35+ | round-trip: OK
 expr: 1+1 | exact: 2 | exact-notes: certified | float: 2 | float-notes:  | press: 19 | round-trip: OK
-expr: 1e-100*1.5/1.5-1e-100 | exact: 0 | exact-notes: certified,ln0 | float: −2.843639×10^−114 | float-notes: ln0,differs-from-exact | press: 48747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
+expr: 1e-100*1.5/1.5-1e-100 | exact: 0 | exact-notes: certified | float: −2.843639×10^−114 | float-notes: ln0,differs-from-exact | press: 48747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
 expr: 1e-120*(2+i) | exact: 2×10^−120 + 1×10^−120i | exact-notes: certified,ln0 | float: 2×10^−120 + 1×10^−120i | float-notes: ln0 | press: 14525+ | round-trip: OK
 expr: 1e-320*(1+1e-100)-1e-320 | exact: 1×10^−420 | exact-notes: certified | float: 0 | float-notes: ln0,overflowed,underflowed,differs-from-exact | press: 204453+ | round-trip: OK | # KNOWN-BUG jimmy1: certified residue, true value is 1e-420
 expr: 1e-320*e/e-1e-320*(1+1e-100) | exact: −1×10^−420 | exact-notes: certified | float: 0 | float-notes: ln0,overflowed,underflowed,differs-from-exact | press: 204489+ | round-trip: OK
@@ -110,7 +110,7 @@ expr: 1e-400-1e-400*(1+1e-50) | exact: −1×10^−450 | exact-notes: certified,
 expr: 1e-400*(1+1e-100)-1e-400 | exact: 1×10^−500 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed,differs-from-exact | press: 684839+ | round-trip: OK
 expr: 1e-400*1.5/1.5-1e-400 | exact: 0 | exact-notes: certified | float: −0 | float-notes: ln0,underflowed | press: 673357+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
 expr: 1e-400*pi+1e-400 | exact: 4.14159265359×10^−400 | exact-notes: certified,ln0 | float: −0 | float-notes: ln0,underflowed,differs-from-exact | press: 672987+ | round-trip: OK
-expr: 1e-400/2*2-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 672857+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
+expr: 1e-400/2*2-1e-400 | exact: 0 | exact-notes: certified | float: −0 | float-notes: ln0,underflowed | press: 672857+ | round-trip: OK | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
 expr: 1e-50*1.5/1.5-1e-50 | exact: 0 | exact-notes: certified | float: −2.841181×10^−64 | float-notes: ln0,differs-from-exact | press: 24747+ | round-trip: OK | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
 expr: 1e-500 | exact: 1×10^−500 | exact-notes: certified | float: 0 | float-notes: ln0,underflowed,differs-from-exact | press: 60017+ | round-trip: OK
 expr: 1e-500*e/e-1e-500 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 840825+ | round-trip: OK
