@@ -315,6 +315,18 @@ export function parseProgramInput(source: string): ParsedProgram {
     throw new RangeError("A program number cannot contain spaces. Write it as # followed by the digits.");
   }
   const compact = raw.replace(/\s+/g, "");
+  if (/^0[xX][0-9a-fA-F]+$/.test(compact)) {
+    const bits = BigInt(compact).toString(2);
+    const pressed = bits.replace(/0/g, "E");
+    const turned = rotateToProgram(pressed);
+    return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : bits };
+  }
+  if (/^0[bB][01]+$/.test(compact)) {
+    const bits = compact.slice(2);
+    const pressed = bits.replace(/0/g, "E");
+    const turned = rotateToProgram(pressed);
+    return { kind: "word", word: turned, rotatedFrom: turned === pressed ? null : bits };
+  }
   if (/^\d+$/.test(compact) && /[2-9]/.test(compact)) {
     throw new RangeError("Program numbers start with #. A string of 0 and 1 is button presses.");
   }

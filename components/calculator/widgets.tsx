@@ -1,5 +1,6 @@
 // Small pieces of the calculator screen that keep their own state.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { binaryProgramInfo } from "@/lib/eml/binary";
 import type { GolfHit } from "@/lib/eml/golf";
 import { ln0Dependence } from "@/lib/eml/golf-label";
 import { type Node } from "@/lib/eml/node";
@@ -27,6 +28,10 @@ export function CopyNumber({ text }: { text: string }) {
 export function PressLine({ node }: { node: Node | null }) {
   const [copied, setCopied] = useState(false);
   const view = useMemo(() => (node ? pressPreviewForNode(node) : null), [node]);
+  const binInfo = useMemo(
+    () => (view && !view.usesVariables && view.copyable ? binaryProgramInfo(view.full) : null),
+    [view],
+  );
   if (!node) return null;
   if (!view) {
     return <p className="ti-press">Binary applies only to programs of the 1 and EML keys.</p>;
@@ -38,6 +43,12 @@ export function PressLine({ node }: { node: Node | null }) {
       </p>
       <div className="ti-press-meta">
         <span>1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</span>
+        {binInfo ? (
+          <span>
+            Binary value: {binInfo.hex}
+            {binInfo.decimal ? ` (${binInfo.decimal})` : ""}
+          </span>
+        ) : null}
         {view.usesVariables ? <span>x and y stay in the string</span> : null}
         {view.copyable ? (
           <button
