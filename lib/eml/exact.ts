@@ -9,14 +9,12 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
-  dependsOnUnverified,
-  isUnverified,
   precisionMessage,
   trigArg,
 } from "./node";
-import { isMarkedExactInt, provenInteger } from "./facts";
+import { dependsOnUnverified, isExactUnsure, isMarkedExactInt, isUnverified, provenInteger } from "./facts";
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, knownValue, mayBeInfinite } from "./lowering";
-import { evaluate as floatEvaluate, isExactUnsure, isSeriesShortcut, maxSeriesErrorExp, precisionNoteOf } from "./node";
+import { evaluate as floatEvaluate, isSeriesShortcut, maxSeriesErrorExp, precisionNoteOf } from "./node";
 import { ballConfirmsValue } from "./exact-ball";
 
 /**

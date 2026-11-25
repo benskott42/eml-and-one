@@ -1,6 +1,6 @@
 import { packFacts, unpackFacts } from "./facts";
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isExactUnsure, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, seriesErrorExp, seriesShortcutText, type Node } from "./node";
+import { E, ONE, V, input, markSeriesError, markSeriesShortcut, notePrecision, precisionNoteOf, seriesErrorExp, seriesShortcutText, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -78,8 +78,6 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         else if (re === -Infinity) token.nfr = -1;
         if (im === Infinity) token.nfi = 1;
         else if (im === -Infinity) token.nfi = -1;
-        if (isUnverified(frame.n)) token.unver = 1;
-        if (isExactUnsure(frame.n)) token.xu = 1;
         const leadNote = seriesShortcutText(frame.n);
         if (leadNote !== undefined) token.lead = leadNote;
         const se = seriesErrorExp(frame.n);
@@ -127,8 +125,6 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.kr = known.re;
       token.ki = known.im;
     }
-    if (isUnverified(frame.n)) token.unver = 1;
-    if (isExactUnsure(frame.n)) token.xu = 1;
     packFacts(frame.n, token, frame.n === root);
     tokens.push(token);
   }
@@ -144,8 +140,6 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       const re = tok.nfr === 1 ? Infinity : tok.nfr === -1 ? -Infinity : tok.re;
       const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : tok.im;
       const node = input({ re, im }, tok.label);
-      if (tok.unver) markUnverified(node);
-      if (tok.xu) markExactUnsure(node);
       if (tok.lead !== undefined) markSeriesShortcut(node, tok.lead);
       if (tok.se !== undefined) markSeriesError(node, tok.se);
       if (tok.cap) noteLostTiny(node);
@@ -173,8 +167,6 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
-      if (tok.unver) markUnverified(node);
-      if (tok.xu) markExactUnsure(node);
       unpackFacts(node, tok, tok.i === root);
     }
   }

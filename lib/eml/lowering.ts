@@ -1,6 +1,6 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, isExactUnsure, isSeriesShortcut, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, onCircuitIsolate, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, isSeriesShortcut, markSeriesShortcut, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { clearProvenInt, isMarkedExactInt, isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, provenInteger, recordedPoleSign } from "./facts";
+import { clearProvenInt, isExactUnsure, isMarkedExactInt, isNonfiniteNode, markExactUnsure, markInfiniteSource, markMaybeInfinite, markUnverified, mayBeInfinite, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, provenInteger, recordedPoleSign } from "./facts";
 
 export { isMarkedExactInt, isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow };
 

@@ -1,4 +1,5 @@
 import { type C, C1, eml } from "./complex";
+import { dependsOnUnverified, isUnverified, noteDependsUnverified } from "./facts";
 
 /**
  * A circuit in the grammar S → 1 | var | input | eml(S, S).
@@ -101,8 +102,12 @@ export function isolateCircuit<T>(build: () => T): T {
 export function E(a: Node, b: Node): Node {
   const key = `${a.id},${b.id}`;
   const hit = cons.get(key)?.deref();
-  if (hit) return hit;
+  if (hit) {
+    if (dependsOnUnverified(a) || dependsOnUnverified(b)) noteDependsUnverified(hit);
+    return hit;
+  }
   const node: Node = Object.freeze({ type: "eml", id: nextId++, a, b });
+  if (dependsOnUnverified(a) || dependsOnUnverified(b)) noteDependsUnverified(node);
   cons.set(key, new WeakRef(node));
   released.register(node, key);
   return node;
@@ -161,55 +166,6 @@ export function trigArg(node: Node): Node | null {
  */
 const seriesShortcuts = new WeakMap<Node, string>();
 const seriesErrorExps = new WeakMap<Node, number>();
-const unverifiedNodes = new WeakSet<Node>();
-
-/** A result that dropped a term. The screen says it could not verify, in either mode. */
-export function markUnverified(node: Node): Node {
-  unverifiedNodes.add(node);
-  return node;
-}
-
-export function isUnverified(node: Node): boolean {
-  return unverifiedNodes.has(node);
-}
-
-// Marks are only ever added, so a true answer stays true. A false one is not kept:
-// a builder can evaluate a node before it marks it (refuseInfiniteSum does).
-const dependsCache = new WeakSet<Node>();
-
-/**
- * True when the circuit uses a node marked unverified anywhere, not only at its root.
- * A finite result read off such a node is not certified either: ln(ln(0))·i is
- * −π + ∞i, which the product word cannot hold, and 1 + exp(−(ln(ln(0))·i)) was a
- * certified 1 although that exp has no limit.
- */
-export function dependsOnUnverified(root: Node): boolean {
-  if (dependsCache.has(root)) return true;
-  const seen = new Set<Node>();
-  const stack: Node[] = [root];
-  let found = false;
-  while (stack.length && !found) {
-    const n = stack.pop();
-    if (!n || seen.has(n)) continue;
-    seen.add(n);
-    if (unverifiedNodes.has(n)) found = true;
-    else if (n.type === "eml") stack.push(n.a, n.b);
-  }
-  if (found) dependsCache.add(root);
-  return found;
-}
-
-/** Exact mode cannot certify this node's value; float mode still shows its own. */
-const exactUnsureNodes = new WeakSet<Node>();
-
-export function markExactUnsure(node: Node): Node {
-  exactUnsureNodes.add(node);
-  return node;
-}
-
-export function isExactUnsure(node: Node): boolean {
-  return exactUnsureNodes.has(node);
-}
 
 export function markSeriesShortcut(node: Node, note = "series shortcut"): Node {
   seriesShortcuts.set(node, note);

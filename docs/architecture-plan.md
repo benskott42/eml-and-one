@@ -121,8 +121,8 @@ Small, independent, and each its own pull request:
 | 1a angle facts | done | #90 |
 | 1b infinity facts | done | #92 |
 | 1c exact decimal | done | #92 |
-| 1d exact integer | done | |
-| 1e refused marks | open | |
+| 1d exact integer | done | #93 |
+| 1e refused marks | done | |
 | 1f scale facts | open | |
 | 1g structure memos | open | |
 | 2 enclosure as certifier | open | |

@@ -46,7 +46,8 @@ import {
 } from "./library";
 import { mayBeInfinite, naiveSub } from "./lowering";
 import { formatC, isUsable } from "./format";
-import { E, ONE, EmlError, input, isExactUnsure, isUnverified, isolateCircuit, markExactUnsure, markUnverified, precisionNoteOf, type Node } from "./node";
+import { E, ONE, EmlError, input, isolateCircuit, precisionNoteOf, type Node } from "./node";
+import { isExactUnsure, isUnverified, markExactUnsure, markUnverified } from "./facts";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
