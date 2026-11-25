@@ -7,8 +7,18 @@ const twoButtonsListeners = new Set<() => void>();
 
 export function subscribeTwoButtons(listener: () => void) {
   twoButtonsListeners.add(listener);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== TWO_BUTTONS_KEY) return;
+    const next = event.newValue === "1";
+    twoButtonsStored = next;
+    twoButtonsLoaded = true;
+    document.documentElement.classList.toggle("ti-two-buttons", next);
+    listener();
+  };
+  if (typeof window !== "undefined") window.addEventListener("storage", onStorage);
   return () => {
     twoButtonsListeners.delete(listener);
+    if (typeof window !== "undefined") window.removeEventListener("storage", onStorage);
   };
 }
 

@@ -24,7 +24,7 @@
 // about 90 s; that run found -i*pi without ln 0 at K 47.
 use std::f64::consts::{LN_2, PI};
 use std::io::{BufRead, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy)]
@@ -40,7 +40,7 @@ fn reduced_trig(im: f64) -> C {
     let delta = im - steps * quarter;
     let sine = if delta == 0.0 { 0.0 } else { delta.sin() };
     let cosine = if delta == 0.0 { 1.0 } else { delta.cos() };
-    let axis = ((steps as i64 % 4) + 4) % 4;
+    let axis = (steps.rem_euclid(4.0) as i32) & 3;
     match axis { 0 => C { re: cosine, im: sine }, 1 => C { re: -sine, im: cosine }, 2 => C { re: -cosine, im: -sine }, _ => C { re: sine, im: -cosine } }
 }
 fn cis(im: f64, mag: f64) -> C {
@@ -97,14 +97,22 @@ fn exp_underflows(a: C) -> bool {
     let m = a.re.exp();
     m == 0.0 || m < 2f64.powi(-1022)
 }
-static mut SHIFT: u32 = 16;
+static SHIFT: AtomicU32 = AtomicU32::new(16);
 fn part_key(x: f64) -> u64 {
-    let sh = unsafe { SHIFT };
+    let sh = SHIFT.load(Ordering::Relaxed);
+    if sh == 0 {
+        // Use reserved quiet-NaN tags for special values so bit 63 (the sign bit) is preserved on finite nonzeros.
+        if x == 0.0 { return if x.is_sign_negative() { 0x7ff8_0000_0000_0001 } else { 0x7ff8_0000_0000_0002 }; }
+        if x == f64::INFINITY { return 0x7ff8_0000_0000_0003; }
+        if x == f64::NEG_INFINITY { return 0x7ff8_0000_0000_0004; }
+        return x.to_bits();
+    }
     if x == 0.0 { return if x.is_sign_negative() { 1 } else { 2 }; }
     if x == f64::INFINITY { return 3; }
     if x == f64::NEG_INFINITY { return 4; }
     let b = x.to_bits();
-    ((b.wrapping_add(1u64 << (sh - 1))) >> sh) | (1u64 << 63)
+    let rounded = b.wrapping_add(1u64 << (sh - 1)) >> sh;
+    rounded | (1u64 << 63)
 }
 fn key(v: C) -> u128 { ((part_key(v.re) as u128) << 64) | part_key(v.im) as u128 }
 
@@ -145,8 +153,13 @@ fn main() {
         targets.push(Target { id: f[0].to_string(), re: f[1].parse().unwrap(), im: f[2].parse().unwrap() });
     }
     targets.sort_by(|a, b| a.re.partial_cmp(&b.re).unwrap());
-    let store_leaves: usize = args.get(4).map(|s| s.parse().unwrap()).unwrap_or(max_leaves - 1);
-    if let Ok(v) = std::env::var("KEY_SHIFT") { unsafe { SHIFT = v.parse().unwrap(); } }
+    let max_target_re = targets.iter().map(|t| t.re.abs()).fold(1e4_f64, f64::max) + 1.0;
+    let store_leaves: usize = args.get(4).map(|s| s.parse().unwrap()).unwrap_or_else(|| max_leaves.saturating_sub(1));
+    if let Ok(v) = std::env::var("KEY_SHIFT") {
+        let sh: u32 = v.parse().unwrap();
+        assert!(sh <= 52, "KEY_SHIFT must be in 0..=52");
+        SHIFT.store(sh, Ordering::Relaxed);
+    }
     let per_target_cap: usize = std::env::var("CAND_CAP").map(|v| v.parse().unwrap()).unwrap_or(64);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     const SHARDS: usize = 4096;
@@ -185,6 +198,7 @@ fn main() {
                 let (pool, tasks, next, seen, targets, cands, tcount, slots) = (&pool, &tasks, &next, &seen, &targets, &cands, &tcount, slots);
                 hs.push(s.spawn(move || {
                     let mut local: Vec<(f64, f64, u32, u32, bool)> = Vec::new();
+                    let mut local_full: std::collections::HashMap<u128, u8> = std::collections::HashMap::new();
                     loop {
                         let st = next.fetch_add(chunk, Ordering::Relaxed);
                         if st >= tasks.len() { break; }
@@ -201,7 +215,7 @@ fn main() {
                                 if v.re.is_nan() || v.im.is_nan() { continue; }
                                 let fin = v.re.is_finite() && v.im.is_finite();
                                 if !fin && !fl { continue; }
-                                if fin && v.re.abs() <= 1e4 {
+                                if fin && v.re.abs() <= max_target_re {
                                     // binary search targets by re
                                     let tol = 1e-9 * v.re.abs().max(v.im.abs()).max(1.0);
                                     let lo = targets.partition_point(|x| x.re < v.re - tol);
@@ -215,11 +229,15 @@ fn main() {
                                 }
                                 if !store { continue; }
                                 let kk = key(v);
-                                let admit = {
+                                if local_full.get(&kk).copied().unwrap_or(0) >= slots { continue; }
+                                let (admit, global_c) = {
                                     let mut g = seen[(kk % SHARDS as u128) as usize].lock().unwrap();
                                     let c = g.entry(kk).or_insert(0);
-                                    if *c < slots { *c += 1; true } else { false }
+                                    if *c < slots { *c += 1; (true, *c) } else { (false, *c) }
                                 };
+                                if global_c >= slots && local_full.len() < 1_048_576 {
+                                    local_full.insert(kk, global_c);
+                                }
                                 if admit { local.push((v.re, v.im, a as u32, b as u32, fl)); }
                             }
                         }
@@ -262,9 +280,9 @@ fn main() {
     // each stored a the needed b is exp(exp(a) - t), valid when Im(exp(a) - t) is in
     // [-pi, pi). b is looked up among all stored values by a coarse key (and the
     // adjacent buckets); every hit is re-evaluated and must land within 1e-9 of t.
-    if std::env::var("MITM").is_ok() {
+    if matches!(std::env::var("MITM").as_deref(), Ok("1")) {
         let coarse = |x: f64| -> i64 {
-            if x == 0.0 { return 0; }
+            if x.abs() <= 1e-12 { return 0; }
             if !x.is_finite() { return if x > 0.0 { i64::MAX - 1 } else { i64::MIN + 1 }; }
             let b = x.abs().to_bits() as i64 >> 22; // ~30 mantissa bits, about 9 digits
             if x < 0.0 { -b } else { b }
@@ -275,21 +293,20 @@ fn main() {
         table.sort_unstable();
         let leaves_of = |id: usize| -> usize { pool.level.partition_point(|&s| s <= id) - 1 };
         println!("MITM table {} values, t={:.1}s", table.len(), started.elapsed().as_secs_f64());
-        let best: Vec<AtomicUsize> = (0..targets.len()).map(|_| AtomicUsize::new(usize::MAX)).collect();
         let hits: Mutex<Vec<(usize, usize, u32, u32, bool)>> = Mutex::new(Vec::new());
         let next = AtomicUsize::new(0);
         let kmax: usize = std::env::var("MITM_KMAX").map(|v| v.parse().unwrap()).unwrap_or(99);
         let tolerance: f64 = std::env::var("MITM_TOL").map(|v| v.parse().unwrap()).unwrap_or(1e-11);
         std::thread::scope(|sc| {
             for _ in 0..threads {
-                let (pool, table, targets, best, hits, next, kmax, tolerance) = (&pool, &table, &targets, &best, &hits, &next, kmax, tolerance);
+                let (pool, table, targets, hits, next, kmax, tolerance) = (&pool, &table, &targets, &hits, &next, kmax, tolerance);
                 sc.spawn(move || loop {
                     let st = next.fetch_add(1024, Ordering::Relaxed);
                     if st >= n { break; }
                     for a in st..(st + 1024).min(n) {
                         let av = C { re: pool.re[a], im: pool.im[a] };
-                        if !av.re.is_finite() || !av.im.is_finite() || exp_underflows(av) || av.re.exp() == f64::INFINITY { continue; }
-                        if strict && pool.ln0[a] { continue; }
+                        if av.re == f64::INFINITY || av.re.is_nan() || !av.im.is_finite() || exp_underflows(av) || (av.re.is_finite() && av.re.exp() == f64::INFINITY) { continue; }
+                        if strict && (pool.ln0[a] || !av.re.is_finite()) { continue; }
                         let ea = cexp(av);
                         let ka = 2 * leaves_of(a) - 1;
                         for (ti, t) in targets.iter().enumerate() {
@@ -317,7 +334,6 @@ fn main() {
                                         // No "best so far" filter: an impostor found early must not
                                         // hide a genuine longer word. Keep everything up to MITM_KMAX.
                                         if k <= kmax {
-                                            best[ti].fetch_min(k, Ordering::Relaxed);
                                             hits.lock().unwrap().push((ti, k, a as u32, b as u32, pool.ln0[a] || pool.ln0[b] || (pool.re[b] == 0.0 && pool.im[b] == 0.0)));
                                         }
                                     }
@@ -330,9 +346,9 @@ fn main() {
         });
         let mut hs = hits.into_inner().unwrap();
         hs.sort_by_key(|h| (h.0, h.1));
-        let mut per: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut per: std::collections::HashMap<(usize, usize), usize> = std::collections::HashMap::new();
         for &(ti, k, a, b, fl) in hs.iter() {
-            let c = per.entry(ti * 1000 + k).or_insert(0); *c += 1; if *c > 300 { continue; }
+            let c = per.entry((ti, k)).or_insert(0); *c += 1; if *c > 300 { continue; }
             let mut w = String::new(); word(&pool, a, &mut w); word(&pool, b, &mut w); w.push('E');
             println!("CAND\t{}\t{}\t{}\t{}", targets[ti].id, k, if fl { 1 } else { 0 }, w);
         }

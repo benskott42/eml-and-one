@@ -283,10 +283,43 @@ async function main() {
     console.error("the word 1xE did not read x = 2 in exact mode", resultText(), screenText());
     failed = true;
   }
+  // Exact mode uses the parsed circuit for x in a loaded word, not a rounded float64:
+  // with x = 1e-400, float64 underflows x to 0 (giving +∞), while exact gives e + 400·ln 10 ≈ 923.752.
+  if (xField instanceof view.HTMLInputElement) {
+    const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(xField, "1e-400");
+      xField.dispatchEvent(new view.Event("input", { bubbles: true }));
+    });
+    await setProgram("1xE");
+    await clickNamed("Load");
+    await waitResult();
+    if (!resultText().includes("923.752")) {
+      console.error("the word 1xE collapsed x = 1e-400 to float64 in exact mode", resultText(), screenText());
+      failed = true;
+    }
+    await act(async () => {
+      setter?.call(xField, "2");
+      xField.dispatchEvent(new view.Event("input", { bubbles: true }));
+    });
+    await setProgram("1xE");
+    await clickNamed("Load");
+    await waitResult();
+  }
   await clickNamed("hardware");
   await waitResult();
   if (!resultText().includes("2.025134647") || screenText().includes("needs a value for x")) {
     console.error("the word 1xE did not read x = 2 in float mode", resultText(), screenText());
+    failed = true;
+  }
+  // A rotated program loaded in hardware mode keeps its rotation notice after compare runs.
+  await setProgram("E11");
+  await clickNamed("Load");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  if (!screenText().includes("Rotated E11 to 11E.")) {
+    console.error("rotated word notice was lost in hardware mode", screenText());
     failed = true;
   }
   await clickNamed("exact");
@@ -460,6 +493,27 @@ async function main() {
   };
   const heldResult = () => heldView.document.querySelector(".ti-lcd-result")?.textContent ?? "";
   const heldError = () => heldView.document.querySelector(".ti-lcd-error")?.textContent ?? "";
+  // A pending exact computation must not show "usual value" next to "computing".
+  const heldExprForm = heldView.document.querySelector("form.ti-form");
+  const heldExprInput = heldExprForm?.querySelector("input");
+  const heldExprBtn = heldExprForm?.querySelector("button");
+  if (heldExprInput instanceof heldView.HTMLInputElement && heldExprBtn instanceof heldView.HTMLButtonElement) {
+    const setter = Object.getOwnPropertyDescriptor(heldView.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(heldExprInput, "sin(pi/6)");
+      heldExprInput.dispatchEvent(new heldView.Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      heldExprBtn.click();
+    });
+    await heldWait(40);
+    const pendingNote = heldView.document.querySelector(".ti-lcd-note span")?.textContent ?? "";
+    if (!pendingNote.includes("computing") || pendingNote.includes("usual value")) {
+      console.error("pending exact note leaked usual value", pendingNote);
+      failed = true;
+    }
+    await heldClick("Clear");
+  }
   // An error from a press made while the top row computes stays when that row lands.
   await heldClick("π");
   await heldClick("swap");

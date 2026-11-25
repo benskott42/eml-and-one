@@ -165,12 +165,24 @@ def real_sign(A):
     return A.s
 
 
+def is_huge_real(T):
+    """True only when real enclosure T is provably > e^40 (never true for a tiny Tow)."""
+    if isinstance(T, Ball):
+        return T.re.a > 40 or T.re.b < -40
+    lT = a_re(T.W)
+    if isinstance(lT, Ball):
+        return lT.re.a > 40
+    return lT.s > 0 and is_huge_real(lT)
+
+
 def is_tiny(A):
-    """A tower below e^-5 in modulus."""
+    """A tower provably below e^-5 in modulus (never misclassifying tiny negative exponents)."""
     if not isinstance(A, Tow):
         return False
     lA = a_re(A.W)
-    return lA.re.b < -5 if isinstance(lA, Ball) else lA.s < 0
+    if isinstance(lA, Ball):
+        return lA.re.b < -5
+    return lA.s < 0 and is_huge_real(lA)
 
 
 def mkexp(W, s=1, ph=None):
@@ -183,18 +195,17 @@ def mkexp(W, s=1, ph=None):
             return Ball(m * iv.cos(W.im), m * iv.sin(W.im))
         return Tow(W, s, ph)
     # W is a tower: exp of a tiny W is 1 + O(|W|)
-    lW = a_re(W.W)  # ln|W|
-    tiny = lW.re.b < -5 if isinstance(lW, Ball) else lW.s < 0
-    if tiny:
+    if is_tiny(W):
         m = mag_up(W)
-        return Ball(s * (1 + pm(2 * m)), iv.mpf(0) if isreal(W) else pm(2 * m))
+        r = (2 * iv.mpf(m)).b
+        return Ball(s * (1 + pm(r)), iv.mpf(0) if isreal(W) else pm(r))
     return Tow(W, s, ph)
 
 
 def mag_up(A):
-    """An upper bound (mpf) on |A|."""
+    """An upper bound (mpf) on |A|, computed with outward iv arithmetic."""
     if isinstance(A, Ball):
-        return max(abs(A.re.a), abs(A.re.b)) + max(abs(A.im.a), abs(A.im.b))
+        return (abs(A.re) + abs(A.im)).b
     L = a_re(A.W)
     if isinstance(L, Ball):
         if L.re.b > THRESH:
@@ -202,7 +213,7 @@ def mag_up(A):
         if L.re.b < -CAP:
             return iv.exp(-iv.mpf(CAP)).b
         return iv.exp(iv.mpf(L.re.b)).b
-    if L.s < 0:
+    if L.s < 0 and is_huge_real(L):
         return iv.exp(-iv.mpf(CAP)).b
     raise Undecided("bounding a huge value")
 
@@ -247,10 +258,7 @@ def dom_gap(A, B, need=GAP):
         return min(G.re.a, CAP) if G.re.a >= need else None
     if G.s < 0:
         return None
-    lG = a_re(G.W)  # ln G: a tower G may be huge or tiny
-    if isinstance(lG, Ball):
-        return CAP if lG.re.a > 40 else None  # G > e^40 > CAP
-    return CAP if lG.s > 0 else None
+    return CAP if is_huge_real(G) else None
 
 
 def absorb(A, B, g):
@@ -263,7 +271,7 @@ def absorb(A, B, g):
         x = a_mul(B, a_inv(A))
         P = ln1p_enc(x, g)
     except Undecided:
-        r = 2 * iv.exp(-iv.mpf(g)).b
+        r = (2 * iv.exp(-iv.mpf(g))).b
         P = Ball(pm(r), iv.mpf(0) if real else pm(r))
     W = a_add(A.W, P)
     if isinstance(W, Tow) and W.im is None and not isreal(W):
@@ -303,11 +311,12 @@ def ln1p_enc(u, g):
         m = min(m, mag_up(u))
         if m < mpf(2) ** -30:
             # |ln(1 + u) - u| <= 2|u|^2 for |u| <= 1/2
-            r = 2 * m * m
+            r = (2 * iv.mpf(m) * iv.mpf(m)).b
             return Ball(u.re + pm(r), u.im + (iv.mpf(0) if isreal(u) else pm(r)))
         return a_log(Ball(1 + u.re, u.im))  # Re(1 + u) > 0: no cut
     # ln(1 + u) = u(1 + t) with |t| <= |u|, and |ln(1 + t)| <= 2|t|
-    return mkexp(a_add(u.W, Ball(pm(2 * m), iv.mpf(0) if isreal(u) else pm(2 * m))), u.s)
+    r = (2 * iv.mpf(m)).b
+    return mkexp(a_add(u.W, Ball(pm(r), iv.mpf(0) if isreal(u) else pm(r))), u.s)
 
 
 def logform(A):
@@ -351,11 +360,12 @@ def combine(W1, s1, W2, s2, D):
     if is_tiny(D):
         # |D| <= m < e^-5: 1 + e^D = 2 + O(m); 1 - e^D = -D(1 + t) with |t| <= |D|
         m = mag_up(D)
+        r = (2 * iv.mpf(m)).b
         if s1 * s2 == 1:
-            q = Ball(2 + pm(2 * m), iv.mpf(0) if isreal(D) else pm(2 * m))
+            q = Ball(2 + pm(r), iv.mpf(0) if isreal(D) else pm(r))
             Wq, sq = logform(q)
         else:
-            Wq = a_add(D.W, Ball(pm(2 * m), iv.mpf(0) if isreal(D) else pm(2 * m)))
+            Wq = a_add(D.W, Ball(pm(r), iv.mpf(0) if isreal(D) else pm(r)))
             sq = -D.s
         return mkexp(a_add(W1, Wq), s1 * sq)
     if not isinstance(D, Ball) or D.re.b > 60 or D.re.a < -60:
@@ -363,7 +373,7 @@ def combine(W1, s1, W2, s2, D):
     m = mag_up(D)
     if s1 * s2 == -1 and m < mpf(2) ** -10:
         # 1 - e^D = -(D + rho), |rho| <= |D|^2 for |D| <= 1/2
-        r = m * m
+        r = (iv.mpf(m) * iv.mpf(m)).b
         q = Ball(-(D.re + pm(r)), -(D.im + (iv.mpf(0) if isreal(D) else pm(r))))
     else:
         e = mkexp(D, s1 * s2)
@@ -694,7 +704,8 @@ def im_sign(lin):
             if info.get("imsign") is None:
                 return None
         try:
-            tiny.append((c * info["imsign"], abs(c) * mag_up(info["A"])))
+            cs = 1 if c > 0 else -1 if c < 0 else 0
+            tiny.append((cs * info["imsign"], (iv.mpf(abs(c)) * iv.mpf(mag_up(info["A"]))).b))
         except Undecided:
             return None
     known.sort(key=rough, reverse=True)
@@ -709,7 +720,10 @@ def im_sign(lin):
         return signs.pop() if len(signs) == 1 and 0 not in signs else None
     if sS is None:
         return None
-    bound = sum(t[1] for t in tiny)
+    bound_iv = iv.mpf(0)
+    for t in tiny:
+        bound_iv += iv.mpf(t[1])
+    bound = bound_iv.b
     lS = lm(S)
     if lS is None or bound == 0:
         return sS if bound == 0 else None
@@ -827,6 +841,8 @@ def ln_raw(v):
         return ln_single(a, c)
     # a dominant term t: ln v = ln t + ln(1 + r/t)
     for a, c in sorted(v.items()):
+        if ATOMS[a]["A"] is None:
+            continue
         t = {a: c}
         r = lsub(v, t)
         At = a_scale(ATOMS[a]["A"], c)
@@ -859,7 +875,8 @@ def ln_raw(v):
         else:
             Yb = im_of(base)
             YP = a_im(P)
-            lo, hi = ifloor((Yb.re + (YP.re if isinstance(YP, Ball) else pm(m)) + iv.pi) / (2 * iv.pi))
+            # |Im ln(1 + u)| <= arcsin(|u|) <= 2*|u| for |u| <= e^-1 (strictly larger than |u|).
+            lo, hi = ifloor((Yb.re + (YP.re if isinstance(YP, Ball) else pm((2 * iv.mpf(m)).b)) + iv.pi) / (2 * iv.pi))
             if lo == hi:
                 wrap = -2 * lo
             else:

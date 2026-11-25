@@ -1,4 +1,4 @@
-import { eml } from "./complex";
+import { cexp, clogPrincipal, csub, eml, type C } from "./complex";
 import { ballVerdict, enclose } from "./enclose";
 import { type Z, exactClose, exactReport, exactValueAt, valueMatchesTarget } from "./exact";
 import { E, ONE, type Node, SINGULAR_LN0, evaluate, evaluateReport, expUnderflows } from "./node";
@@ -220,10 +220,37 @@ function rpnOf(left: Int32Array, right: Int32Array, id: number): string {
   return tokens.join("");
 }
 
+/** Evaluate a constant circuit under principal Log (arg = +π on negative reals) to detect branch dependence. */
+function principalValue(node: Node): C {
+  const memo = new Map<Node, C>();
+  const stack: { n: Node; seen: boolean }[] = [{ n: node, seen: false }];
+  while (stack.length) {
+    const frame = stack.pop();
+    if (!frame) break;
+    const n = frame.n;
+    if (memo.has(n)) continue;
+    if (n.type === "one") {
+      memo.set(n, { re: 1, im: 0 });
+      continue;
+    }
+    if (n.type !== "eml" || !n.a || !n.b) return { re: NaN, im: NaN };
+    if (!frame.seen) {
+      stack.push({ n, seen: true });
+      stack.push({ n: n.b, seen: false });
+      stack.push({ n: n.a, seen: false });
+      continue;
+    }
+    const a = memo.get(n.a);
+    const b = memo.get(n.b);
+    if (!a || !b) return { re: NaN, im: NaN };
+    memo.set(n, csub(cexp(a), clogPrincipal(b)));
+  }
+  return memo.get(node) ?? { re: NaN, im: NaN };
+}
+
 export function searchConstants(
   maxK: number,
   options: {
-    worker?: number;
     workers?: number;
     partition?: boolean;
     /** When false, programs that log 0 are left out of the pool. */
@@ -232,7 +259,7 @@ export function searchConstants(
     onProgress?: (progress: SearchProgress) => void;
   } = {},
 ): { hits: GolfHit[]; pool: number } {
-  const workers = options.workers ?? 1;
+  const workers = options.workers !== undefined && Number.isInteger(options.workers) && options.workers >= 1 ? options.workers : 1;
   const maxGates = (maxK - 1) >> 1;
   let cap = 4096;
   let left = new Int32Array(cap);
@@ -297,8 +324,12 @@ export function searchConstants(
   const commit = (a: number, b: number, valueRe: number, valueIm: number, gates: number, last: boolean) => {
     const fromLn = touchesLn0(a, b);
     const finite = Number.isFinite(valueRe) && Number.isFinite(valueIm);
-    // A stored child never overflowed, so this gate is the only place it can.
-    const overflow = !finite && !fromLn;
+    // An infinity born from finite inputs without logging 0 at this gate is float overflow,
+    // even if a child had an ancestor ln 0 that already cancelled (e.g. K=15 −1).
+    const aFinite = Number.isFinite(re[a] ?? 0) && Number.isFinite(im[a] ?? 0);
+    const bFinite = Number.isFinite(re[b] ?? 0) && Number.isFinite(im[b] ?? 0);
+    const bZero = (re[b] ?? 0) === 0 && (im[b] ?? 0) === 0;
+    const overflow = !finite && (aFinite && bFinite && !bZero ? true : !fromLn);
     // exp of this gate's finite input. A stored child is never itself an
     // underflow: those nodes are left out of the pool, same as overflow.
     const under = expUnderflows({ re: re[a] ?? 0, im: im[a] ?? 0 });
@@ -319,14 +350,20 @@ export function searchConstants(
       for (const target of watch) {
         if (found.has(target.id) || !acceptsConstantProgram(built, target.re, target.im)) continue;
         const report = evaluateReport(built);
-        const onCut = Math.abs(valueIm) > 1e-8 && Math.abs(Math.abs(valueIm) - Math.PI) < 1e-6;
+        const princ = principalValue(built);
+        const scale = Math.max(1, Math.abs(valueRe), Math.abs(valueIm));
+        const branchDiffers =
+          !Number.isFinite(princ.re) ||
+          !Number.isFinite(princ.im) ||
+          Math.abs(princ.re - valueRe) > 1e-6 * scale ||
+          Math.abs(princ.im - valueIm) > 1e-6 * scale;
         found.set(target.id, {
           id: target.id,
           k: gates * 2 + 1,
           rpn: `${rpnOf(left, right, a)}${rpnOf(left, right, b)}E`,
           singular: report.singular === SINGULAR_LN0,
           usesLn0: report.touchedLn0,
-          branch: onCut || report.touchedLn0 ? "lower-bank" : "either",
+          branch: branchDiffers ? "lower-bank" : "either",
           domain: report.touchedLn0 ? "extended" : "C",
         });
         kept = true;

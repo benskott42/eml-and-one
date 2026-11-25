@@ -4,9 +4,11 @@ import { provenInteger, type Node } from "./node";
 
 /**
  * A rigorous enclosure of a circuit's value, used to confirm a result that a
- * size rule would refuse. Each component is a center and a radius that bounds
- * the distance to the true value of the gates, read the way exact mode reads
- * them: exp(x) − ln(y), Arg = −π on the negative real axis, ln(±0) = −∞ with the
+ * size rule would refuse. Each component is a center (computed on B with
+ * ROUND_HALF_UP at precision P) and a radius (computed on DU with ROUND_UP at
+ * 20 digits, with lower bounds on DD with ROUND_DOWN) that bounds the distance
+ * to the true value of the gates, read the way exact mode reads them:
+ * exp(x) − ln(y), Arg = −π on the negative real axis, ln(±0) = −∞ with the
  * zero's signs, exp(−∞ + iθ) a signed 0, and exp(+∞ + iθ) on an axis when cos θ
  * or sin θ is under 10^(−15). Every rounding and each operand's own radius widen
  * it, so a term absorbed into a large value and cancelled later leaves a radius
@@ -29,9 +31,6 @@ import { provenInteger, type Node } from "./node";
  * and near +π), and exp(±∞ + iθ) one per sign the angle allows. Every candidate
  * is carried; candidates that exp brings back together are merged. The value is
  * confirmed only if every candidate confirms it.
- *
- * decimal.js rounds +, −, ×, √ correctly and exp, ln, sin, cos and atan2 to
- * within an ulp; each is counted here as up to 10 ulps.
  */
 type Comp = { v: Decimal; r: Decimal; exact: boolean; q?: number };
 type Ball = { re: Comp; im: Comp; key?: number };
@@ -60,24 +59,35 @@ export function ballConfirmsValue(
   const maxNodes = budget.maxNodes ?? 400_000;
   const deadline = budget.deadline ?? 0;
   const P = Math.max(precision, 40);
-  const B = Decimal.clone({ precision: P, minE: -9e15, maxE: 9e15 });
-  const eps = new B(10).pow(1 - P);
-  const ten = eps.mul(10);
+  const B = Decimal.clone({ precision: P, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
+  // Directed rounding clones for radii (upper bounds) and denominators (lower bounds).
+  const DU = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_UP, minE: -9e15, maxE: 9e15 });
+  const DD = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_DOWN, minE: -9e15, maxE: 9e15 });
+  const zeroB = new B(0);
+  const zeroU = new DU(0);
+  const zeroD = new DD(0);
+  const oneU = new DU(1);
+  const oneD = new DD(1);
+  // new DU(x) does not round until an operation; adding 0 forces directed rounding.
+  const up = (w: Decimal): Decimal => new DU(w.abs()).add(zeroU);
+  const dn = (w: Decimal): Decimal => new DD(w.abs()).add(zeroD);
+  const epsU = new DU(10).pow(1 - P);
+  const tenU = epsU.mul(10);
+  const duBump = new DU("1.000000000000000001"); // 1 + 10^(1 - 20) * 10 for transcendental DU ops
   const pi = B.acos(-1);
-  const piLow = pi.mul(new B(1).sub(ten));
-  const zero = new B(0);
-  const ZERO: Comp = { v: zero, r: zero, exact: true };
-  const NEG_ZERO: Comp = { v: new B(-0), r: zero, exact: true };
+  const piLowD = dn(pi).mul(oneD.sub(new DD(tenU)));
+  const ZERO: Comp = { v: zeroB, r: zeroU, exact: true };
+  const NEG_ZERO: Comp = { v: new B(-0), r: zeroU, exact: true };
   const signedZero = (neg: boolean): Comp => (neg ? NEG_ZERO : ZERO);
-  const infinite = (neg: boolean): Comp => ({ v: new B(neg ? -Infinity : Infinity), r: zero, exact: true });
+  const infinite = (neg: boolean): Comp => ({ v: new B(neg ? -Infinity : Infinity), r: zeroU, exact: true });
   const isExactZero = (c: Comp) => c.exact && c.v.isZero();
   const isInf = (c: Comp) => !c.v.isFinite() && !c.v.isNaN();
   const zeroVector = (x: Ball) => isExactZero(x.re) && isExactZero(x.im);
   const fail = (): never => {
     throw new BallFail();
   };
-  /** Rounding of one correctly rounded result: an ulp of `w`. */
-  const ulp = (w: Decimal) => w.abs().mul(eps);
+  /** Upper bound on one ulp of `w` at precision P, computed on DU. */
+  const ulp = (w: Decimal): Decimal => up(w).mul(epsU);
 
   // Keys: interned integer combinations of atoms.
   const ids = new Map<string, number>();
@@ -123,7 +133,7 @@ export function ballConfirmsValue(
   const fromQ = (q: number): Comp => {
     if (q === 0) return ZERO;
     const v = pi.mul(q);
-    return { v, r: v.abs().mul(ten), exact: false, q };
+    return { v, r: up(v).mul(tenU), exact: false, q };
   };
 
   const subComp = (a: Comp, b: Comp): Comp => {
@@ -137,7 +147,7 @@ export function ballConfirmsValue(
     // Signed zeros follow IEEE subtraction, as decimal.js and exact mode do.
     if (isExactZero(a) && isExactZero(b)) {
       const v = a.v.sub(b.v);
-      return v.isNeg() === a.v.isNeg() ? a : { v, r: zero, exact: true };
+      return v.isNeg() === a.v.isNeg() ? a : { v, r: zeroU, exact: true };
     }
     const qa = a.q ?? (isExactZero(a) ? 0 : undefined);
     const qb = b.q ?? (isExactZero(b) ? 0 : undefined);
@@ -172,7 +182,7 @@ export function ballConfirmsValue(
     return { c: new B(k === 0 ? 1 : k === 2 ? -1 : 0), s: new B(k === 1 ? 1 : k === 3 ? -1 : 0) };
   };
 
-  /** Signs a cos or sin of the angle ball can take: both when the interval meets 0. */
+  /** Signs a cos or sin of the angle ball can take: both when the interval meets 0 (exact comparison). */
   const signsOf = (value: Decimal, radius: Decimal): boolean[] => (radius.isZero() || value.abs().gt(radius) ? [value.isNeg()] : [false, true]);
 
   /** Y with exp(ln(Y)) = Y, signed zeros included: finite, not 0, and no −0 part (ln(−5 − 0i) is the cut's −π). */
@@ -182,12 +192,12 @@ export function ballConfirmsValue(
     return y.re.v.abs().gt(y.re.r) || y.im.v.abs().gt(y.im.r);
   };
 
-  /** Im X in [−π, π), where ln(exp(X)) is X under this cut. */
+  /** Im X in [−π, π), where ln(exp(X)) is X under this cut. Uses upward-rounded |Im| + r < piLow. */
   const principal = (x: Ball): boolean => {
     if (!x.re.v.isFinite()) return false;
     if (isExactZero(x.im)) return true;
     if (x.im.q !== undefined) return x.im.q >= -1 && x.im.q < 1;
-    return x.im.v.sub(x.im.r).gt(piLow.neg()) && x.im.v.add(x.im.r).lt(piLow);
+    return up(x.im.v).add(x.im.r).lt(piLowD);
   };
 
   const expBalls = (x: Ball): Ball[] => {
@@ -200,7 +210,7 @@ export function ballConfirmsValue(
     const key = x.key !== undefined ? atom(`E${x.key}`) : undefined;
     if (key !== undefined && !expArg.has(key)) expArg.set(key, x);
     const trig = axisTrig(x.im);
-    const r = trig ? zero : x.im.r.add(ten);
+    const r = trig ? zeroU : x.im.r.add(tenU);
     const cos = trig ? trig.c : x.im.v.cos();
     const sin = trig ? trig.s : x.im.v.sin();
     if (isInf(x.re)) {
@@ -213,35 +223,46 @@ export function ballConfirmsValue(
         return out.length === 1 ? [{ ...(out[0] as Ball), key }] : out;
       }
       // exp(+∞ + iθ): a cos or sin under 10^(−15) is that axis (a signed 0), any other ±∞.
-      const snap = new B("1e-15");
+      const snapU = new DU("1e-15");
+      const snapD = new DD("1e-15");
       const parts = (value: Decimal): Comp[] => {
-        if (value.abs().add(r).lt(snap)) return signsOf(value, r).map(signedZero);
-        if (value.abs().sub(r).gte(snap)) return [infinite(value.isNeg())];
+        if (up(value).add(r).lt(snapD)) return signsOf(value, r).map(signedZero);
+        if (value.abs().gt(r) && dn(value).sub(new DD(r)).gte(snapU)) return [infinite(value.isNeg())];
         return fail();
       };
       for (const re of parts(cos)) for (const im of parts(sin)) out.push({ re, im });
       return out.length === 1 ? [{ ...(out[0] as Ball), key }] : out;
     }
     if (!x.re.r.isFinite() || !x.im.r.isFinite()) fail();
-    if (zeroVector(x)) return [{ re: { v: new B(1), r: zero, exact: true }, im: signedZero(x.im.v.isNeg()), key }];
+    if (zeroVector(x)) return [{ re: { v: new B(1), r: zeroU, exact: true }, im: signedZero(x.im.v.isNeg()), key }];
     const m = x.re.v.exp();
     if (!m.isFinite() || m.isZero()) fail();
-    const d = x.re.r.add(trig ? zero : x.im.r);
-    // |e^(z+δ) − e^z| ≤ e^Re z · (e^|δ| − 1) ≤ e^Re z · |δ| e^|δ|.
-    const spread = d.isZero() ? zero : m.mul(d).mul(d.exp()).mul(new B(1).add(ten));
+    const mUp = up(m).mul(oneU.add(epsU.mul(2)));
+    const d = x.re.r.add(trig ? zeroU : x.im.r);
+    // |e^(z+δ) − e^z| ≤ e^Re z · (e^|δ| − 1).
+    // For d ≤ 1: e^d − 1 ≤ d·(1 + d) (polynomial, no exp(d)−1 cancellation).
+    // For d > 1: e^d − 1 ≤ d·e^d · duBump.
+    let stretch = zeroU;
+    if (!d.isZero()) {
+      const factor = d.lte(1) ? d.mul(oneU.add(d)) : d.mul(d.exp()).mul(duBump);
+      if (!factor.isFinite()) fail();
+      stretch = mUp.mul(factor);
+    }
+    if (!stretch.isFinite()) fail();
     if (trig) {
       const part = (unit: Decimal): Comp => {
         if (unit.isZero()) return signedZero(unit.isNeg());
-        if (x.re.exact && x.re.v.isZero()) return { v: unit, r: zero, exact: true };
-        return { v: unit.isNeg() ? m.neg() : m, r: spread.add(m.mul(ten)), exact: false };
+        if (x.re.exact && x.re.v.isZero()) return { v: unit, r: zeroU, exact: true };
+        return { v: unit.isNeg() ? m.neg() : m, r: stretch.add(mUp.mul(tenU)), exact: false };
       };
       return [{ re: part(trig.c), im: part(trig.s), key }];
     }
-    const round = m.mul(ten.mul(3));
+    const round = mUp.mul(epsU.mul(8));
+    const rad = stretch.add(round);
     return [
       {
-        re: { v: m.mul(cos), r: spread.add(round), exact: false },
-        im: { v: m.mul(sin), r: spread.add(round), exact: false },
+        re: { v: m.mul(cos), r: rad, exact: false },
+        im: { v: m.mul(sin), r: rad, exact: false },
         key,
       },
     ];
@@ -263,41 +284,52 @@ export function ballConfirmsValue(
     if (!y.re.v.isFinite() || !y.im.v.isFinite()) fail();
     if (zeroVector(y)) return [{ re: infinite(true), im: y.re.v.isNeg() ? fromQ(-1) : signedZero(y.im.v.isNeg()), key }];
     if (isExactZero(y.im) && y.re.exact && y.re.v.eq(1)) return [{ re: ZERO, im: signedZero(y.im.v.isNeg()), key }];
-    const reLo = y.re.v.sub(y.re.r);
-    const reHi = y.re.v.add(y.re.r);
-    const imLo = y.im.v.sub(y.im.r);
-    const imHi = y.im.v.add(y.im.r);
+    // Exact center-vs-radius comparisons (never v ± r under ROUND_HALF_UP).
+    const reStrictlyPos = y.re.v.gt(y.re.r);
+    const reStrictlyNeg = y.re.v.isNeg() && y.re.v.abs().gt(y.re.r);
+    const reLoLeZero = !reStrictlyPos;
+    const imStrictlyPos = y.im.v.gt(y.im.r);
+    const imStrictlyNeg = y.im.v.isNeg() && y.im.v.abs().gt(y.im.r);
+    const imContainsZero = y.im.v.abs().lte(y.im.r);
+    if (y.re.v.abs().lte(y.re.r) && imContainsZero) fail();
     const rho = y.re.r.add(y.im.r);
     const h = B.hypot(y.re.v, y.im.v);
-    const hl = h.mul(new B(1).sub(ten));
-    if (!hl.isFinite() || hl.lte(rho)) fail();
+    if (!h.isFinite() || h.isZero()) fail();
+    // Sound lower bound on dist(0, Z) computed on DD: max(|x|-rx, |y|-ry, |c|*(1-ten)-rho).
+    const dx = y.re.v.abs().gt(y.re.r) ? dn(y.re.v).sub(new DU(y.re.r)) : zeroD;
+    const dy = y.im.v.abs().gt(y.im.r) ? dn(y.im.v).sub(new DU(y.im.r)) : zeroD;
+    const hLow = dn(h).mul(oneD.sub(new DD(tenU)));
+    const hDist = hLow.gt(rho) ? hLow.sub(new DD(rho)) : zeroD;
+    const dist = DD.max(dx, dy, hDist);
+    if (!dist.isFinite() || dist.lte(0)) fail();
     const ims: Comp[] = [];
     if (isExactZero(y.im)) {
-      if (reLo.gt(0)) ims.push(signedZero(y.im.v.isNeg()));
-      else if (reHi.lt(0)) ims.push(fromQ(-1));
+      if (reStrictlyPos) ims.push(signedZero(y.im.v.isNeg()));
+      else if (reStrictlyNeg) ims.push(fromQ(-1));
       else fail();
     } else if (isExactZero(y.re)) {
-      if (imLo.gt(0)) ims.push(fromQ(0.5));
-      else if (imHi.lt(0)) ims.push(fromQ(-0.5));
+      if (imStrictlyPos) ims.push(fromQ(0.5));
+      else if (imStrictlyNeg) ims.push(fromQ(-0.5));
       else fail();
-    } else if (reLo.lte(0) && imLo.lte(0) && imHi.gte(0)) {
+    } else if (reLoLeZero && imContainsZero) {
       // The rectangle meets the negative real axis, where Arg jumps from π to −π.
-      // The true point is on or below it (Arg near −π) or above it (near +π):
-      // carry both, each within asin(|Im|/|z|) ≤ (π/2)·|Im|/|z| of its end.
-      if (!reHi.lt(0)) fail();
-      const span = B.max(imLo.abs(), imHi.abs()).div(hl.sub(rho)).mul(1.6);
+      // Carry both sides, each within asin(|Im|/|z|) ≤ (π/2)·|Im|/dist(0, Z).
+      if (!reStrictlyNeg) fail();
+      const imMax = up(y.im.v).add(y.im.r);
+      const span = imMax.div(dist).mul("1.6");
       if (!span.lt(1)) fail();
       const half = span.div(2);
-      ims.push({ v: pi.neg().add(half), r: half.add(ten.mul(4)), exact: false });
-      ims.push({ v: pi.sub(half), r: half.add(ten.mul(4)), exact: false });
+      const halfB = new B(half.toString());
+      ims.push({ v: pi.neg().add(halfB), r: half.add(tenU.mul(4)), exact: false });
+      ims.push({ v: pi.sub(halfB), r: half.add(tenU.mul(4)), exact: false });
     } else {
-      // |Δ Arg| ≤ asin(ρ/|z|) ≤ (π/2)·ρ/|z|.
-      ims.push({ v: B.atan2(y.im.v, y.re.v), r: rho.div(hl).mul(1.6).add(ten.mul(4)), exact: false });
+      // On any convex rectangle off the cut, |L(z) − L(c)| ≤ ρ / dist(0, Z).
+      ims.push({ v: B.atan2(y.im.v, y.re.v), r: rho.div(dist).add(tenU.mul(4)), exact: false });
     }
     const lnv = h.ln();
-    // |ln|z+δ| − ln|z|| ≤ ρ/(|z| − ρ), plus the rounding of |z| and of ln.
-    const spread = rho.isZero() ? zero : rho.div(hl.sub(rho)).mul(new B(1).add(ten));
-    const re: Comp = { v: lnv, r: spread.add(ten).add(lnv.abs().mul(ten)), exact: false };
+    // |ln|z+δ| − ln|z|| ≤ ρ / dist(0, Z), plus rounding of |z| and of ln.
+    const spread = rho.isZero() ? zeroU : rho.div(dist);
+    const re: Comp = { v: lnv, r: spread.add(tenU).add(up(lnv).mul(tenU)), exact: false };
     // Two candidates are two values, so neither keeps the key.
     return ims.length === 1 ? [{ re, im: ims[0] as Comp, key }] : ims.map((im) => ({ re, im }));
   };
@@ -309,12 +341,16 @@ export function ballConfirmsValue(
       if (x.exact && y.exact) return x.v.eq(y.v) && x.v.isNeg() === y.v.isNeg() ? x : null;
       if (x.q !== undefined && x.q === y.q) return x;
       if (!x.v.isFinite() || !y.v.isFinite()) return null;
-      const lo = B.min(x.v.sub(x.r), y.v.sub(y.r));
-      const hi = B.max(x.v.add(x.r), y.v.add(y.r));
-      const r = hi.sub(lo).div(2);
-      if (r.gt(B.max(x.r, y.r).mul(4))) return null;
-      const v = lo.add(r);
-      return { v, r: r.add(ulp(v)), exact: false };
+      // Midpoint of the two centers, with radius enclosing both intervals on DU.
+      const v = x.v.add(y.v).div(2);
+      if (!v.isFinite()) return null;
+      const dx = x.v.sub(v);
+      const dy = y.v.sub(v);
+      const rx = up(dx).add(ulp(dx)).add(x.r);
+      const ry = up(dy).add(ulp(dy)).add(y.r);
+      const r = DU.max(rx, ry).add(ulp(v));
+      if (!r.isFinite() || r.gt(DU.max(x.r, y.r).mul(4))) return null;
+      return { v, r, exact: false };
     };
     const re = part(a.re, b.re);
     const im = part(a.im, b.im);
@@ -342,13 +378,25 @@ export function ballConfirmsValue(
     return out;
   };
 
+  const leafComp = (val: Decimal.Value): Comp => {
+    const raw = new B(val);
+    if (!raw.isFinite()) fail();
+    // A wide exact integer (sd > P) would lose digits on the first rounded op on B;
+    // round it into P digits up front and charge one ulp to its radius.
+    if (raw.sd() > P) {
+      const v = raw.toSignificantDigits(P);
+      return { v, r: ulp(v), exact: false };
+    }
+    return { v: raw, r: zeroU, exact: true };
+  };
+
   const leaf = (re: Decimal.Value, im: Decimal.Value): Ball => {
-    const a = new B(re);
-    const b = new B(im);
-    if (!a.isFinite() || !b.isFinite()) fail();
-    const ball: Ball = { re: { v: a, r: zero, exact: true }, im: { v: b, r: zero, exact: true } };
-    if (a.isZero() && b.isZero()) return zeroBall(ball.re, ball.im);
-    return { ...ball, key: atom(`L${a.toString()},${b.toString()}`) };
+    const a = leafComp(re);
+    const b = leafComp(im);
+    const ball: Ball = { re: a, im: b };
+    if (isExactZero(a) && isExactZero(b)) return zeroBall(a, b);
+    if (a.exact && b.exact) return { ...ball, key: atom(`L${a.v.toString()},${b.v.toString()}`) };
+    return ball;
   };
 
   const memo = new Map<Node, Ball[]>();
@@ -390,13 +438,16 @@ export function ballConfirmsValue(
     throw err;
   }
   if (!out || out.length === 0) return false;
-  const tolerance = new B(10).pow(-agree);
+  const tolD = new DD(10).pow(-agree);
   const confirms = (got: Decimal, c: Comp): boolean => {
     if (!got.isFinite() || !c.v.isFinite()) return false;
     if (got.isZero()) return isExactZero(c);
     if (isExactZero(c)) return false;
     const g = new B(got.toString());
-    return g.sub(c.v).abs().add(c.r).lte(g.abs().mul(tolerance));
+    const diff = g.sub(c.v);
+    const errUp = up(diff).add(ulp(diff)).add(c.r);
+    const limitDn = dn(g).mul(tolD);
+    return errUp.lte(limitDn);
   };
   return out.every((ball) => confirms(value.re, ball.re) && confirms(value.im, ball.im));
 }

@@ -1,4 +1,4 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isSeriesShortcut, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isExactUnsure, isSeriesShortcut, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -983,8 +983,10 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   // Identical nodes cancel before a huge term is rewritten. A marked node stays on the ordinary circuit.
   if (a === b && !mayBeInfinite(a)) {
     // The shared zero leaf must stay unmarked. A series shortcut that returned
-    // its argument makes f(x) − x the same node twice; that zero is not certified.
-    if (isSeriesShortcut(a)) return markSeriesShortcut(naiveSub(ONE, ONE));
+    // its argument makes f(x) − x the same node twice; that zero is not certified
+    // (and must not feed into further arithmetic as a certified 0).
+    if (isSeriesShortcut(a)) return markExactUnsure(markSeriesShortcut(naiveSub(ONE, ONE)));
+    if (isExactUnsure(a)) return markExactUnsure(naiveSub(ONE, ONE));
     return zeroNode();
   }
   const carried = overflowIntDiff(a, b);
@@ -1364,7 +1366,7 @@ export function isNegationPair(a: Node, b: Node): boolean {
 export function sumOfNegation(a: Node, b: Node): Node | null {
   const base = negOf.get(b) === a ? a : negOf.get(a) === b ? b : null;
   if (base === null) return null;
-  if (isSeriesShortcut(a) || isSeriesShortcut(b)) return null;
+  if (isSeriesShortcut(a) || isSeriesShortcut(b) || isExactUnsure(a) || isExactUnsure(b)) return null;
   if (mayBeInfinite(base)) return null;
   return zeroNode();
 }

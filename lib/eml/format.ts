@@ -1,6 +1,7 @@
 import { type C, c, hypotC } from "./complex";
 
 function formatReal(n: number): string {
+  if (Number.isNaN(n)) return "undefined";
   if (Object.is(n, -0)) return "−0";
   if (n === 0) return "0";
   if (!Number.isFinite(n)) return n > 0 ? "∞" : "−∞";
@@ -40,12 +41,17 @@ function tidy(z: C): C {
   if (!Number.isFinite(z.re) || !Number.isFinite(z.im)) return z;
   const mag = hypotC(z);
   if (!(mag > 0)) return z;
-  const unit = 10 ** (Math.floor(Math.log10(mag)) - 11);
+  const uExp = Math.floor(Math.log10(mag)) - 11;
+  // Below 1e-307, 10^uExp becomes subnormal and loses precision, corrupting digits.
+  if (uExp < -307 || uExp > 308) return z;
+  const unit = 10 ** uExp;
+  const inv = uExp < 0 ? 10 ** -uExp : 0;
   if (!(unit > 0) || !Number.isFinite(unit)) return z;
   const snap = (part: number): number => {
     if (part === 0 || Object.is(part, -0)) return part;
     if (Math.abs(part) * 1e4 >= mag) return part;
-    const rounded = Math.round(part / unit) * unit;
+    // Divide by 10^(-uExp) for negative uExp so exact multiples like 0.3 stay exact instead of 3*0.1.
+    const rounded = uExp < 0 ? Math.round(part * inv) / inv : Math.round(part / unit) * unit;
     if (Math.abs(rounded) < unit / 2) return 0;
     return rounded;
   };
@@ -57,18 +63,19 @@ function tidy(z: C): C {
 function formatBody(v: C): string {
   const reFinite = Number.isFinite(v.re);
   const imFinite = Number.isFinite(v.im);
-  if (!reFinite && !imFinite) return "undefined";
+  if (!reFinite && !imFinite) {
+    const joiner = v.im < 0 ? " − " : " + ";
+    return `${formatReal(v.re)}${joiner}∞i`;
+  }
   if (!reFinite && (v.im === 0 || Object.is(v.im, -0))) return formatReal(v.re);
   if (!imFinite && (v.re === 0 || Object.is(v.re, -0))) return formatImag(v.im);
   if (!reFinite && imFinite) {
-    if (v.im === 0 || Object.is(v.im, -0)) return formatReal(v.re);
     const joiner = v.im < 0 ? " − " : " + ";
     return `${formatReal(v.re)}${joiner}${formatImag(Math.abs(v.im))}`;
   }
   if (!imFinite && reFinite) {
-    const imag = v.im < 0 ? "∞i" : "∞i";
     const sign = v.im < 0 ? " − " : " + ";
-    return `${formatReal(v.re)}${sign}${imag}`;
+    return `${formatReal(v.re)}${sign}∞i`;
   }
   if (v.re === 0 && v.im === 0) return Object.is(v.re, -0) || Object.is(v.im, -0) ? "−0" : "0";
   if (v.im === 0 || Object.is(v.im, -0)) return formatReal(v.re);
@@ -117,19 +124,34 @@ export function recognize(z: C): string | null {
   return null;
 }
 
-function displayedZero(text: string): boolean {
-  const body = text.trim();
-  return body === "0" || body === "−0" || body === "-0";
-}
+const EXACT_NAMED_TEXT: Record<string, string[]> = {
+  "0": ["0", "−0", "-0"],
+  "1": ["1"],
+  "−1": ["−1", "-1"],
+  "2": ["2"],
+  "1/2": ["0.5"],
+  i: ["i"],
+  "−i": ["−i", "-i"],
+};
 
 /**
- * Name shown beside a caption. recognize() of a tiny exact value is 0 once the
- * float conversion underflows, and that must not be printed next to a nonzero text.
+ * Name shown beside a caption. recognize() reads the float view of an exact
+ * value, which can round 1 + 10^(−20) to 1 or 1 + 10^(−200)i to 1 while the
+ * screen visibly prints the extra digits or imaginary part. Only stamp a name
+ * when the displayed text is consistent with that constant.
  */
 export function captionName(text: string, value: C, caption: string): string | null {
   const known = recognize(value);
-  if (!known || known === caption) return null;
-  if ((known === "0" || known === "−0") && !displayedZero(text)) return null;
+  if (!known) return null;
+  if (known === caption || known === caption.replace(/-/g, "−")) return null;
+  const clean = text.replace(/\s*≈$/, "").trim();
+  if (!clean) return null;
+  const exactTexts = EXACT_NAMED_TEXT[known];
+  if (exactTexts) return exactTexts.includes(clean) ? known : null;
+  // Every remaining NAMED entry (e, π, √2, φ, iπ, …) lies on one axis with |v| in [0.5, π].
+  if (clean.includes(" + ") || clean.includes(" − ") || clean.includes("×10^") || clean.length > 16) return null;
+  const isImag = known === "iπ";
+  if (isImag !== clean.endsWith("i")) return null;
   return known;
 }
 

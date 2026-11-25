@@ -1,11 +1,11 @@
 import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markInfiniteSource, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isExactUnsure, isSeriesShortcut, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, precisionNoteOf, provenInteger, type Node } from "./node";
+import { E, ONE, V, input, isExactUnsure, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, precisionNoteOf, provenInteger, seriesErrorExp, seriesShortcutText, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; nfr?: -1 | 1; nfi?: -1 | 1; inf?: 1 }
+  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; xu?: 1; lead?: string; se?: number; cap?: 1; dec?: number; nfr?: -1 | 1; nfi?: -1 | 1; inf?: 1 }
   | {
       i: number;
       k: "E";
@@ -19,7 +19,9 @@ export type Wire =
       addR?: number;
       lift?: 1;
       dec?: number;
-      lead?: 1;
+      lead?: 1 | string;
+      /** Base-10 exponent of the dropped error term on a crude linear series shortcut. */
+      se?: number;
       shell?: 1;
       /** The add or sub gate between a 10^k lift and its drop; exact mode sizes its cancellation. */
       lc?: 1;
@@ -84,6 +86,14 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         const digits = exactIntDigits(frame.n);
         if (digits !== undefined) token.int = digits;
         if (isUnverified(frame.n)) token.unver = 1;
+        if (isExactUnsure(frame.n)) token.xu = 1;
+        const leadNote = seriesShortcutText(frame.n);
+        if (leadNote !== undefined) token.lead = leadNote;
+        const se = seriesErrorExp(frame.n);
+        if (se !== undefined) token.se = se;
+        if (isLostTiny(frame.n)) token.cap = 1;
+        const decade = decadeOf(frame.n);
+        if (decade !== undefined) token.dec = decade;
         if (mayBeInfinite(frame.n)) token.inf = 1;
         tokens.push(token);
       }
@@ -112,7 +122,10 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     if (isTwoScaled(frame.n)) token.lift = 1;
     if (inScaledShell(frame.n)) token.shell = 1;
     if (isLiftedCombine(frame.n)) token.lc = 1;
-    if (isSeriesShortcut(frame.n)) token.lead = 1;
+    const leadNote = seriesShortcutText(frame.n);
+    if (leadNote !== undefined) token.lead = leadNote;
+    const se = seriesErrorExp(frame.n);
+    if (se !== undefined) token.se = se;
     if (isLostTiny(frame.n)) token.cap = 1;
     const decade = decadeOf(frame.n);
     if (decade !== undefined) token.dec = decade;
@@ -145,6 +158,11 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : tok.im;
       const node = input({ re, im }, tok.label);
       if (tok.unver) markUnverified(node);
+      if (tok.xu) markExactUnsure(node);
+      if (tok.lead !== undefined) markSeriesShortcut(node, tok.lead);
+      if (tok.se !== undefined) markSeriesError(node, tok.se);
+      if (tok.cap) noteLostTiny(node);
+      if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.inf) markInfiniteSource(node);
       nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
     }
@@ -163,7 +181,8 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.lift) markTwoScaled(node);
       if (tok.shell) noteScaledShell(node);
       if (tok.lc) noteLiftedCombine(node);
-      if (tok.lead) markSeriesShortcut(node);
+      if (tok.lead !== undefined) markSeriesShortcut(node, typeof tok.lead === "string" ? tok.lead : undefined);
+      if (tok.se !== undefined) markSeriesError(node, tok.se);
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });

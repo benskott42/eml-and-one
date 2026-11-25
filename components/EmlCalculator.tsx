@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { type C } from "@/lib/eml/complex";
-import { captionName, recognize } from "@/lib/eml/format";
+import { captionName } from "@/lib/eml/format";
 import {
   BINARY_KEYS,
   CONSTANT_KEYS,
@@ -11,7 +11,7 @@ import {
   applyUnaryNode,
   constantNode,
 } from "@/lib/eml/library";
-import { E, ONE, type Node, evaluateReport, nodeFromRpn } from "@/lib/eml/node";
+import { E, ONE, type Node, evaluateReport, input as inputNode, nodeFromRpn, substitute } from "@/lib/eml/node";
 import table from "@/lib/eml/best-known.json";
 import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
 import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
@@ -39,6 +39,105 @@ import { compileSubmission, nextTurn } from "@/components/submitTurn";
 
 /** False in the static HTML and during hydration, true once React owns the keys. */
 const subscribeNothing = () => () => {};
+
+function usedVars(root: Node): Set<string> {
+  const vars = new Set<string>();
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (n.type === "var") vars.add(n.name);
+    else if (n.type === "eml") {
+      if (n.a) stack.push(n.a);
+      if (n.b) stack.push(n.b);
+    }
+  }
+  return vars;
+}
+
+function sameC(a: C | undefined, b: C | undefined): boolean {
+  if (!a || !b) return a === b;
+  return Object.is(a.re, b.re) && Object.is(a.im, b.im);
+}
+
+/**
+ * Combine two stack operands without clobbering variable bindings or losing exact
+ * variable circuits (`boundNodes`). When both operands refer to the same variable
+ * with different bindings, each operand substitutes its own binding so both stay true.
+ */
+function mergeOperands(x: Entry, y: Entry): {
+  xNode: Node;
+  yNode: Node;
+  bound?: Record<string, C>;
+  boundNodes?: Record<string, Node>;
+  skipAgreement: boolean;
+} {
+  const xVars = usedVars(x.node);
+  const yVars = usedVars(y.node);
+  const bound: Record<string, C> = {};
+  const boundNodes: Record<string, Node> = {};
+  const subX: Record<string, Node> = {};
+  const subY: Record<string, Node> = {};
+  let skipAgreement = Boolean(x.skipAgreement || y.skipAgreement);
+
+  const names = new Set<string>([
+    ...xVars,
+    ...yVars,
+    ...Object.keys(x.bound ?? {}),
+    ...Object.keys(y.bound ?? {}),
+    ...Object.keys(x.boundNodes ?? {}),
+    ...Object.keys(y.boundNodes ?? {}),
+  ]);
+
+  for (const name of names) {
+    const xUses = xVars.has(name);
+    const yUses = yVars.has(name);
+    const xb = x.bound?.[name];
+    const yb = y.bound?.[name];
+    const xn = x.boundNodes?.[name];
+    const yn = y.boundNodes?.[name];
+    const differs = (xb && yb && !sameC(xb, yb)) || (xn && yn && xn !== yn);
+
+    if (xUses && yUses) {
+      if (differs) {
+        if (xn) subX[name] = xn;
+        else if (xb) subX[name] = inputNode(xb, name);
+        if (yn) subY[name] = yn;
+        else if (yb) subY[name] = inputNode(yb, name);
+        skipAgreement = true;
+      } else {
+        if (xb ?? yb) bound[name] = (xb ?? yb) as C;
+        if (xn ?? yn) boundNodes[name] = (xn ?? yn) as Node;
+      }
+    } else if (xUses) {
+      if (xb) bound[name] = xb;
+      if (xn) boundNodes[name] = xn;
+      if (differs) skipAgreement = true;
+    } else if (yUses) {
+      if (yb) bound[name] = yb;
+      if (yn) boundNodes[name] = yn;
+      if (differs) skipAgreement = true;
+    } else if (differs) {
+      // Neither circuit uses a var leaf, but the two captions had different x/y values
+      // (e.g. "x" pushed at x=2 plus "x" pushed at x=5 -> caption "x + x").
+      skipAgreement = true;
+    } else if (xb ?? yb) {
+      bound[name] = (xb ?? yb) as C;
+    }
+  }
+
+  const xNode = Object.keys(subX).length > 0 ? substitute(x.node, subX) : x.node;
+  const yNode = Object.keys(subY).length > 0 ? substitute(y.node, subY) : y.node;
+  return {
+    xNode,
+    yNode,
+    bound: Object.keys(bound).length > 0 ? bound : undefined,
+    boundNodes: Object.keys(boundNodes).length > 0 ? boundNodes : undefined,
+    skipAgreement,
+  };
+}
 
 const EXAMPLES = [
   { label: "e", expr: "e" },
@@ -72,17 +171,30 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const recomputeRef = useRef(false);
   const queueRef = useRef<Array<() => void>>([]);
   const jobRef = useRef(0);
+  const cancelTurnRef = useRef<(() => void) | null>(null);
   const twoButtonsRef = useRef(false);
   twoButtonsRef.current = twoButtons;
+  useEffect(() => () => {
+    jobRef.current += 1;
+    cancelTurnRef.current?.();
+    cancelTurnRef.current = null;
+  }, []);
   // The first screen uses the tables app/page.tsx built at export time. With an
   // empty stack the captions depend only on the x and y text. Otherwise each
   // caption builds its key's circuit on the stack, about 10 ms in all for a large
   // result, so they are built in slices of a few ms after the result is painted
   // and the old captions stay until the new table is whole.
-  const [costs, setCosts] = useState<KeyTable>(() => initialKeys?.costs ?? keyCosts([], INITIAL_X, INITIAL_Y));
+  const [computedCosts, setComputedCosts] = useState<KeyTable>(
+    () => initialKeys?.costs ?? keyCosts([], INITIAL_X, INITIAL_Y),
+  );
+  const stackLen = model.stack.length;
+  const topId = model.stack[stackLen - 1]?.node.id ?? -1;
+  const prevId = model.stack[stackLen - 2]?.node.id ?? -1;
+  const atStart = Boolean(initialKeys && stackLen === 0 && xText === INITIAL_X && yText === INITIAL_Y);
+  const costs = atStart && initialKeys ? initialKeys.costs : computedCosts;
   useEffect(() => {
-    const atStart = initialKeys && model.stack.length === 0 && xText === INITIAL_X && yText === INITIAL_Y;
-    const entries = atStart ? Object.entries(initialKeys.costs)[Symbol.iterator]() : keyCostEntries(model.stack, xText, yText);
+    if (twoButtons || atStart) return;
+    const entries = keyCostEntries(modelRef.current.stack, xText, yText);
     const table: KeyTable = {};
     let handle = 0;
     const slice = () => {
@@ -90,7 +202,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       for (;;) {
         const next = entries.next();
         if (next.done) {
-          setCosts(table);
+          setComputedCosts(table);
           return;
         }
         table[next.value[0]] = next.value[1];
@@ -100,7 +212,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     };
     slice();
     return () => window.clearTimeout(handle);
-  }, [initialKeys, model.stack, xText, yText]);
+  }, [atStart, prevId, stackLen, topId, twoButtons, xText, yText]);
 
   // The handlers are the only writers of modelRef and modeRef: each one sets the
   // ref before its setState. Syncing them from an effect let a late passive effect
@@ -111,29 +223,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
 
   const { cancelExact } = useExactJobs({ stack: model.stack, modelRef, historyRef, recomputeRef, queueRef, setModel });
 
-
   const expansions = useMemo(() => initialKeys?.expansions ?? keyExpansions(), [initialKeys]);
-
-  // Building the tables also fills the circuit caches in lib/eml. With the
-  // tables handed in, that work would land on the first key press, so it runs
-  // here once the page is idle. The results are discarded.
-  useEffect(() => {
-    if (!initialKeys) return;
-    const warm = () => {
-      try {
-        keyCosts([], INITIAL_X, INITIAL_Y);
-        keyExpansions();
-      } catch {
-        // The tables catch their own errors; nothing here is shown.
-      }
-    };
-    if (typeof window.requestIdleCallback === "function") {
-      const handle = window.requestIdleCallback(warm, { timeout: 2000 });
-      return () => window.cancelIdleCallback(handle);
-    }
-    const handle = window.setTimeout(warm, 200);
-    return () => window.clearTimeout(handle);
-  }, [initialKeys]);
 
   useEffect(() => {
     const snapshot = modelRef.current.stack.map((item) => ({ ...item }));
@@ -163,7 +253,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           if (cancel) return;
           await new Promise((resolve) => setTimeout(resolve, 0));
           if (cancel) return;
-          stack.push(entry(item.node, item.caption, mode, item.bound));
+          const rebuilt = entry(item.node, item.caption, mode, item.bound, item.boundNodes, item.skipAgreement);
+          stack.push(item.notice ? { ...rebuilt, notice: item.notice } : rebuilt);
         }
       } catch (err) {
         error = failure(err);
@@ -178,6 +269,9 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           node: item.node,
           caption: item.caption,
           bound: item.bound,
+          boundNodes: item.boundNodes,
+          skipAgreement: item.skipAgreement,
+          notice: item.notice,
           value: { re: Number.NaN, im: Number.NaN },
           text: "—",
           singular: message,
@@ -237,10 +331,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       }
       try {
         const item = entry(node, caption, modeRef.current);
-        const known = recognize(item.value);
-        const name = known && known !== caption ? `this is ${known}` : null;
-        const bits = [noteFor(item), name].filter(Boolean);
-        pushEntry(item, tapeLabel, bits.length ? bits.join(" · ") : null);
+        pushEntry(item, tapeLabel, noteFor(item));
       } catch (err) {
         const next = { ...modelRef.current, error: failure(err) };
         modelRef.current = next;
@@ -270,10 +361,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           ...entry(node, text.trim(), modeRef.current),
           bound: valuesOf(textRef.current.xText, textRef.current.yText),
         };
-        const known = recognize(item.value);
-        const name = known && known !== item.caption ? `this is ${known}` : null;
-        const bits = [noteFor(item), name].filter(Boolean);
-        pushEntry(item, tapeLabel, bits.length ? bits.join(" · ") : null);
+        pushEntry(item, tapeLabel, noteFor(item));
       } catch (err) {
         const next = { ...modelRef.current, error: failure(err) };
         modelRef.current = next;
@@ -313,9 +401,10 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         setModel(next);
         return;
       }
-      const node = E(x.node, y.node);
+      const merged = mergeOperands(x, y);
+      const node = E(merged.xNode, merged.yNode);
       const caption = clip(`eml(${x.caption}, ${y.caption})`);
-      const item = entry(node, caption, modeRef.current, { ...x.bound, ...y.bound });
+      const item = entry(node, caption, modeRef.current, merged.bound, merged.boundNodes, merged.skipAgreement);
       commit({
         stack: [...rest, item],
         tape: [...current.tape, "E"],
@@ -357,7 +446,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       }
       const node = applyUnaryNode(id, arg.node);
       const caption = clip(unaryCaption(id, label, arg.caption));
-      const item = entry(node, caption, modeRef.current, arg.bound);
+      const item = entry(node, caption, modeRef.current, arg.bound, arg.boundNodes, arg.skipAgreement);
       commit({
         stack: [...rest, item],
         tape: [...current.tape, label],
@@ -394,9 +483,10 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         fail("Push a second value. The older one is x and the top one is y.");
         return;
       }
-      const node = applyBinaryNode(id, x.node, y.node);
+      const merged = mergeOperands(x, y);
+      const node = applyBinaryNode(id, merged.xNode, merged.yNode);
       const caption = clip(binaryCaption(id, x.caption, y.caption));
-      const item = entry(node, caption, modeRef.current, { ...x.bound, ...y.bound });
+      const item = entry(node, caption, modeRef.current, merged.bound, merged.boundNodes, merged.skipAgreement);
       commit({
         stack: [...rest, item],
         tape: [...current.tape, label],
@@ -428,7 +518,9 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     const pending = { ...current, note: "Computing…", error: null };
     modelRef.current = pending;
     setModel(pending);
-    nextTurn(() => {
+    cancelTurnRef.current?.();
+    cancelTurnRef.current = nextTurn(() => {
+      cancelTurnRef.current = null;
       if (job !== jobRef.current) return;
       try {
         const { node, numbers } = compileSubmission(text, xText, yText);
@@ -532,7 +624,12 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         for (const item of previous.stack) {
           await new Promise((resolve) => setTimeout(resolve, 0));
           if (job !== jobRef.current) return;
-          built.push(entry(item.node, item.caption, modeNow, item.bound));
+          if (item.mode === modeNow && !item.pendingExact) {
+            built.push(item);
+          } else {
+            const rebuilt = entry(item.node, item.caption, modeNow, item.bound, item.boundNodes, item.skipAgreement);
+            built.push(item.notice ? { ...rebuilt, notice: item.notice } : rebuilt);
+          }
         }
       } catch (err) {
         error = failure(err);
@@ -557,7 +654,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         tape: previous.tape.slice(),
         stack: applied.stack,
         note: applied.error ? null : top ? noteFor(top) : previous.note,
-        error: applied.error,
+        error: applied.error ?? (top ? resultError(top) : null),
       };
       historyRef.current = { ...historyRef.current, current: restored };
       modelRef.current = restored;
@@ -573,20 +670,25 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       return;
     }
     setExpr("");
+    const current = modelRef.current;
+    if (current.stack.length === 0 && current.tape.length === 0 && current.note === null && current.error === null) {
+      setHeld(null);
+      return;
+    }
     // A fresh tape: a long-press caption read on an earlier empty screen stays gone.
     commit({ ...EMPTY, tape: [] });
   }
 
-  function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null, bound?: Record<string, C>) {
+  function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null, bound?: Record<string, C>, boundNodes?: Record<string, Node>) {
     if (recomputeRef.current) {
-      queueRef.current.push(() => showProgram(node, caption, replace, notice, bound));
+      queueRef.current.push(() => showProgram(node, caption, replace, notice, bound, boundNodes));
       return;
     }
     const job = (jobRef.current += 1);
     const previous = modelRef.current;
     const mode = modeRef.current;
     if (mode === "exact") {
-      const item = { ...entry(node, caption, mode, bound), notice };
+      const item = { ...entry(node, caption, mode, bound, boundNodes), notice };
       const rest = replace && previous.stack.length > 0 ? previous.stack.slice(0, -1) : previous.stack;
       const next: Model = {
         stack: [...rest, item],
@@ -615,12 +717,13 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         error: latest.error ?? previous.error,
       };
       try {
-        const item = entry(node, caption, mode, bound);
+        const built = entry(node, caption, mode, bound, boundNodes);
+        const item = notice ? { ...built, notice } : built;
         const rest = replace && base.stack.length > 0 ? base.stack.slice(0, -1) : base.stack;
         const next: Model = {
           stack: [...rest, item],
           tape: [...base.tape, caption],
-          note: [noteFor(item), notice].filter(Boolean).join(" · ") || null,
+          note: noteFor(item),
           error: resultError(item),
         };
         historyRef.current = commitHistory({ ...historyRef.current, current: base }, next);
@@ -652,12 +755,22 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       const from = parsed.rotatedFrom;
       const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
       const notice = from ? `Rotated ${from} to ${to}.` : null;
-      // A word of x and y reads the fields as they are now, as push x and push y do.
+      // A word of x and y reads the fields as they are now, keeping the parsed circuits for exact mode.
       const numbers: Record<string, C> = {};
-      if (parsed.word.includes("x")) numbers.x = evaluateReport(readScalar(textRef.current.xText, "x")).value;
-      if (parsed.word.includes("y")) numbers.y = evaluateReport(readScalar(textRef.current.yText, "y")).value;
+      const varNodes: Record<string, Node> = {};
+      if (parsed.word.includes("x")) {
+        const xNode = readScalar(textRef.current.xText, "x");
+        varNodes.x = xNode;
+        numbers.x = evaluateReport(xNode).value;
+      }
+      if (parsed.word.includes("y")) {
+        const yNode = readScalar(textRef.current.yText, "y");
+        varNodes.y = yNode;
+        numbers.y = evaluateReport(yNode).value;
+      }
       const bound = Object.keys(numbers).length > 0 ? numbers : undefined;
-      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice, bound);
+      const boundNodes = Object.keys(varNodes).length > 0 ? varNodes : undefined;
+      showProgram(nodeFromRpn(parsed.word.split("")), parsed.word, false, notice, bound, boundNodes);
     } catch (err) {
       fail(failure(err));
     }
@@ -698,14 +811,15 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (target instanceof HTMLElement && target.closest("input, textarea")) return;
       const key = event.key;
-      if (key !== "1" && key !== "e" && key !== "E" && key !== "x" && key !== "y" && key !== "Backspace" && key !== "Escape") return;
-      if (twoButtonsRef.current && (key === "x" || key === "y")) return;
+      const lower = key.length === 1 ? key.toLowerCase() : key;
+      if (lower !== "1" && lower !== "e" && lower !== "x" && lower !== "y" && key !== "Backspace" && key !== "Escape") return;
+      if (twoButtonsRef.current && (lower === "x" || lower === "y")) return;
       event.preventDefault();
       const run = () => {
-        if (key === "1") pushOne();
-        else if (key === "e" || key === "E") applyEml();
-        else if (key === "x") pushScalar(xText, "x");
-        else if (key === "y") pushScalar(yText, "y");
+        if (lower === "1") pushOne();
+        else if (lower === "e") applyEml();
+        else if (lower === "x") pushScalar(textRef.current.xText, "x");
+        else if (lower === "y") pushScalar(textRef.current.yText, "y");
         else if (key === "Backspace") undo();
         else if (key === "Escape") {
           const next = { ...modelRef.current, error: null };
@@ -718,12 +832,13 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyEml, pushOne, pushScalar, undo, xText, yText]);
+  }, [applyEml, pushOne, pushScalar, undo]);
 
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
   const readout = top ? top.text : "0";
-  const named = top ? captionName(top.text, top.value, top.caption) : null;
+  const named = top && !top.underflowed ? captionName(top.text, top.value, top.caption) : null;
+  const hasPending = model.stack.some((item) => item.pendingExact);
   const fullDigits = top ? programDigits(top.node) : null;
   const fullNumber = fullDigits && fullDigits.length > 16 ? `#${fullDigits}` : null;
 
@@ -757,8 +872,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               {top ? top.caption : "Press 1, then 1, then EML. That is e."}
               {named ? ` · ${named}` : ""}
             </p>
-            {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
-            {top && shownSingular(top) ? <p className="ti-lcd-flag">{shownSingular(top)}</p> : null}
+            {top?.floatDiffers && top.exactBeside ? <p className="ti-lcd-flag" aria-live="polite">{FLOAT_DIFFERS} · {top.exactBeside}</p> : null}
+            {top && shownSingular(top) ? <p className="ti-lcd-flag" aria-live="polite">{shownSingular(top)}</p> : null}
             {model.note ? (
               <div className="ti-lcd-note">
                 <span title={fullNumber ?? undefined}>{model.note}</span>
@@ -767,7 +882,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
             ) : null}
             {model.error ? <p className="ti-lcd-error" role="alert">{model.error}</p> : null}
             <PressLine key={top?.node.id ?? 0} node={top?.node ?? null} />
-            {held && held.tape === model.tape ? <p className="ti-lcd-hold">{held.text}</p> : null}
+            {held && held.tape === model.tape ? <p className="ti-lcd-hold" aria-live="polite">{held.text}</p> : null}
           </div>
         </div>
 
@@ -788,7 +903,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               tabIndex={mode === "float" ? 0 : -1}
               onClick={() => requestMode("float")}
               onKeyDown={(event) => {
-                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowUp") {
                   event.preventDefault();
                   requestMode("exact");
                   const next = event.currentTarget.nextElementSibling;
@@ -806,7 +921,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               tabIndex={mode === "exact" ? 0 : -1}
               onClick={() => requestMode("exact")}
               onKeyDown={(event) => {
-                if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "ArrowRight" || event.key === "ArrowDown") {
                   event.preventDefault();
                   requestMode("float");
                   const previous = event.currentTarget.previousElementSibling;
@@ -818,15 +933,13 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               exact
             </button>
           </div>
-          {model.stack.some((item) => item.pendingExact) ? (
-            <button type="button" className="ti-btn ti-btn-alpha" onClick={cancelExact}>
-              Cancel
-            </button>
-          ) : null}
+          <button type="button" className="ti-btn ti-btn-alpha" disabled={!hasPending} onClick={cancelExact}>
+            Cancel
+          </button>
         </div>
         <p className="ti-case-note">
           {mode === "exact"
-            ? "Exact value of this circuit. Cancel stops a long one, and the previous number comes down."
+            ? "Exact value of this circuit. Cancel stops a long calculation and clears the pending result."
             : "Hardware view: the raw 64-bit float value of these gates. A disagreement is flagged, with the exact value beside it."}
         </p>
           {twoButtons ? null : (
@@ -989,7 +1102,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           )}
 
           <div className="ti-footer">
-            <p className="ti-tape">{model.tape.slice(-16).join("  ") || "empty"}</p>
+            <p className="ti-tape"><bdi>{model.tape.slice(-16).join("  ") || "empty"}</bdi></p>
             <div className="ti-actions">
               <button type="button" onClick={undo} className="ti-btn">
                 Undo

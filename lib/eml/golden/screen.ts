@@ -2,10 +2,11 @@
  * Display fields the golden harness records for one circuit.
  * Shared by the in-process harness and the fresh-process wire child.
  */
+import { beyondFloatBound } from "../float-bound";
 import { formatC } from "../format";
 import { seriesShortcutNote } from "../library";
 import { evaluateReport, type Node } from "../node";
-import { exactToFloat, formatExact, type ExactReport } from "../exact";
+import { exactToFloat, exactUnderflowsFloat, formatExact, type ExactReport } from "../exact";
 import { pressPreviewForNode } from "../presses";
 import { reportNode } from "../packed-eval";
 
@@ -51,11 +52,9 @@ export function screenOf(node: Node, report: ExactReport, maxNodes: number): Scr
   if (floatRep.nearCut) floatNotes.push("near-cut");
   if (!report.unverified && !floatRep.unverified) {
     const exactFloat = exactToFloat(report.value);
-    const reDiff = Math.abs(exactFloat.re - floatRep.value.re);
-    const imDiff = Math.abs(exactFloat.im - floatRep.value.im);
-    const reScale = Math.max(Math.abs(exactFloat.re), Math.abs(floatRep.value.re), 1e-320);
-    const imScale = Math.max(Math.abs(exactFloat.im), Math.abs(floatRep.value.im), 1e-320);
-    if (reDiff / reScale > 5e-12 || imDiff / imScale > 5e-12) floatNotes.push("differs-from-exact");
+    if (exactUnderflowsFloat(report.value) || beyondFloatBound(floatRep.value, exactFloat)) {
+      floatNotes.push("differs-from-exact");
+    }
   }
 
   const press = pressPreviewForNode(node);

@@ -14,13 +14,19 @@ export const MAX_RANK_GATES = 1000;
 const ZERO = BigInt(0);
 const ONE_BI = BigInt(1);
 
+const FACT_CACHE_LIMIT = 2 * MAX_RANK_GATES + 2;
 const fact: bigint[] = [ONE_BI];
 function factorial(k: number): bigint {
-  for (let i = fact.length; i <= k; i += 1) {
+  if (!Number.isInteger(k) || k < 0) throw new RangeError("Factorial requires a non-negative integer.");
+  if (k < fact.length) return fact[k] ?? ONE_BI;
+  const cacheStop = Math.min(k, FACT_CACHE_LIMIT);
+  for (let i = fact.length; i <= cacheStop; i += 1) {
     const prev = fact[i - 1] ?? ONE_BI;
     fact.push(prev * BigInt(i));
   }
-  return fact[k] ?? ONE_BI;
+  let acc = fact[cacheStop] ?? ONE_BI;
+  for (let i = cacheStop + 1; i <= k; i += 1) acc *= BigInt(i);
+  return acc;
 }
 
 function binom(a: number, b: number): bigint {
@@ -29,6 +35,7 @@ function binom(a: number, b: number): bigint {
 }
 
 export function catalan(n: number): bigint {
+  if (!Number.isInteger(n) || n < 0) throw new RangeError("Catalan index must be a non-negative integer.");
   return binom(2 * n, n) / BigInt(n + 1);
 }
 
@@ -39,9 +46,15 @@ function completions(r: number, s: number): bigint {
   return (BigInt(s) * binom(r + 1, (r - s + 1) / 2)) / BigInt(r + 1);
 }
 
+const offsets: bigint[] = [ZERO];
 function offset(n: number): bigint {
-  let total = ZERO;
-  for (let m = 0; m < n; m += 1) total += catalan(m);
+  if (n < offsets.length) return offsets[n] ?? ZERO;
+  const cacheStop = Math.min(n, MAX_RANK_GATES + 1);
+  for (let m = offsets.length; m <= cacheStop; m += 1) {
+    offsets.push((offsets[m - 1] ?? ZERO) + catalan(m - 1));
+  }
+  let total = offsets[cacheStop] ?? ZERO;
+  for (let m = cacheStop; m < n; m += 1) total += catalan(m);
   return total;
 }
 
@@ -86,6 +99,9 @@ export function rankRpn(rpn: string): bigint {
 
 export function unrankRpn(index: bigint, maxGates = MAX_RANK_GATES): string {
   if (index < ZERO) throw new RangeError("Program numbers start at 0.");
+  if (!Number.isInteger(maxGates) || maxGates < 0) {
+    throw new RangeError(`maxGates must be a non-negative integer.`);
+  }
   let n = 0;
   let i = index;
   for (;;) {
@@ -95,8 +111,9 @@ export function unrankRpn(index: bigint, maxGates = MAX_RANK_GATES): string {
     n += 1;
     if (n > maxGates) {
       const digits = approximateIndexDigits(approximateIndexBits(BigInt(maxGates)));
+      const note = digits < BigInt(1000) ? ", including 10^1000," : "";
       throw new RangeError(
-        `That program number needs more than ${maxGates} gates. Numbers from about 10^${digits.toString()} upward, including 10^1000, are not assigned.`,
+        `That program number needs more than ${maxGates} gates. Numbers from about 10^${digits.toString()} upward${note} are not assigned.`,
       );
     }
   }
@@ -119,8 +136,14 @@ export function unrankRpn(index: bigint, maxGates = MAX_RANK_GATES): string {
 
 /** Program number, or null for variables, typed inputs, or more than maxGates eml nodes. */
 export function rankProgram(node: Node, maxGates = MAX_RANK_GATES): bigint | null {
-  const stats = circuitStats(node);
-  if (stats.treeGates > BigInt(maxGates)) return null;
+  if (!isConstantCircuit(node)) return null;
+  let treeGates = ZERO;
+  try {
+    treeGates = circuitStats(node).treeGates;
+  } catch {
+    return null;
+  }
+  if (treeGates > BigInt(maxGates)) return null;
   const tokens = rpnTokens(node, 2 * maxGates + 1);
   if (!tokens || tokens.some((t) => t !== "1" && t !== "E")) return null;
   return rankRpn(tokens.join(""));
@@ -198,7 +221,7 @@ export function approximateIndexBits(gates: bigint): bigint {
 /** Decimal digits of an index whose bit length is `bits`: floor(bits · log10(2)). */
 export function approximateIndexDigits(bits: bigint): bigint {
   if (bits <= ZERO) return ZERO;
-  return (bits * BigInt(30103)) / BigInt(100000);
+  return (bits * BigInt("3010299956639812")) / BigInt("10000000000000000");
 }
 
 /** Every digit of a numbered constant. Null when it is not a constant or is past the rank limit. */
@@ -281,18 +304,18 @@ export function wordProgramError(word: string): string | null {
 export function parseProgramInput(source: string): ParsedProgram {
   const raw = source.trim();
   if (!raw) throw new RangeError("Enter a program number, a press string, or a word of 1 and E.");
-  if (raw.includes("-")) throw new RangeError("Program numbers are not negative.");
+  if (/^#?\s*[-−]/.test(raw)) throw new RangeError("Program numbers are not negative.");
   if (raw.startsWith("#")) {
     if (/\s/.test(raw)) throw new RangeError("A program number cannot contain spaces.");
     const digits = raw.slice(1);
     if (!/^\d+$/.test(digits)) throw new RangeError("A program number is # followed by digits, such as #110.");
     return { kind: "index", index: BigInt(digits) };
   }
-  if (/\s/.test(raw) && /[2-9]/.test(raw)) {
+  if (/^[\d\s]+$/.test(raw) && /\s/.test(raw) && /[2-9]/.test(raw)) {
     throw new RangeError("A program number cannot contain spaces. Write it as # followed by the digits.");
   }
   const compact = raw.replace(/\s+/g, "");
-  if (/[2-9]/.test(compact)) {
+  if (/^\d+$/.test(compact) && /[2-9]/.test(compact)) {
     throw new RangeError("Program numbers start with #. A string of 0 and 1 is button presses.");
   }
   if (/[eE]/.test(compact)) {

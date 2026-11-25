@@ -2,32 +2,49 @@ import Decimal from "decimal.js";
 import { EmlError, type Node } from "./node";
 
 /**
- * A complex ball around a circuit value. The radii bound the rounding of
- * this working precision: a cancellation that is not an identity blows the
- * radius up. `cut` means some logarithm saw a ball that meets both sides of
- * the negative-real axis. That ball does not choose a branch.
- * Working precision sits above 240 digits so an exact identity has a radius
- * smaller than one unit in the 240th place, and the ball can certify it.
+ * A complex ball around a circuit value. Centers are evaluated at 300 digits
+ * (ROUND_HALF_UP), while radii use directed upward rounding (DU, ROUND_UP) and
+ * lower bounds use directed downward rounding (DD, ROUND_DOWN), following
+ * docs/design/ball-soundness.md. `cut` means some logarithm saw a ball that
+ * touches or crosses the negative-real axis. That ball does not choose a branch.
  */
 export type Ball = { re: Decimal; im: Decimal; rr: Decimal; ir: Decimal; overflow: boolean; cut: boolean };
 
-const D = Decimal.clone({ precision: 300 });
+const PRECISION = 300;
+const D = Decimal.clone({ precision: PRECISION, rounding: Decimal.ROUND_HALF_UP });
+const DU = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_UP });
+const DD = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_DOWN });
+
+const ZERO_U = new DU(0);
+const ZERO_D = new DD(0);
+const ONE_U = new DU(1);
+const ONE_D = new DD(1);
+const EPS_U = new DU(10).pow(1 - PRECISION);
+const DU_BUMP = new DU("1.000000000000000001");
+
+function up(x: Decimal): Decimal {
+  return new DU(x.abs()).add(ZERO_U);
+}
+
+function dn(x: Decimal): Decimal {
+  return new DD(x.abs()).add(ZERO_D);
+}
 
 function u(x: Decimal): Decimal {
-  if (!x.isFinite() || x.isZero()) return new D(0);
-  return new D(10).pow(x.e + 1 - D.precision);
+  if (!x.isFinite() || x.isZero()) return ZERO_U;
+  return up(x).mul(EPS_U);
 }
 
 function point(re: Decimal.Value, im: Decimal.Value = 0): Ball {
-  return { re: new D(re), im: new D(im), rr: new D(0), ir: new D(0), overflow: false, cut: false };
+  return { re: new D(re), im: new D(im), rr: ZERO_U, ir: ZERO_U, overflow: false, cut: false };
 }
 
 function bad(): Ball {
-  return { re: new D(NaN), im: new D(NaN), rr: new D(Infinity), ir: new D(Infinity), overflow: true, cut: false };
+  return { re: new D(NaN), im: new D(NaN), rr: new DU(Infinity), ir: new DU(Infinity), overflow: true, cut: false };
 }
 
 function cutBall(): Ball {
-  return { re: new D(NaN), im: new D(NaN), rr: new D(Infinity), ir: new D(Infinity), overflow: false, cut: true };
+  return { re: new D(NaN), im: new D(NaN), rr: new DU(Infinity), ir: new DU(Infinity), overflow: false, cut: true };
 }
 
 function cadd(a: Ball, b: Ball): Ball {
@@ -35,12 +52,14 @@ function cadd(a: Ball, b: Ball): Ball {
   if (a.overflow || b.overflow) return bad();
   const re = a.re.add(b.re);
   const im = a.im.add(b.im);
+  const rr = a.rr.add(b.rr).add(u(re));
+  const ir = a.ir.add(b.ir).add(u(im));
   return {
     re,
     im,
-    rr: a.rr.add(b.rr).add(u(re)),
-    ir: a.ir.add(b.ir).add(u(im)),
-    overflow: !re.isFinite() || !im.isFinite(),
+    rr,
+    ir,
+    overflow: !re.isFinite() || !im.isFinite() || !rr.isFinite() || !ir.isFinite(),
     cut: false,
   };
 }
@@ -52,40 +71,74 @@ function csub(a: Ball, b: Ball): Ball {
 function cexp(z: Ball): Ball {
   if (z.cut) return cutBall();
   if (z.overflow || !z.re.isFinite() || !z.im.isFinite()) return bad();
-  const mag = z.re.exp();
-  if (!mag.isFinite()) return bad();
-  const c = z.im.cos();
-  const s = z.im.sin();
+  let mag: Decimal;
+  let c: Decimal;
+  let s: Decimal;
+  try {
+    mag = z.re.exp();
+    if (!mag.isFinite()) return bad();
+    c = z.im.cos();
+    s = z.im.sin();
+  } catch {
+    return bad();
+  }
   const re = mag.mul(c);
   const im = mag.mul(s);
-  const disk = z.rr.add(z.ir);
-  const stretch = z.re.add(z.rr).exp().mul(disk.exp().sub(1));
-  return { re, im, rr: stretch.add(u(re)), ir: stretch.add(u(im)), overflow: false, cut: false };
+  const rho = z.rr.add(z.ir);
+  const magUp = up(mag).mul(ONE_U.add(EPS_U.mul(2)));
+  // Polynomial bound e^ρ − 1 ≤ ρ(1 + ρ) for ρ ≤ 1 avoids exp(ρ) − 1 cancellation;
+  // for ρ > 1, e^ρ − 1 ≤ ρ·e^ρ · DU_BUMP. Charge 8u·M↑ on both parts.
+  const eRho = rho.isZero()
+    ? ZERO_U
+    : rho.lte(1)
+      ? rho.mul(ONE_U.add(rho))
+      : rho.mul(rho.exp()).mul(DU_BUMP);
+  const rad = magUp.mul(eRho.add(EPS_U.mul(8)));
+  if (!re.isFinite() || !im.isFinite() || !rad.isFinite()) return bad();
+  return { re, im, rr: rad, ir: rad, overflow: false, cut: false };
 }
 
-/** The imag interval contains both signs and the real interval meets (−∞, 0). */
+/**
+ * The rectangle touches or crosses the negative real axis from above
+ * (imLo ≤ 0 < imHi and reLo < 0). Exact center-vs-radius comparisons only.
+ */
 function straddlesCut(z: Ball): boolean {
   if (!z.re.isFinite() || !z.im.isFinite() || !z.rr.isFinite() || !z.ir.isFinite()) return false;
-  const imLo = z.im.sub(z.ir);
-  const imHi = z.im.add(z.ir);
-  if (!imLo.isNeg() || !imHi.isPos()) return false;
-  return z.re.sub(z.rr).isNeg();
+  // imLo ≤ 0 ⟺ im ≤ ir; imHi > 0 ⟺ im > −ir; reLo < 0 ⟺ re < rr.
+  const imLoLeZero = z.im.lte(z.ir);
+  const imHiGtZero = z.im.gt(z.ir.neg());
+  const reLoLtZero = z.re.lt(z.rr);
+  return imLoLeZero && imHiGtZero && reLoLtZero;
 }
 
 function cln(z: Ball): Ball {
   if (z.cut) return cutBall();
-  if (z.overflow) return bad();
-  const mag2 = z.re.mul(z.re).add(z.im.mul(z.im));
-  const reach = z.rr.add(z.ir);
-  if (mag2.sqrt().lte(reach)) return bad();
+  if (z.overflow || !z.re.isFinite() || !z.im.isFinite()) return bad();
+  // Contains 0 ⟺ |x| ≤ rr and |y| ≤ ir.
+  if (z.re.abs().lte(z.rr) && z.im.abs().lte(z.ir)) return bad();
   if (straddlesCut(z)) return cutBall();
-  const mag = mag2.sqrt();
-  const re = mag.ln();
+  const rho = z.rr.add(z.ir);
+  // Lower bound on dist(0, Z) computed on DD: max(|x|−rr, |y|−ir, 0).
+  const dx = z.re.abs().gt(z.rr) ? dn(z.re).sub(new DU(z.rr)) : ZERO_D;
+  const dy = z.im.abs().gt(z.ir) ? dn(z.im).sub(new DU(z.ir)) : ZERO_D;
+  const d = DD.max(dx, dy);
+  if (!d.isFinite() || d.lte(0)) return bad();
+  const mag2 = z.re.mul(z.re).add(z.im.mul(z.im));
+  if (!mag2.isFinite() || mag2.lte(0)) return bad();
+  const re = mag2.ln().div(2);
   const negPi = D.acos(-1).neg();
   const im = z.im.isZero() && z.re.isNeg() ? negPi : D.atan2(z.im, z.re);
-  const rr = reach.div(mag.sub(reach)).add(u(re));
-  const ir = reach.div(mag.sub(reach)).add(z.ir.abs().add(z.rr).div(mag)).add(u(im));
-  return { re, im, rr, ir, overflow: !re.isFinite() || !im.isFinite(), cut: false };
+  const lip = rho.div(d);
+  const rr = lip.add(EPS_U.mul(ONE_U.add(up(re).mul(2))));
+  const ir = lip.add(EPS_U.mul(2));
+  return {
+    re,
+    im,
+    rr,
+    ir,
+    overflow: !re.isFinite() || !im.isFinite() || !rr.isFinite() || !ir.isFinite(),
+    cut: false,
+  };
 }
 
 function cemi(x: Ball, y: Ball): Ball {
@@ -142,9 +195,10 @@ function exactGoal(target: number): Decimal {
 /** The whole interval lies inside a 240-digit neighborhood of the target. */
 function certifies(center: Decimal, radius: Decimal, target: number): boolean {
   const goal = exactGoal(target);
-  const tol = new D(10).pow(-240);
-  const scale = D.max(goal.abs(), 1);
-  return center.sub(goal).abs().add(radius).lte(scale.mul(tol));
+  const tol = new DD(10).pow(-240);
+  const scale = DD.max(dn(goal), ONE_D);
+  const diff = center.sub(goal);
+  return up(diff).add(u(diff)).add(radius).lte(scale.mul(tol));
 }
 
 /**
@@ -154,9 +208,10 @@ function certifies(center: Decimal, radius: Decimal, target: number): boolean {
  * test that accepted −1 + 10^(−1 000 000).
  */
 function separated(center: Decimal, radius: Decimal, target: number): boolean {
-  const goal = new D(target);
-  const slack = target === 0 ? new D(0) : new D(Math.max(1, Math.abs(target))).mul("1e-15");
-  return center.sub(goal).abs().gt(radius.add(slack));
+  const goal = exactGoal(target);
+  const slack = target === 0 ? ZERO_U : new DU(Math.max(1, Math.abs(target))).mul("1e-15");
+  const diff = center.sub(goal);
+  return dn(diff).gt(radius.add(slack).add(u(diff)));
 }
 
 /**

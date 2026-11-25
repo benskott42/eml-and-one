@@ -30,7 +30,7 @@ import shutil
 import sys
 import tempfile
 import time
-from mpmath import iv, mp, mpf, nstr
+from mpmath import iv, mp, mpf
 from mpmath.libmp import mpf_atan, mpf_cmp, mpf_log, round_ceiling, round_floor
 
 STEP = 1 << 16          # precisions are multiples of this, so words share their exps
@@ -68,7 +68,7 @@ def exp_iv(X, prec):
     with mp.workprec(prec + 64):
         y = newton_exp((xa + xb) / 2, prec + 32)
         d = (xb - xa) / 2  # exp(x) = y * exp(x - mid), |x - mid| <= d
-        if d > 1:
+        if d >= mpf("0.25"):
             raise Refused("exp of a wide interval")
         lo = y * (1 - 2 * d - mpf(2) ** -prec)
         hi = y * (1 + 2 * d + mpf(2) ** -prec)
@@ -82,7 +82,7 @@ def exp_iv(X, prec):
     try:
         U = iv.make_mpf((hi._mpf_, hi._mpf_)) / iv.make_mpf((lo._mpf_, lo._mpf_)) - 1
         low = iv.make_mpf((ell, ell)) - _ulp(ell, prec + 64) + U / (1 + U)
-        ok = low.a >= iv.make_mpf((xb._mpf_, xb._mpf_)).b
+        ok = mpf_cmp(low._mpi_[0], xb._mpf_) >= 0
     finally:
         iv.prec = saved
     if not ok:
@@ -164,13 +164,17 @@ def _prim(op, fn, *args):
             continue
         try:
             out = ("ok", fn(*args)._mpi_)
-        except Exception as why:  # the waiting workers must not hang
+        except BaseException as why:  # the waiting workers must not hang, even on KeyboardInterrupt
             out = ("error", f"{type(why).__name__}: {why}")
+            with open(res + ".tmp", "wb") as f:
+                pickle.dump(out, f)
+            os.replace(res + ".tmp", res)
+            if not isinstance(why, Exception):
+                raise
+            raise Refused(out[1])
         with open(res + ".tmp", "wb") as f:
             pickle.dump(out, f)
         os.replace(res + ".tmp", res)
-        if out[0] != "ok":
-            raise Refused(out[1])
         MEMO[k] = iv.make_mpf(out[1])
         return MEMO[k]
 
@@ -212,8 +216,6 @@ def rsin(x):
 
 
 # ---------------------------------------------------------------- the evaluator
-
-ZERO = None
 
 
 def zint(x):
@@ -342,6 +344,8 @@ def phase(word, verbose=True):
         while bits <= MAX_BITS and out is None:
             iv.prec = bits
             im = val(word)[1]
+            if not (mp.isfinite(mpf(im._mpi_[0])) and mp.isfinite(mpf(im._mpi_[1]))):
+                raise Refused("unbounded imaginary part")
             twopi = 2 * iv.pi
             # any integer n near Im / 2pi will do
             sign, man, exp, _ = (im / twopi)._mpi_[0]

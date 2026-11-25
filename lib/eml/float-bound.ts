@@ -9,6 +9,9 @@ import type { C } from "./complex";
  * is huge. A few ulps of a moderate result still agree. Signed zeros agree.
  */
 export function beyondFloatBound(got: C, exact: C): boolean {
+  const gotNaN = Number.isNaN(got.re) || Number.isNaN(got.im);
+  const exactNaN = Number.isNaN(exact.re) || Number.isNaN(exact.im);
+  if (gotNaN || exactNaN) return gotNaN !== exactNaN;
   const scale = Math.max(Math.abs(got.re), Math.abs(got.im), Math.abs(exact.re), Math.abs(exact.im));
   const part = (left: number, right: number): boolean => {
     if (!Number.isFinite(left) || !Number.isFinite(right)) return !Object.is(left, right);
@@ -34,8 +37,9 @@ export function beyondFloatBound(got: C, exact: C): boolean {
 /** True when formatReal prints |x| as an integer of 13 to 15 digits. */
 function printedAsLongInteger(x: number): boolean {
   const abs = Math.abs(x);
-  if (!(abs >= 1e12) || !(abs < 1e15)) return false;
+  if (!(abs > 0) || !Number.isFinite(abs)) return false;
   const nearest = Math.round(abs);
+  if (!(nearest >= 1e12) || !(nearest < 1e15)) return false;
   const twelfth = 10 ** (Math.floor(Math.log10(abs)) - 11);
-  return nearest < 1e15 && Math.abs(abs - nearest) < twelfth / 2;
+  return Math.abs(abs - nearest) < twelfth / 2;
 }

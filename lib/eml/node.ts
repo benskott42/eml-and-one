@@ -177,7 +177,8 @@ export function trigArg(node: Node): Node | null {
  * the 480-digit cap. A later cancellation that makes the whole result 0 is
  * not a certified zero: the dropped term could have been the answer.
  */
-const seriesShortcuts = new WeakSet<Node>();
+const seriesShortcuts = new WeakMap<Node, string>();
+const seriesErrorExps = new WeakMap<Node, number>();
 const unverifiedNodes = new WeakSet<Node>();
 
 /** A result that dropped a term. The screen says it could not verify, in either mode. */
@@ -228,29 +229,68 @@ export function isExactUnsure(node: Node): boolean {
   return exactUnsureNodes.has(node);
 }
 
-export function markSeriesShortcut(node: Node): Node {
-  seriesShortcuts.add(node);
+export function markSeriesShortcut(node: Node, note = "series shortcut"): Node {
+  seriesShortcuts.set(node, note);
   return node;
 }
 
-export function isSeriesShortcut(node: Node): boolean {
-  return seriesShortcuts.has(node);
+/** Record the exponent (base 10) of the dropped error term for a crude linear series shortcut. */
+export function markSeriesError(node: Node, errExp: number): Node {
+  const prev = seriesErrorExps.get(node);
+  if (prev === undefined || errExp > prev) seriesErrorExps.set(node, errExp);
+  return node;
 }
 
-export function usesSeriesShortcut(root: Node): boolean {
+export function seriesErrorExp(node: Node): number | undefined {
+  return seriesErrorExps.get(node);
+}
+
+/** Largest dropped-term exponent among crude series shortcuts reachable from `root`, if any. */
+export function maxSeriesErrorExp(root: Node): number | undefined {
+  let max: number | undefined;
   const seen = new Set<Node>();
   const stack: Node[] = [root];
   while (stack.length) {
     const node = stack.pop();
     if (!node || seen.has(node)) continue;
     seen.add(node);
-    if (seriesShortcuts.has(node)) return true;
+    const err = seriesErrorExps.get(node);
+    if (err !== undefined && (max === undefined || err > max)) max = err;
     if (node.type === "eml") {
       if (node.a) stack.push(node.a);
       if (node.b) stack.push(node.b);
     }
   }
-  return false;
+  return max;
+}
+
+export function isSeriesShortcut(node: Node): boolean {
+  return seriesShortcuts.has(node);
+}
+
+export function seriesShortcutText(node: Node): string | undefined {
+  return seriesShortcuts.get(node);
+}
+
+export function seriesShortcutNoteFrom(root: Node): string | null {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    const note = seriesShortcuts.get(node);
+    if (note) return note;
+    if (node.type === "eml") {
+      if (node.a) stack.push(node.a);
+      if (node.b) stack.push(node.b);
+    }
+  }
+  return null;
+}
+
+export function usesSeriesShortcut(root: Node): boolean {
+  return seriesShortcutNoteFrom(root) !== null;
 }
 
 export type EvalReport = {

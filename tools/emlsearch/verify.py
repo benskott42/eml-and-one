@@ -16,11 +16,18 @@ def snap(d, a, b):
         return mpf(0)
     return d
 
+def signed_zero(p):
+    return mpf("-0.0") if (p < 0 or (p == 0 and str(p).startswith("-"))) else mpf(0)
+
+def is_neg_zero(x):
+    return x == 0 and x._mpf_[0] == 1
+
 def cexp(re, im):
     if isnan(re) or isnan(im) or isinf(im):
         return None
-    if re == -inf:
-        return (mpf(0), mpf(0))
+    # Reject angles too large to reduce at the current working precision (otherwise d snaps to 0).
+    if abs(im) > mpf(10) ** (mp.dps - 20):
+        return None
     # reduce angle to nearest quarter turn like complex.ts
     q = pi / 2
     k = int(mp.nint(im / q))
@@ -31,15 +38,21 @@ def cexp(re, im):
     c = mpf(1) if d == 0 else cos(d)
     ax = k % 4
     t = [(c, s), (-s, c), (-c, -s), (s, -c)][ax]
+    if re == -inf:
+        return (signed_zero(t[0]), signed_zero(t[1]))
     if re == inf:
-        f = lambda p: mpf(0) if p == 0 else (inf if p > 0 else -inf)
+        f = lambda p: signed_zero(p) if p == 0 else (inf if p > 0 else -inf)
         return (f(t[0]), f(t[1]))
     m = exp(re)
+    if m == 0:
+        return (signed_zero(t[0]), signed_zero(t[1]))
     return (m * t[0], m * t[1])
 
 def clog(re, im):
     if re == 0 and im == 0:
-        return (-inf, mpf(0))
+        if is_neg_zero(re):
+            return (-inf, -pi)
+        return (-inf, mpf("-0.0") if is_neg_zero(im) else mpf(0))
     if isinf(re) or isinf(im):
         arg = -pi if (re < 0 and im == 0) else atan2(im, re)
         return (inf, arg)
@@ -63,22 +76,22 @@ def evaluate(word):
             st.append((snap(re, a[0], b[0]), snap(im, a[1], b[1])))
     return st[0]
 
-def target(spec):
-    re, im = spec
-    return (mp.mpmathify(re), mp.mpmathify(im))
-
 def matches(word, tre, tim, dps):
+    saved = mp.dps
     mp.dps = dps
-    v = evaluate(word)
-    if v is None or isinf(v[0]) or isinf(v[1]):
-        return False, v
-    T = (eval(tre, {"pi": pi, "e": mp.e, "sqrt": mp.sqrt, "log": log, "mpf": mpf}), eval(tim, {"pi": pi, "e": mp.e, "sqrt": mp.sqrt, "log": log, "mpf": mpf}))
-    tol = mpf(10) ** (-(dps - 20)) * max(1, abs(T[0]), abs(T[1]))
-    ok = abs(v[0] - T[0]) <= tol and abs(v[1] - T[1]) <= tol
-    # a zero target component must be exactly zero
-    if T[1] == 0 and v[1] != 0: ok = False
-    if T[0] == 0 and v[0] != 0: ok = False
-    return ok, v
+    try:
+        v = evaluate(word)
+        if v is None or isinf(v[0]) or isinf(v[1]):
+            return False, v
+        T = (eval(tre, {"pi": pi, "e": mp.e, "sqrt": mp.sqrt, "log": log, "mpf": mpf}), eval(tim, {"pi": pi, "e": mp.e, "sqrt": mp.sqrt, "log": log, "mpf": mpf}))
+        tol = mpf(10) ** (-(dps - 20)) * max(1, abs(T[0]), abs(T[1]))
+        ok = abs(v[0] - T[0]) <= tol and abs(v[1] - T[1]) <= tol
+        # a zero target component must be exactly zero
+        if T[1] == 0 and v[1] != 0: ok = False
+        if T[0] == 0 and v[0] != 0: ok = False
+        return ok, v
+    finally:
+        mp.dps = saved
 
 if __name__ == "__main__":
     # stdin: id \t K \t ln0 \t word \t exact_re \t exact_im
