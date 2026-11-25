@@ -4868,6 +4868,31 @@ if (shardTurn(96)) {
   }
 }
 
+if (shardTurn(98)) {
+  // A refused operand whose float-known value is 0 is not the additive identity: adding to it
+  // must not certify the other addend as the whole sum.
+  const show98 = (source: string): string => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    return report.unverified ? "unverified" : formatExact(report.value).replace(/​/g, "");
+  };
+  const rows98: [string, string][] = [
+    ["(((0.2 + exp(300)) + exp(800)) + 1e310) + exp(300)", "unverified"],
+    ["(((0.2 + exp(300)) + exp(800)) + 1e310) + exp(301)", "unverified"],
+    ["exp(300) + (((0.2 + exp(300)) + exp(800)) + 1e310)", "unverified"],
+    ["((((1e500 - 0.2) + 0.2) + exp(300)) + 0.2)", "unverified"],
+    ["(1e200 - (((((-1e400) - 1e-310) + 2) + 1e400) + 1e310))", "unverified"],
+    ["(exp(800) + 1e310) + 2", "2.726374572113×10^347"],
+    ["0.1 + 0.2 - 0.3", "0"],
+  ];
+  for (const [source, want] of rows98) {
+    const got = show98(source);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL refused addend identity", source, got, "want", want);
+    }
+  }
+}
+
 if (failed) {
   console.log(`\n${failed} failed`);
   process.exit(1);
