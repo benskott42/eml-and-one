@@ -129,6 +129,6 @@ Small, independent, and each its own pull request:
 | 3 shortcut policy | done | #97 |
 | 4 split check.ts | done | #98 |
 | 5 site check script | done | #96 |
-| 6 calculator reducer | open | |
+| 6 calculator reducer | done | |
 | 7 limitations list | done | |
 | 8 housekeeping (fuzz tool, bumps, old branches) | fuzz tool, 1.0.4, old branches, #16 done; #17/#18/#20 need workflow scope / owner click | #99 |

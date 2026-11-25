@@ -13,7 +13,7 @@ import {
 } from "@/lib/eml/library";
 import { E, ONE, type Node, evaluateReport, input as inputNode, nodeFromRpn, substitute } from "@/lib/eml/node";
 import table from "@/lib/eml/best-known.json";
-import { FLOAT_DIFFERS, applyModeSwitch, commitHistory, drainQueue, modeRequest, undoHistory, type History } from "@/lib/eml/history";
+import { FLOAT_DIFFERS, applyModeSwitch, drainQueue, modeRequest, undoHistory } from "@/lib/eml/history";
 import { INITIAL_X, INITIAL_Y, type KeyTable, type KeyTables, keyCostEntries, keyCosts, keyExpansions, readScalar } from "@/components/keyTables";
 import { parseProgramInput, rankProgram, stepProgram, unnumberedReason, unrankProgram } from "@/lib/eml/programIndex";
 import {
@@ -32,6 +32,7 @@ import {
   unaryCaption,
   valuesOf,
 } from "@/components/calculator/entry";
+import { type CalcAction, type CalcState, INITIAL_CALC_STATE, calcReducer } from "@/components/calculator/reducer";
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "@/components/calculator/twoButtons";
 import { useExactJobs } from "@/components/calculator/useExactJobs";
 import { CopyNumber, Fold, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
@@ -151,7 +152,8 @@ const EXAMPLES = [
 ];
 
 export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {}) {
-  const [model, setModel] = useState<Model>(EMPTY);
+  const [calcState, setCalcState] = useState<CalcState>(INITIAL_CALC_STATE);
+  const model = calcState.model;
   const [xText, setXText] = useState(INITIAL_X);
   const [yText, setYText] = useState(INITIAL_Y);
   const [expr, setExpr] = useState("sin(pi/6)");
@@ -163,12 +165,16 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   // A long-press caption belongs to the screen it was read on. The tape changes
   // with every press, undo, and clear, so the caption goes with the next one.
   const [held, setHeld] = useState<{ text: string; tape: string[] } | null>(null);
-  const setHeldShortcut = useCallback((text: string) => setHeld({ text, tape: modelRef.current.tape }), []);
-  const modelRef = useRef(model);
+  const stateRef = useRef<CalcState>(INITIAL_CALC_STATE);
+  const dispatch = useCallback((action: CalcAction) => {
+    const next = calcReducer(stateRef.current, action);
+    if (next === stateRef.current) return;
+    stateRef.current = next;
+    setCalcState(next);
+  }, []);
+  const setHeldShortcut = useCallback((text: string) => setHeld({ text, tape: stateRef.current.model.tape }), []);
   const textRef = useRef({ xText, yText });
   const modeRef = useRef<Mode>("exact");
-  const historyRef = useRef<History<Model>>({ past: [], current: EMPTY });
-  const recomputeRef = useRef(false);
   const queueRef = useRef<Array<() => void>>([]);
   const jobRef = useRef(0);
   const cancelTurnRef = useRef<(() => void) | null>(null);
@@ -194,7 +200,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   const costs = atStart && initialKeys ? initialKeys.costs : computedCosts;
   useEffect(() => {
     if (twoButtons || atStart) return;
-    const entries = keyCostEntries(modelRef.current.stack, xText, yText);
+    const entries = keyCostEntries(stateRef.current.model.stack, xText, yText);
     const table: KeyTable = {};
     let handle = 0;
     const slice = () => {
@@ -214,23 +220,21 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     return () => window.clearTimeout(handle);
   }, [atStart, prevId, stackLen, topId, twoButtons, xText, yText]);
 
-  // The handlers are the only writers of modelRef and modeRef: each one sets the
-  // ref before its setState. Syncing them from an effect let a late passive effect
-  // of an earlier render roll the ref back, so 1, 1, EML in one turn could see one
-  // operand. textRef follows the inputs during render, so a press right after
-  // typing reads the new text.
+  // dispatch is the only writer of stateRef (synchronously before setCalcState),
+  // so 1, 1, EML in one turn always sees the latest stack. textRef follows the
+  // inputs during render, so a press right after typing reads the new text.
   textRef.current = { xText, yText };
 
-  const { cancelExact } = useExactJobs({ stack: model.stack, modelRef, historyRef, recomputeRef, queueRef, setModel });
+  const { cancelExact } = useExactJobs({ stack: model.stack, stateRef, queueRef, dispatch });
 
   const expansions = useMemo(() => initialKeys?.expansions ?? keyExpansions(), [initialKeys]);
 
   useEffect(() => {
-    const snapshot = modelRef.current.stack.map((item) => ({ ...item }));
+    const snapshot = stateRef.current.model.stack.map((item) => ({ ...item }));
     if (snapshot.length === 0) {
       // requestMode held the queue for this effect. With nothing to rebuild, release it.
-      if (recomputeRef.current) {
-        recomputeRef.current = false;
+      if (stateRef.current.busy) {
+        dispatch({ type: "SET_BUSY", busy: false });
         drainQueue(queueRef.current);
       }
       return;
@@ -238,13 +242,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     let cancel = false;
     let done = false;
     jobRef.current += 1;
-    recomputeRef.current = true;
-    setModel((current) => ({
-      ...current,
-      stack: mode === "exact" ? current.stack.map((item) => ({ ...item, text: "computing", pendingExact: true, value: { re: Number.NaN, im: Number.NaN } })) : current.stack,
+    dispatch({
+      type: "BEGIN_PENDING",
       note: mode === "exact" ? "computing" : "Computing…",
-      error: null,
-    }));
+      markPendingExact: mode === "exact",
+    });
     void (async () => {
       const stack: Entry[] = [];
       let error: string | null = null;
@@ -260,7 +262,6 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         error = failure(err);
       }
       if (cancel) return;
-      const current = modelRef.current;
       const applied = applyModeSwitch({
         previous: snapshot,
         recomputed: stack,
@@ -282,37 +283,24 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           nearCut: false,
         }),
       });
-      const shown = [...applied.stack, ...current.stack.slice(snapshot.length)];
-      const top = shown[shown.length - 1];
-      const next: Model = {
-        ...current,
-        stack: shown,
-        note: applied.error ? null : top ? noteFor(top) : null,
-        error: applied.error ?? (top ? resultError(top) : null),
-      };
-      historyRef.current = { ...historyRef.current, current: next };
-      modelRef.current = next;
-      setModel(next);
+      dispatch({ type: "FINISH_MODE_SWITCH", snapshotLen: snapshot.length, appliedStack: applied.stack, error: applied.error });
       done = true;
-      recomputeRef.current = false;
       drainQueue(queueRef.current);
     })();
     return () => {
       cancel = true;
       // The next switch has already set the flag for itself; only an unfinished run releases it.
-      if (!done) recomputeRef.current = false;
+      if (!done) dispatch({ type: "SET_BUSY", busy: false });
     };
-  }, [mode]);
+  }, [dispatch, mode]);
 
   const commit = useCallback((next: Model) => {
-    historyRef.current = commitHistory(historyRef.current, next);
-    modelRef.current = next;
-    setModel(next);
-  }, []);
+    dispatch({ type: "COMMIT", next });
+  }, [dispatch]);
 
   const pushEntry = useCallback(
     (item: Entry, tapeLabel: string, note: string | null) => {
-      const current = modelRef.current;
+      const current = stateRef.current.model;
       commit({
         stack: [...current.stack, item],
         tape: [...current.tape, tapeLabel],
@@ -325,7 +313,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
 
   const pushNode = useCallback(
     (node: Node, caption: string, tapeLabel: string) => {
-      if (recomputeRef.current) {
+      if (stateRef.current.busy) {
         queueRef.current.push(() => pushNode(node, caption, tapeLabel));
         return;
       }
@@ -333,16 +321,14 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         const item = entry(node, caption, modeRef.current);
         pushEntry(item, tapeLabel, noteFor(item));
       } catch (err) {
-        const next = { ...modelRef.current, error: failure(err) };
-        modelRef.current = next;
-        setModel(next);
+        dispatch({ type: "SET_ERROR", error: failure(err) });
       }
     },
-    [pushEntry],
+    [dispatch, pushEntry],
   );
 
   const pushOne = useCallback(() => {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => pushOne());
       return;
     }
@@ -351,7 +337,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
 
   const pushScalar = useCallback(
     (text: string, tapeLabel: string) => {
-      if (recomputeRef.current) {
+      if (stateRef.current.busy) {
         queueRef.current.push(() => pushScalar(text, tapeLabel));
         return;
       }
@@ -363,20 +349,18 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         };
         pushEntry(item, tapeLabel, noteFor(item));
       } catch (err) {
-        const next = { ...modelRef.current, error: failure(err) };
-        modelRef.current = next;
-        setModel(next);
+        dispatch({ type: "SET_ERROR", error: failure(err) });
       }
     },
-    [pushEntry],
+    [dispatch, pushEntry],
   );
 
   const applyEml = useCallback(() => {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => applyEml());
       return;
     }
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     try {
       let x: Entry;
       let y: Entry;
@@ -393,12 +377,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         y = { ...entry(readScalar(rawY, "y"), rawY.trim() || "y", modeRef.current), bound: numbers };
         rest = [];
       } else {
-        const next = {
-          ...current,
-          error: "EML needs two values. The older one is x, the top one is y.",
-        };
-        modelRef.current = next;
-        setModel(next);
+        dispatch({ type: "SET_ERROR", error: "EML needs two values. The older one is x, the top one is y." });
         return;
       }
       const merged = mergeOperands(x, y);
@@ -412,24 +391,20 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         error: resultError(item),
       });
     } catch (err) {
-      const next = { ...modelRef.current, error: failure(err) };
-      modelRef.current = next;
-      setModel(next);
+      dispatch({ type: "SET_ERROR", error: failure(err) });
     }
-  }, [commit]);
+  }, [commit, dispatch]);
 
   function fail(error: string) {
-    const next = { ...modelRef.current, error };
-    modelRef.current = next;
-    setModel(next);
+    dispatch({ type: "SET_ERROR", error });
   }
 
   function applyUnary(id: string, label: string) {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => applyUnary(id, label));
       return;
     }
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     try {
       let arg: Entry;
       let rest: Entry[];
@@ -459,11 +434,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function applyBinary(id: string, label: string) {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => applyBinary(id, label));
       return;
     }
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     try {
       let x: Entry;
       let y: Entry;
@@ -499,13 +474,13 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function compute(source: string) {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => compute(source));
       return;
     }
     const text = source.trim();
     setExpr(text);
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     if (!text) {
       fail("Enter an expression.");
       return;
@@ -514,10 +489,8 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     // task stays short. Presses in between queue, as during a recompute.
     const job = (jobRef.current += 1);
     const { xText, yText } = textRef.current;
-    recomputeRef.current = true;
-    const pending = { ...current, note: "Computing…", error: null };
-    modelRef.current = pending;
-    setModel(pending);
+    const pendingNote = "Computing…";
+    dispatch({ type: "BEGIN_PENDING", note: pendingNote });
     cancelTurnRef.current?.();
     cancelTurnRef.current = nextTurn(() => {
       cancelTurnRef.current = null;
@@ -525,33 +498,20 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
       try {
         const { node, numbers } = compileSubmission(text, xText, yText);
         const item = { ...entry(node, text, modeRef.current), bound: numbers };
-        const bits = [noteFor(item)].filter(Boolean);
-        // An exact value for an older row can land between the submit and this
-        // turn. It is in modelRef, not in the stack read at the submit.
-        const latest = modelRef.current;
-        commit({
-          stack: [...latest.stack, item],
-          tape: [...latest.tape, text],
-          note: bits.length ? bits.join(" · ") : null,
-          error: resultError(item),
-        });
+        dispatch({ type: "FINISH_SUBMIT", item, tapeLabel: text });
       } catch (err) {
-        const latest = modelRef.current;
-        const next = { ...latest, note: latest.note === pending.note ? current.note : latest.note, error: failure(err) };
-        modelRef.current = next;
-        setModel(next);
+        dispatch({ type: "FAIL_PENDING", pendingNote, fallbackNote: current.note, error: failure(err) });
       }
-      recomputeRef.current = false;
       drainQueue(queueRef.current);
     });
   }
 
   function swap() {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => swap());
       return;
     }
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     if (current.stack.length < 2) {
       fail("Swap needs two values.");
       return;
@@ -571,11 +531,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function drop() {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => drop());
       return;
     }
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     if (current.stack.length === 0) {
       fail("The stack is empty.");
       return;
@@ -591,7 +551,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   const requestMode = useCallback((next: Mode) => {
-    const step = modeRequest(modeRef.current, next, recomputeRef.current);
+    const step = modeRequest(modeRef.current, next, stateRef.current.busy);
     if (step.queue) {
       queueRef.current.push(() => requestMode(next));
       return;
@@ -601,22 +561,21 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
     // The rebuild runs in the effect on mode, after this render. A press drained
     // behind this click (an undo, a submit) waits for it too; started first, it
     // was cancelled by the effect's job, and an undo lost its step from the history.
-    recomputeRef.current = true;
+    dispatch({ type: "SET_BUSY", busy: true });
     setMode(step.current);
-  }, []);
+  }, [dispatch]);
 
   const undo = useCallback(() => {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => undo());
       return;
     }
-    const nextHistory = undoHistory(historyRef.current);
-    if (nextHistory === historyRef.current) return;
-    historyRef.current = nextHistory;
+    const nextHistory = undoHistory(stateRef.current.history);
+    if (nextHistory === stateRef.current.history) return;
     const previous = nextHistory.current;
     const job = (jobRef.current += 1);
     const modeNow = modeRef.current;
-    recomputeRef.current = true;
+    dispatch({ type: "SET_BUSY", busy: true });
     void (async () => {
       const built: Entry[] = [];
       let error: string | null = null;
@@ -647,30 +606,18 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           mode: modeNow,
         }),
       });
-      const top = applied.stack[applied.stack.length - 1];
-      const restored: Model = {
-        ...previous,
-        // A fresh tape, so a long-press caption read on that earlier screen does not come back.
-        tape: previous.tape.slice(),
-        stack: applied.stack,
-        note: applied.error ? null : top ? noteFor(top) : previous.note,
-        error: applied.error ?? (top ? resultError(top) : null),
-      };
-      historyRef.current = { ...historyRef.current, current: restored };
-      modelRef.current = restored;
-      setModel(restored);
-      recomputeRef.current = false;
+      dispatch({ type: "FINISH_UNDO", nextHistory, appliedStack: applied.stack, error: applied.error });
       drainQueue(queueRef.current);
     })();
-  }, []);
+  }, [dispatch]);
 
   function clearAll() {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => clearAll());
       return;
     }
     setExpr("");
-    const current = modelRef.current;
+    const current = stateRef.current.model;
     if (current.stack.length === 0 && current.tape.length === 0 && current.note === null && current.error === null) {
       setHeld(null);
       return;
@@ -680,69 +627,52 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function showProgram(node: Node, caption: string, replace: boolean, notice?: string | null, bound?: Record<string, C>, boundNodes?: Record<string, Node>) {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => showProgram(node, caption, replace, notice, bound, boundNodes));
       return;
     }
     const job = (jobRef.current += 1);
-    const previous = modelRef.current;
+    const previous = stateRef.current.model;
     const mode = modeRef.current;
     if (mode === "exact") {
       const item = { ...entry(node, caption, mode, bound, boundNodes), notice };
       const rest = replace && previous.stack.length > 0 ? previous.stack.slice(0, -1) : previous.stack;
-      const next: Model = {
+      commit({
         stack: [...rest, item],
         tape: [...previous.tape, caption],
         note: noteFor(item),
         error: resultError(item),
-      };
-      historyRef.current = commitHistory(historyRef.current, next);
-      modelRef.current = next;
-      setModel(next);
+      });
       return;
     }
-    recomputeRef.current = true;
-    const pending = { ...previous, note: "Computing…", error: null };
-    modelRef.current = pending;
-    setModel(pending);
+    const pendingNote = "Computing…";
+    dispatch({ type: "BEGIN_PENDING", note: pendingNote });
     void (async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (job !== jobRef.current) return;
-      // A compare result for an older row can land during the wait. It is in
-      // modelRef, so build on that, with the note and error the wait replaced.
-      const latest = modelRef.current;
-      const base: Model = {
-        ...latest,
-        note: latest.note === pending.note ? previous.note : latest.note,
-        error: latest.error ?? previous.error,
-      };
       try {
         const built = entry(node, caption, mode, bound, boundNodes);
         const item = notice ? { ...built, notice } : built;
-        const rest = replace && base.stack.length > 0 ? base.stack.slice(0, -1) : base.stack;
-        const next: Model = {
-          stack: [...rest, item],
-          tape: [...base.tape, caption],
-          note: noteFor(item),
-          error: resultError(item),
-        };
-        historyRef.current = commitHistory({ ...historyRef.current, current: base }, next);
-        modelRef.current = next;
-        setModel(next);
+        dispatch({
+          type: "FINISH_SHOW_PROGRAM",
+          item,
+          caption,
+          replace,
+          pendingNote,
+          fallbackNote: previous.note,
+          fallbackError: previous.error,
+        });
       } catch (err) {
-        const next = { ...base, error: failure(err) };
-        modelRef.current = next;
-        setModel(next);
+        dispatch({ type: "FAIL_PENDING", pendingNote, fallbackNote: previous.note, error: failure(err) });
       }
       if (job !== jobRef.current) return;
-      recomputeRef.current = false;
       drainQueue(queueRef.current);
     })();
   }
 
   function loadProgramText(source: string) {
     // A refused word's error, set during a rebuild, was replaced when the rebuild landed.
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => loadProgramText(source));
       return;
     }
@@ -777,11 +707,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
   }
 
   function stepLoaded(delta: 1 | -1) {
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => stepLoaded(delta));
       return;
     }
-    const top = modelRef.current.stack[modelRef.current.stack.length - 1];
+    const top = stateRef.current.model.stack[stateRef.current.model.stack.length - 1];
     let index = BigInt(0);
     if (top) {
       const rank = rankProgram(top.node);
@@ -821,18 +751,14 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         else if (lower === "x") pushScalar(textRef.current.xText, "x");
         else if (lower === "y") pushScalar(textRef.current.yText, "y");
         else if (key === "Backspace") undo();
-        else if (key === "Escape") {
-          const next = { ...modelRef.current, error: null };
-          modelRef.current = next;
-          setModel(next);
-        }
+        else if (key === "Escape") dispatch({ type: "SET_ERROR", error: null });
       };
-      if (recomputeRef.current) queueRef.current.push(run);
+      if (stateRef.current.busy) queueRef.current.push(run);
       else run();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyEml, pushOne, pushScalar, undo]);
+  }, [applyEml, dispatch, pushOne, pushScalar, undo]);
 
   const buried = model.stack.slice(-4, -1);
   const top = model.stack[model.stack.length - 1];
