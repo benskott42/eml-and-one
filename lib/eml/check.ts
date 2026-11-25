@@ -4731,6 +4731,59 @@ if (shardTurn(90)) {
   }
 }
 
+if (shardTurn(91)) {
+  // sin, cos and tan at a recorded multiple of π where the value is 0, ±1/2 or ±1, exp of
+  // i·kπ/2, and i^n. Their gates leave a residue near 10^(−16) that exact mode refuses, so
+  // sin(π), cos(π/2), exp(iπ) + 1 and i^2 + 1 said "couldn't verify". The angle must be the
+  // recorded multiple: a float near π, or π plus a tiny term, keeps its circuit.
+  const rows: [string, string][] = [
+    ["sin(pi)", "0"],
+    ["sin(2*pi)", "0"],
+    ["sin(100*pi)", "0"],
+    ["cos(pi/2)", "0"],
+    ["cos(pi)+1", "0"],
+    ["cos(-5*pi)", "−1"],
+    ["sin(pi/6)-1/2", "0"],
+    ["cos(pi/3)", "0.5"],
+    ["cos(7*pi/3)", "0.5"],
+    ["sin(-pi/2)", "−1"],
+    ["tan(pi)", "0"],
+    ["tan(pi/4)", "1"],
+    ["tan(3*pi/4)", "−1"],
+    ["tan(pi/2)", "undefined"],
+    ["exp(i*pi)+1", "0"],
+    ["exp(2*pi*i)", "1"],
+    ["exp(i*pi/2)", "i"],
+    ["exp(i*pi*3/2)", "−i"],
+    ["exp(-(i*pi))", "−1"],
+    ["i^2+1", "0"],
+    ["i^3", "−i"],
+    ["i^-1", "−i"],
+    ["sin(pi/3)", "0.866025403784"],
+    ["exp(i*pi/3)", "0.5 + 0.866025403784i"],
+    ["exp(pi*i*i)", "0.043213918264"],
+    ["sin(pi+1e-30)", "−1×10^−30"],
+    ["sin(3.141592653589793)", "2.384626433833×10^−16"],
+    ["sin(pi)/sin(pi)", "undefined"],
+  ];
+  for (const [source, want] of rows) {
+    const node = compileExpression(source, {});
+    const report = exactReport(node, {}, { maxNodes: 80_000 });
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL pi multiple", source, got, "want", want);
+    }
+  }
+  for (const source of ["sin(pi)", "cos(pi/2)", "exp(i*pi)+1", "i^2+1"]) {
+    const floated = formatC(evaluate(compileExpression(source, {})));
+    if (floated !== "0") {
+      failed += 1;
+      console.log("FAIL pi multiple float", source, floated);
+    }
+  }
+}
+
 if (shardTurn(96)) {
   // Audit regressions: absorbed real terms & serial cancellations (the 6 v1.0.3 fuzz bugs),
   // unbounded series/asymptotic shortcuts, exactUnsure propagation, wire series-shortcut notes,
