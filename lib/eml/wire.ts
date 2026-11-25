@@ -108,7 +108,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.kr = known.re;
       token.ki = known.im;
     }
-    packFacts(frame.n, token, frame.n === root);
+    packFacts(frame.n, token);
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -139,7 +139,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
         notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
       }
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
-      unpackFacts(node, tok, tok.i === root);
+      unpackFacts(node, tok);
     }
   }
   const node = nodes[root];

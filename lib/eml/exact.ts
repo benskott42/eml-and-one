@@ -1154,6 +1154,11 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     const top = exponentCeil(v);
     if (top >= -300 && top < firstBig - (digits - 12)) return !confirmedBeside(root, env, budget, v, digits);
   }
+  // A second-order term (x²/2 of exp or cos) was rounded into 1 inside a gate and the
+  // result vanished to 0: confirm the 0 with a rigorous ball enclosure, or refuse.
+  if ((out.absorb2 ?? 0) > digits - 12 && !out.sawLead && !agreesWithInteger(root, v) && vanished(v)) {
+    if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits, 24)) return true;
+  }
   return false;
 }
 
@@ -1166,9 +1171,16 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
  * digits, with each zero part exactly 0, is kept. (exp(800)+1)−exp(800) leaves a
  * radius near 10^168 and stays refused; ln(10^400) is confirmed.
  */
-function confirmedBeside(root: Node, env: Record<string, C | Z>, budget: EvalBudget, v: Z, passDigits = D.precision): boolean {
+function confirmedBeside(
+  root: Node,
+  env: Record<string, C | Z>,
+  budget: EvalBudget,
+  v: Z,
+  passDigits = D.precision,
+  agree = D.precision - 20,
+): boolean {
   const prec = Math.min(600, Math.max(D.precision, passDigits) + 60);
-  return ballConfirmsValue(root, env, v, prec, D.precision - 20, budget);
+  return ballConfirmsValue(root, env, v, prec, agree, budget);
 }
 
 /**
@@ -1459,22 +1471,29 @@ function exactReportCore(
   const absorbedGap = (r: ExactReport): number => Math.max(firstOrderGap(r), secondOrderGap(r));
   const absorbedMatters = (r: ExactReport): boolean => absorbedGap(r) > 0;
   // Raise precision until the absorbed term fits (up to the cap), or refuse. A result that
-  // still has an absorbed term past the cap, or after three hops, is not certified.
+  // still has an absorbed term past the cap, or after three hops, is kept only if a rigorous
+  // ball enclosure confirms its nonzero finite value.
+  const canRescueAbsorbed = (cur: ExactReport): boolean =>
+    !vanished(cur.value) &&
+    zFinite(cur.value) &&
+    !nestedTrigTooLarge(root, env) &&
+    !dependsOnUnverified(root) &&
+    confirmedBeside(root, env, budget, cur.value, cur.digits ?? D.precision, 24);
   const raiseForAbsorbed = (start: ExactReport): ExactReport => {
     let cur = start;
     for (let hop = 0; hop < 3 && absorbedMatters(cur); hop += 1) {
       const gap = absorbedGap(cur);
       const minNeed = gap + 48;
-      if (minNeed > PRECISION_CAP) return certifyZero(cur);
+      if (minNeed > PRECISION_CAP) return canRescueAbsorbed(cur) ? cur : certifyZero(cur);
       // Leave 24 digits of headroom below PRECISION_CAP when gap + 48 fits there, so
       // settleResidue can still take a stability check rather than refusing at the cap.
       const cap = minNeed <= PRECISION_CAP - 24 ? PRECISION_CAP - 24 : PRECISION_CAP;
       const next = Math.min(cap, Math.max((cur.digits ?? D.precision) + 48, gap + D.precision));
-      if (next <= (cur.digits ?? D.precision)) return certifyZero(cur);
+      if (next <= (cur.digits ?? D.precision)) return canRescueAbsorbed(cur) ? cur : certifyZero(cur);
       cur = atPrecision(next, root, env, budget);
       if (cur.unverified) return cur;
     }
-    if (absorbedMatters(cur)) return certifyZero(cur);
+    if (absorbedMatters(cur)) return canRescueAbsorbed(cur) ? cur : certifyZero(cur);
     return { ...cur, absorbIm: Math.max(cur.absorbIm ?? 0, start.absorbIm ?? 0) };
   };
   if (vanished(report.value)) {

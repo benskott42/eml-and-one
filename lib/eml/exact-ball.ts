@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { isMarkedExactInt, provenInteger } from "./facts";
+import { exactDecimalOf, factsOf, isExactUnsure, isUnverified, provenInteger } from "./facts";
 import type { Node } from "./node";
 
 /**
@@ -32,7 +32,7 @@ import type { Node } from "./node";
  * is carried; candidates that exp brings back together are merged. The value is
  * confirmed only if every candidate confirms it.
  */
-type Comp = { v: Decimal; r: Decimal; exact: boolean; q?: number };
+type Comp = { v: Decimal; r: Decimal; exact: boolean; q?: number; key?: number };
 type Ball = { re: Comp; im: Comp; key?: number };
 
 class BallFail extends Error {}
@@ -40,6 +40,111 @@ class BallFail extends Error {}
 export type BallValue = { re: Decimal | number; im: Decimal | number };
 
 const MAX_BRANCHES = 8;
+
+// Directed rounding clones for radii (upper bounds) and denominators (lower bounds).
+const DU = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_UP, minE: -9e15, maxE: 9e15 });
+const DD = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_DOWN, minE: -9e15, maxE: 9e15 });
+const zeroU = new DU(0);
+const zeroD = new DD(0);
+const oneU = new DU(1);
+const oneD = new DD(1);
+// new DU(x) does not round until an operation; adding 0 forces directed rounding.
+const up = (w: Decimal): Decimal => new DU(w.abs()).add(zeroU);
+const dn = (w: Decimal): Decimal => new DD(w.abs()).add(zeroD);
+const duBump = new DU("1.000000000000000001"); // 1 + 10^(1 - 20) * 10 for transcendental DU ops
+const snapU = new DU("1e-15");
+const snapD = new DD("1e-15");
+
+type PrecCtx = {
+  B: Decimal.Constructor;
+  L: Decimal.Constructor;
+  zeroB: Decimal;
+  oneB: Decimal;
+  negOneB: Decimal;
+  epsU: Decimal;
+  tenU: Decimal;
+  pi: Decimal;
+  piL: Decimal;
+  piLowD: Decimal;
+  ZERO: Comp;
+  NEG_ZERO: Comp;
+  epsL: Decimal;
+};
+
+const precCache = new Map<number, PrecCtx>();
+
+function precCtx(P: number): PrecCtx {
+  let ctx = precCache.get(P);
+  if (ctx) return ctx;
+  const B = Decimal.clone({ precision: P, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
+  const L = Decimal.clone({ precision: P + 12, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
+  const zeroB = new B(0);
+  const oneB = new B(1);
+  const negOneB = new B(-1);
+  const epsU = new DU(10).pow(1 - P);
+  const tenU = epsU.mul(10);
+  const pi = B.acos(-1);
+  const piL = L.acos(-1);
+  const piLowD = dn(pi).mul(oneD.sub(new DD(tenU)));
+  const ZERO: Comp = { v: zeroB, r: zeroU, exact: true };
+  const NEG_ZERO: Comp = { v: new B(-0), r: zeroU, exact: true };
+  const epsL = new L(10).pow(-(P + 10));
+  ctx = { B, L, zeroB, oneB, negOneB, epsU, tenU, pi, piL, piLowD, ZERO, NEG_ZERO, epsL };
+  precCache.set(P, ctx);
+  return ctx;
+}
+
+function atan2FastCore(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal | null {
+  const { L, epsL } = ctx;
+  const shift = Math.max(y.e, x.e);
+  const scale = new L(10).pow(-shift);
+  const Y = new L(y);
+  const X = new L(x);
+  const ys = Y.mul(scale).toNumber();
+  const xs = X.mul(scale).toNumber();
+  if (!Number.isFinite(ys) || !Number.isFinite(xs) || (ys === 0 && xs === 0)) return null;
+  const seed = Math.atan2(ys, xs);
+  const th = new L(seed);
+  const a = Math.abs(seed);
+  let c: Decimal;
+  let s: Decimal;
+  if (a < Math.PI / 4 || a > (3 * Math.PI) / 4) {
+    s = th.sin();
+    c = L.sqrt(L.sub(1, s.mul(s)));
+    if (a > Math.PI / 2) c = c.neg();
+  } else {
+    c = th.cos();
+    s = L.sqrt(L.sub(1, c.mul(c)));
+    if (seed < 0) s = s.neg();
+  }
+  const t = Y.mul(c).sub(X.mul(s)).div(X.mul(c).plus(Y.mul(s)));
+  if (!t.isFinite() || t.abs().gt("1e-8")) return null;
+  const t2 = t.mul(t);
+  let term = t;
+  let sum = t;
+  for (let n = 3; term.abs().gt(epsL) && n < 4001; n += 2) {
+    term = term.mul(t2).neg();
+    sum = sum.plus(term.div(n));
+  }
+  if (term.abs().gt(epsL)) return null;
+  return th.plus(sum);
+}
+
+function atan2Ball(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal {
+  if (!y.isZero() && !x.isZero()) {
+    if (x.isNeg() && y.abs().lt(x.abs())) {
+      const phi = atan2FastCore(y.abs(), x.neg(), ctx);
+      if (phi) {
+        const out = ctx.piL.sub(phi);
+        return new ctx.B(y.isNeg() ? out.neg() : out);
+      }
+    } else {
+      const th = atan2FastCore(y, x, ctx);
+      if (th) return new ctx.B(th);
+    }
+  }
+  return ctx.B.atan2(y, x);
+}
 
 /**
  * True when every enclosure candidate at `precision` digits shows each nonzero
@@ -59,25 +164,8 @@ export function ballConfirmsValue(
   const maxNodes = budget.maxNodes ?? 400_000;
   const deadline = budget.deadline ?? 0;
   const P = Math.max(precision, 40);
-  const B = Decimal.clone({ precision: P, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
-  // Directed rounding clones for radii (upper bounds) and denominators (lower bounds).
-  const DU = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_UP, minE: -9e15, maxE: 9e15 });
-  const DD = Decimal.clone({ precision: 20, rounding: Decimal.ROUND_DOWN, minE: -9e15, maxE: 9e15 });
-  const zeroB = new B(0);
-  const zeroU = new DU(0);
-  const zeroD = new DD(0);
-  const oneU = new DU(1);
-  const oneD = new DD(1);
-  // new DU(x) does not round until an operation; adding 0 forces directed rounding.
-  const up = (w: Decimal): Decimal => new DU(w.abs()).add(zeroU);
-  const dn = (w: Decimal): Decimal => new DD(w.abs()).add(zeroD);
-  const epsU = new DU(10).pow(1 - P);
-  const tenU = epsU.mul(10);
-  const duBump = new DU("1.000000000000000001"); // 1 + 10^(1 - 20) * 10 for transcendental DU ops
-  const pi = B.acos(-1);
-  const piLowD = dn(pi).mul(oneD.sub(new DD(tenU)));
-  const ZERO: Comp = { v: zeroB, r: zeroU, exact: true };
-  const NEG_ZERO: Comp = { v: new B(-0), r: zeroU, exact: true };
+  const ctx = precCtx(P);
+  const { B, epsU, tenU, pi, piLowD, ZERO, NEG_ZERO } = ctx;
   const signedZero = (neg: boolean): Comp => (neg ? NEG_ZERO : ZERO);
   const infinite = (neg: boolean): Comp => ({ v: new B(neg ? -Infinity : Infinity), r: zeroU, exact: true });
   const isExactZero = (c: Comp) => c.exact && c.v.isZero();
@@ -121,9 +209,28 @@ export function ballConfirmsValue(
     for (const [k, c] of combos[b] ?? []) out.set(k, (out.get(k) ?? 0) - c);
     return keyOf(out);
   };
+  const keyNeg = (a: number): number => keyDiff(EMPTY, a);
+  /** Canonical representative of {k, -k} for even/odd real identities (cos, sin, ln|z|, atan2). */
+  const absKey = (k: number): { k: number; neg: boolean } => {
+    const combo = combos[k];
+    if (!combo || combo.size === 0) return { k: EMPTY, neg: false };
+    let minAtom = Infinity;
+    let minCoeff = 0;
+    for (const [a, c] of combo) {
+      if (a < minAtom) {
+        minAtom = a;
+        minCoeff = c;
+      }
+    }
+    return minCoeff < 0 ? { k: keyNeg(k), neg: true } : { k, neg: false };
+  };
+  const compKey = (c: Comp): number | undefined => c.key ?? (isExactZero(c) ? EMPTY : undefined);
+  const ONE_KEY = atom("R1");
+  const NEG_ONE_KEY = keyNeg(ONE_KEY);
   /** The ball each exp atom was taken of, and each ln atom of. */
   const expArg = new Map<number, Ball>();
   const lnArg = new Map<number, Ball>();
+  const lnAtomArg = new Map<number, Ball>();
 
   const zeroBall = (re: Comp, im: Comp): Ball => {
     const key = !re.v.isNeg() && !im.v.isNeg() ? EMPTY : atom(`Z${re.v.isNeg() ? "-" : "+"}${im.v.isNeg() ? "-" : "+"}`);
@@ -153,10 +260,20 @@ export function ballConfirmsValue(
     const qb = b.q ?? (isExactZero(b) ? 0 : undefined);
     if (qa !== undefined && qb !== undefined) return fromQ(qa - qb);
     if (isExactZero(b)) return a;
-    if (isExactZero(a)) return { v: b.v.neg(), r: b.r, exact: b.exact };
+    if (isExactZero(a)) {
+      const kb = compKey(b);
+      return { v: b.v.neg(), r: b.r, exact: b.exact, ...(kb !== undefined ? { key: keyNeg(kb) } : {}) };
+    }
+    const ka = compKey(a);
+    const kb = compKey(b);
+    let key: number | undefined;
+    if (ka !== undefined && kb !== undefined) {
+      key = keyDiff(ka, kb);
+      if (key === EMPTY) return ZERO;
+    }
     const v = a.v.sub(b.v);
     if (!v.isFinite()) fail();
-    return { v, r: a.r.add(b.r).add(ulp(v)), exact: false };
+    return { v, r: a.r.add(b.r).add(ulp(v)), exact: false, ...(key !== undefined ? { key } : {}) };
   };
 
   const subBall = (a: Ball, b: Ball): Ball => {
@@ -206,6 +323,40 @@ export function ballConfirmsValue(
       // exp(ln(Y)) is Y.
       const y = lnArg.get(x.key);
       if (y && roundTrips(y)) return [y];
+      // exp(ln(A) − ln(B)) is A / B for exact π-multiples and exact ±1, ±2, ±i.
+      const combo = combos[x.key];
+      if (combo && combo.size === 2) {
+        let posAtom = -1;
+        let negAtom = -1;
+        for (const [aId, coeff] of combo) {
+          if (coeff === 1) posAtom = aId;
+          else if (coeff === -1) negAtom = aId;
+        }
+        if (posAtom !== -1 && negAtom !== -1) {
+          const a = lnAtomArg.get(posAtom);
+          const b = lnAtomArg.get(negAtom);
+          if (a && b && roundTrips(a) && roundTrips(b)) {
+            const key = atom(`E${x.key}`);
+            if (!expArg.has(key)) expArg.set(key, x);
+            if (isExactZero(a.re) && a.im.q !== undefined) {
+              if (isExactZero(b.im) && b.re.exact && (b.re.v.abs().eq(1) || b.re.v.abs().eq(2))) {
+                const q = a.im.q / b.re.v.toNumber();
+                return [{ re: ZERO, im: fromQ(q), key }];
+              }
+              if (isExactZero(b.re) && b.im.exact && b.im.v.abs().eq(1)) {
+                const q = a.im.q * b.im.v.toNumber();
+                return [{ re: fromQ(q), im: ZERO, key }];
+              }
+            }
+            if (isExactZero(a.im) && a.re.q !== undefined) {
+              if (isExactZero(b.im) && b.re.exact && (b.re.v.abs().eq(1) || b.re.v.abs().eq(2))) {
+                const q = a.re.q / b.re.v.toNumber();
+                return [{ re: fromQ(q), im: ZERO, key }];
+              }
+            }
+          }
+        }
+      }
     }
     const key = x.key !== undefined ? atom(`E${x.key}`) : undefined;
     if (key !== undefined && !expArg.has(key)) expArg.set(key, x);
@@ -223,8 +374,6 @@ export function ballConfirmsValue(
         return out.length === 1 ? [{ ...(out[0] as Ball), key }] : out;
       }
       // exp(+∞ + iθ): a cos or sin under 10^(−15) is that axis (a signed 0), any other ±∞.
-      const snapU = new DU("1e-15");
-      const snapD = new DD("1e-15");
       const parts = (value: Decimal): Comp[] => {
         if (up(value).add(r).lt(snapD)) return signsOf(value, r).map(signedZero);
         if (value.abs().gt(r) && dn(value).sub(new DD(r)).gte(snapU)) return [infinite(value.isNeg())];
@@ -234,7 +383,7 @@ export function ballConfirmsValue(
       return out.length === 1 ? [{ ...(out[0] as Ball), key }] : out;
     }
     if (!x.re.r.isFinite() || !x.im.r.isFinite()) fail();
-    if (zeroVector(x)) return [{ re: { v: new B(1), r: zeroU, exact: true }, im: signedZero(x.im.v.isNeg()), key }];
+    if (zeroVector(x)) return [{ re: { v: ctx.oneB, r: zeroU, exact: true, key: ONE_KEY }, im: signedZero(x.im.v.isNeg()), key }];
     const m = x.re.v.exp();
     if (!m.isFinite() || m.isZero()) fail();
     const mUp = up(m).mul(oneU.add(epsU.mul(2)));
@@ -249,33 +398,64 @@ export function ballConfirmsValue(
       stretch = mUp.mul(factor);
     }
     if (!stretch.isFinite()) fail();
+    const rk = compKey(x.re);
     if (trig) {
+      const ek = rk !== undefined ? atom(`RE${rk}`) : undefined;
       const part = (unit: Decimal): Comp => {
         if (unit.isZero()) return signedZero(unit.isNeg());
-        if (x.re.exact && x.re.v.isZero()) return { v: unit, r: zeroU, exact: true };
-        return { v: unit.isNeg() ? m.neg() : m, r: stretch.add(mUp.mul(tenU)), exact: false };
+        if (x.re.exact && x.re.v.isZero()) {
+          return { v: unit, r: zeroU, exact: true, key: unit.isNeg() ? NEG_ONE_KEY : ONE_KEY };
+        }
+        return {
+          v: unit.isNeg() ? m.neg() : m,
+          r: stretch.add(mUp.mul(tenU)),
+          exact: false,
+          ...(ek !== undefined ? { key: unit.isNeg() ? keyNeg(ek) : ek } : {}),
+        };
       };
       return [{ re: part(trig.c), im: part(trig.s), key }];
     }
     const round = mUp.mul(epsU.mul(8));
     const rad = stretch.add(round);
+    const ik = compKey(x.im);
+    let cosKey: number | undefined;
+    let sinKey: number | undefined;
+    if (rk !== undefined && ik !== undefined) {
+      const absIm = absKey(ik);
+      cosKey = atom(`EC${rk},${absIm.k}`);
+      const sinAtom = atom(`ES${rk},${absIm.k}`);
+      sinKey = absIm.neg ? keyNeg(sinAtom) : sinAtom;
+    }
     return [
       {
-        re: { v: m.mul(cos), r: rad, exact: false },
-        im: { v: m.mul(sin), r: rad, exact: false },
+        re: { v: m.mul(cos), r: rad, exact: false, ...(cosKey !== undefined ? { key: cosKey } : {}) },
+        im: { v: m.mul(sin), r: rad, exact: false, ...(sinKey !== undefined ? { key: sinKey } : {}) },
         key,
       },
     ];
   };
 
   const lnBalls = (y: Ball): Ball[] => {
-    if (y.key !== undefined) {
-      // ln(exp(X)) is X when Im X lies in [−π, π). ln(1) is +0 whatever the sign of the 0 that exp read.
-      const x = expArg.get(y.key);
-      if (x && principal(x)) return [isExactZero(x.re) && x.re.v.isNeg() ? { ...x, re: ZERO, key: undefined } : x];
-    }
     const key = y.key !== undefined ? atom(`N${y.key}`) : undefined;
-    if (key !== undefined && !lnArg.has(key)) lnArg.set(key, y);
+    if (key !== undefined && !lnArg.has(key)) {
+      lnArg.set(key, y);
+      const aId = atomIds.get(`N${y.key}`);
+      if (aId !== undefined) lnAtomArg.set(aId, y);
+    }
+    if (y.key !== undefined) {
+      // ln(exp(X)) is X when Im X lies in [−π, π). For any exact half-integer q·π,
+      // ln(exp(a + i·qπ)) = a + i·wrapLower(q)·π with the exact same real part a.
+      const x = expArg.get(y.key);
+      if (x && x.re.v.isFinite()) {
+        if (principal(x)) return [isExactZero(x.re) && x.re.v.isNeg() ? { ...x, re: ZERO, key: undefined } : x];
+        if (x.im.q !== undefined && Number.isInteger(x.im.q * 2)) {
+          let q = (((x.im.q + 1) % 2) + 2) % 2 - 1;
+          if (Object.is(q, -0)) q = 0;
+          const re = isExactZero(x.re) && x.re.v.isNeg() ? ZERO : x.re;
+          return [{ re, im: fromQ(q), key }];
+        }
+      }
+    }
     if (isInf(y.im) && isExactZero(y.re)) return [{ re: infinite(false), im: fromQ(y.im.v.isNeg() ? -0.5 : 0.5), key }];
     if (isInf(y.re) && isExactZero(y.im)) {
       // ln(+∞) is +∞; ln(−∞ ± 0i) is +∞ − iπ, on the cut.
@@ -284,6 +464,8 @@ export function ballConfirmsValue(
     if (!y.re.v.isFinite() || !y.im.v.isFinite()) fail();
     if (zeroVector(y)) return [{ re: infinite(true), im: y.re.v.isNeg() ? fromQ(-1) : signedZero(y.im.v.isNeg()), key }];
     if (isExactZero(y.im) && y.re.exact && y.re.v.eq(1)) return [{ re: ZERO, im: signedZero(y.im.v.isNeg()), key }];
+    if (isExactZero(y.im) && y.re.exact && y.re.v.eq(-1)) return [{ re: ZERO, im: fromQ(-1), key }];
+    if (isExactZero(y.re) && y.im.exact && y.im.v.abs().eq(1)) return [{ re: ZERO, im: fromQ(y.im.v.isNeg() ? -0.5 : 0.5), key }];
     // Exact center-vs-radius comparisons (never v ± r under ROUND_HALF_UP).
     const reStrictlyPos = y.re.v.gt(y.re.r);
     const reStrictlyNeg = y.re.v.isNeg() && y.re.v.abs().gt(y.re.r);
@@ -324,12 +506,23 @@ export function ballConfirmsValue(
       ims.push({ v: pi.sub(halfB), r: half.add(tenU.mul(4)), exact: false });
     } else {
       // On any convex rectangle off the cut, |L(z) − L(c)| ≤ ρ / dist(0, Z).
-      ims.push({ v: B.atan2(y.im.v, y.re.v), r: rho.div(dist).add(tenU.mul(4)), exact: false });
+      const yrk = compKey(y.re);
+      const yik = compKey(y.im);
+      let imKey: number | undefined;
+      if (reStrictlyPos && yrk !== undefined && yik !== undefined) {
+        const absIm = absKey(yik);
+        const atAtom = atom(`AT${yrk},${absIm.k}`);
+        imKey = absIm.neg ? keyNeg(atAtom) : atAtom;
+      }
+      ims.push({ v: atan2Ball(y.im.v, y.re.v, ctx), r: rho.div(dist).add(tenU.mul(4)), exact: false, ...(imKey !== undefined ? { key: imKey } : {}) });
     }
     const lnv = h.ln();
     // |ln|z+δ| − ln|z|| ≤ ρ / dist(0, Z), plus rounding of |z| and of ln.
     const spread = rho.isZero() ? zeroU : rho.div(dist);
-    const re: Comp = { v: lnv, r: spread.add(tenU).add(up(lnv).mul(tenU)), exact: false };
+    const yrk = compKey(y.re);
+    const yik = compKey(y.im);
+    const reKey = yrk !== undefined && yik !== undefined ? atom(`LM${absKey(yrk).k},${absKey(yik).k}`) : undefined;
+    const re: Comp = { v: lnv, r: spread.add(tenU).add(up(lnv).mul(tenU)), exact: false, ...(reKey !== undefined ? { key: reKey } : {}) };
     // Two candidates are two values, so neither keeps the key.
     return ims.length === 1 ? [{ re, im: ims[0] as Comp, key }] : ims.map((im) => ({ re, im }));
   };
@@ -387,7 +580,9 @@ export function ballConfirmsValue(
       const v = raw.toSignificantDigits(P);
       return { v, r: ulp(v), exact: false };
     }
-    return { v: raw, r: zeroU, exact: true };
+    if (raw.isZero()) return { v: raw, r: zeroU, exact: true, key: EMPTY };
+    const absAtom = atom(`R${raw.abs().toString()}`);
+    return { v: raw, r: zeroU, exact: true, key: raw.isNeg() ? keyNeg(absAtom) : absAtom };
   };
 
   const leaf = (re: Decimal.Value, im: Decimal.Value): Ball => {
@@ -411,8 +606,37 @@ export function ballConfirmsValue(
       if (memo.has(n)) continue;
       if (++steps > maxNodes * 2) return false;
       if ((steps & 63) === 0 && deadline && performance.now() > deadline) return false;
-      const big = isMarkedExactInt(n) ? provenInteger(n) : undefined;
-      if (big !== undefined) memo.set(n, [leaf(big.toString(), 0)]);
+      const exactFromFacts = (): Ball | null => {
+        if (isUnverified(n) || isExactUnsure(n)) return null;
+        const big = provenInteger(n);
+        if (big !== undefined) return leaf(big.toString(), 0);
+        const f = factsOf(n);
+        if (f.imaginaryUnit !== undefined) return leaf(0, f.imaginaryUnit);
+        if (f.angle) {
+          const { n: num, d: den } = f.angle.q;
+          if (num === BigInt(0)) return leaf(0, 0);
+          let comp: Comp;
+          const absN = num < BigInt(0) ? -num : num;
+          if ((den === BigInt(1) || den === BigInt(2) || den === BigInt(4)) && absN <= BigInt(1_000_000_000_000)) {
+            comp = fromQ(Number(num) / Number(den));
+          } else {
+            const v = pi.mul(num.toString()).div(den.toString());
+            if (!v.isFinite()) return null;
+            const aKey = atom(`Q${absN.toString()}/${den.toString()}`);
+            comp = { v, r: up(v).mul(tenU), exact: false, key: num < BigInt(0) ? keyNeg(aKey) : aKey };
+          }
+          const ballKey = atom(`A${f.angle.unit}:${num.toString()}/${den.toString()}`);
+          return f.angle.unit === "real" ? { re: comp, im: ZERO, key: ballKey } : { re: ZERO, im: comp, key: ballKey };
+        }
+        const dec = exactDecimalOf(n);
+        if (dec) {
+          const text = dec.s === 0 ? dec.n.toString() : `${dec.n.toString()}e-${dec.s}`;
+          return leaf(text, 0);
+        }
+        return null;
+      };
+      const factBall = n.type === "var" ? null : exactFromFacts();
+      if (factBall) memo.set(n, [factBall]);
       else if (n.type === "one") memo.set(n, [leaf(1, 0)]);
       else if (n.type === "input") memo.set(n, [leaf(n.value.re, n.value.im)]);
       else if (n.type === "var") {
@@ -427,7 +651,11 @@ export function ballConfirmsValue(
         const a = memo.get(n.a);
         const b = memo.get(n.b);
         if (!a || !b) return false;
-        memo.set(n, gate(a, b));
+        const res = gate(a, b);
+        if (res.length === 1 && res[0] && res[0].key === undefined && res[0].re.v.isFinite() && res[0].im.v.isFinite()) {
+          res[0] = { ...res[0], key: atom(`D${n.id}`) };
+        }
+        memo.set(n, res);
       }
     }
     out = memo.get(root);

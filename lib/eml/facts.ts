@@ -112,6 +112,9 @@ export type WireFacts = {
   inf?: 1;
   int?: string;
   pint?: string;
+  iu?: 1 | -1;
+  ang?: [string, string, "r" | "i"];
+  ed?: [string, number];
   unver?: 1;
   xu?: 1;
   lead?: 1 | string;
@@ -452,11 +455,14 @@ export function noteExactDecimal(node: Node, value: ExactDecimal): Node {
 }
 
 /** Pack facts that cross the worker wire onto a wire token. */
-export function packFacts(node: Node, target: WireFacts, isRoot = false): void {
+export function packFacts(node: Node, target: WireFacts): void {
   const f = factsOf(node);
   if (f.infinity?.maybe) target.inf = 1;
   if (f.integer?.marked) target.int = f.integer.value.toString();
-  else if (isRoot && node.type !== "one" && f.integer !== undefined) target.pint = f.integer.value.toString();
+  else if (node.type !== "one" && f.integer !== undefined) target.pint = f.integer.value.toString();
+  if (f.imaginaryUnit !== undefined) target.iu = f.imaginaryUnit;
+  if (f.angle) target.ang = [f.angle.q.n.toString(), f.angle.q.d.toString(), f.angle.unit === "real" ? "r" : "i"];
+  if (f.decimal) target.ed = [f.decimal.n.toString(), f.decimal.s];
   if (f.refused?.unverified) target.unver = 1;
   if (f.refused?.exactUnsure) target.xu = 1;
   const s = f.scale;
@@ -474,10 +480,20 @@ export function packFacts(node: Node, target: WireFacts, isRoot = false): void {
 }
 
 /** Restore facts that crossed the worker wire onto an unpacked node. */
-export function unpackFacts(node: Node, source: WireFacts, isRoot = false): void {
+export function unpackFacts(node: Node, source: WireFacts): void {
   if (source.inf) learn(node, { infinity: { maybe: true } });
   if (source.int !== undefined) learn(node, { integer: { value: BigInt(source.int), marked: true } });
-  else if (isRoot && source.pint !== undefined) learn(node, { integer: { value: BigInt(source.pint) } });
+  else if (source.pint !== undefined) learn(node, { integer: { value: BigInt(source.pint) } });
+  if (source.iu !== undefined) learn(node, { imaginaryUnit: source.iu });
+  if (source.ang) {
+    learn(node, {
+      angle: {
+        q: { n: BigInt(source.ang[0]), d: BigInt(source.ang[1]) },
+        unit: source.ang[2] === "r" ? "real" : "imag",
+      },
+    });
+  }
+  if (source.ed) learn(node, { decimal: { n: BigInt(source.ed[0]), s: source.ed[1] } });
   if (source.unver) markUnverified(node);
   if (source.xu) markExactUnsure(node);
   if (source.lift) markTwoScaled(node);
