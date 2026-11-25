@@ -2069,10 +2069,14 @@ function formatDec(d: Decimal): string {
     // Twelve digits hide 0.5 − 10^(−72) and 1 − 10^(−72). Print the first digits of that tail.
     // Only when the 12 places look rounder than the value (trailing zeros dropped): when
     // places 13–14 merely happen to be 0, as in 0.019930868458|0096, twelve places are the
-    // usual display, not a hidden tail. At least three of the twelve places must be
-    // trailing zeros. One zero is common (0.73105857863|000488 is sigma(1)), three are not.
-    const looksRound = /\.\d{0,9}$|^\d+$/.test(abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""));
-    const hiddenTail = gap.gt(dust) && gap.e < -14 && looksRound;
+    // usual display, not a hidden tail. A twelfth place of 0 is common (one value in ten),
+    // and 0.73105857863|000488 is sigma(1), so a value with only that one trailing zero is
+    // a hidden tail only when the rest is below 10^(−17), as in cosh(0.00005i) =
+    // 0.99999999875|00000000026. Three or more trailing zeros (0.5 − 10^(−16)) are rare
+    // enough for a tail under 10^(−14).
+    const trimmed = abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    const places = (trimmed.split(".")[1] ?? "").length;
+    const hiddenTail = gap.gt(dust) && ((gap.e < -14 && places <= 9) || (gap.e < -17 && places <= 11));
     const hiddenInt = intGap.gt(dust) && intGap.e < -9;
     if (hiddenTail || hiddenInt) {
       const reveal = hiddenTail && (!hiddenInt || gap.e <= intGap.e) ? gap : intGap;
