@@ -511,6 +511,7 @@ export function tInv(b: Node): Node {
 }
 
 function exactZero(node: Node): boolean {
+  if (isUnverified(node) || isExactUnsure(node)) return false;
   if (rangeOf(node).int === BigInt(0)) return true;
   const known = knownValue(node);
   return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
@@ -518,6 +519,7 @@ function exactZero(node: Node): boolean {
 
 /** A known −0 or 0. exactZero leaves −0 out, since −0 is not an identity of a sum. */
 function signedZero(node: Node): boolean {
+  if (isUnverified(node) || isExactUnsure(node)) return false;
   const known = knownValue(node);
   return !!known && known.re === 0 && known.im === 0;
 }
@@ -840,10 +842,11 @@ export function tPow(a: Node, b: Node): Node {
     if (exp !== null && exp < BigInt(0)) return tZero();
     return markUnverified(markInfiniteSource(applyProgram("pow", { x: a, y: b })));
   }
-  // i^n is 1, i, −1 or −i. The power word leaves a residue: i^2 + 1 said "couldn't verify".
-  if (a === tI()) {
+  // (±i)^n is 1, i, −1 or −i. The power word leaves a residue: i^2 + 1 said "couldn't verify".
+  const unit = factsOf(a).imaginaryUnit;
+  if (unit) {
     const exp = integerExponent(b);
-    if (exp !== null) return unitPower(Number(exp % BigInt(4)));
+    if (exp !== null) return unitPower(Number((exp * BigInt(unit)) % BigInt(4)));
   }
   const node = applyProgram("pow", { x: a, y: b });
   const ia = rangeOf(a).int;
@@ -1392,10 +1395,11 @@ export function tArsinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
   const known = knownValue(t);
-  if ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || rangeOf(t).int === BigInt(0)) return tZero();
-  if (t === tI() || t === tNeg(tI())) {
+  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || rangeOf(t).int === BigInt(0))) return tZero();
+  const unit = factsOf(t).imaginaryUnit;
+  if (unit) {
     const quarter = tMul(tI(), tHalfOf(tPi()));
-    return t === tI() ? quarter : tNeg(quarter);
+    return unit === 1 ? quarter : tNeg(quarter);
   }
   const node = tMul(tNeg(tI()), tArcsin(tMul(tI(), t)));
   if (!asinhOutside(t, 1e-4)) notePrecision(node, { kind: "asinh", arg: t });

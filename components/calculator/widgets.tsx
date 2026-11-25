@@ -251,8 +251,13 @@ const subscribeNothing = () => () => {};
 export function Fold({ summary, children }: { summary: string; children: ReactNode }) {
   const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
   const [opened, setOpened] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (detailsRef.current?.open) queueMicrotask(() => setOpened(true));
+  }, []);
   return (
     <details
+      ref={detailsRef}
       className="ti-fold"
       onToggle={(event) => {
         if ((event.currentTarget as HTMLDetailsElement).open) setOpened(true);

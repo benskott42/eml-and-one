@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refused operands that overflowed float to 0 are no longer treated as 0 by `exactZero`/`signedZero`/`arsinh` (fixing keypad `×`, `xʸ`, and `arsinh` certifying 0 or 1 on a refused stack item).
+- `(-i)^n`, `(±1 · i)^n`, and `exp(π / i)` now resolve cleanly via `facts.ts`, `learn()` refuses derived facts on shared `input` nodes, and a `<details>` fold opened before hydration keeps its body visible.
+
 ## 1.0.4 — 2026-11-25
 
 - sin(π), cos(π/2), tan(π), exp(iπ) + 1 and i² + 1 are 0 in both modes. They said "couldn't verify": the gates leave a residue near 10^(−16) at these points, and exact mode refuses a zero it cannot tell from one. sin and cos at a multiple of π/6 where the value is 0, ±1/2 or ±1, tan at kπ and π/4 + kπ/2, exp of i·kπ/2, and i^n for an integer n are now read from the recorded multiple of π. A float near π, or π plus a small term, keeps its circuit: sin(π + 10^(−30)) is −10^(−30). ±√3/2 and the tan pole keep their circuits too.

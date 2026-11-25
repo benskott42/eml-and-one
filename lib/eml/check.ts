@@ -8,6 +8,7 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
+import { factsOf, learn } from "./facts";
 import { acceptsConstantProgram, acceptsConstantValue, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
 import {
   applyBinaryNode,
@@ -4917,6 +4918,47 @@ if (shardTurn(97)) {
       failed += 1;
       console.log("FAIL second-order absorption", source, got, "want", want);
     }
+  }
+}
+
+if (shardTurn(99)) {
+  // v1.0.4 follow-ups: refused float-0 operands stay refused on keypad builders (exactZero/signedZero/arsinh),
+  // (-i)^n and (±1*i)^n resolve via facts.ts, exp(pi/i) resolves, and learn() ignores shared input leaves.
+  const bad = compileExpression("(((0.2 + exp(300)) + exp(800)) + 1e310)", {});
+  const keypadRefused: [string, Node][] = [
+    ["mul", applyBinaryNode("mul", bad, integerNode(5))],
+    ["pow", applyBinaryNode("pow", integerNode(5), bad)],
+    ["arsinh", applyUnaryNode("arsinh", bad)],
+  ];
+  for (const [label, node] of keypadRefused) {
+    const report = exactReport(node, {}, { maxNodes: 80_000 });
+    if (!report.unverified) {
+      failed += 1;
+      console.log("FAIL keypad refused zero", label, formatExact(report.value));
+    }
+  }
+  const rows99: [string, string][] = [
+    ["(-i)^2 + 1", "0"],
+    ["(-i)^3", "i"],
+    ["(-i)^-1", "i"],
+    ["(1*i)^2 + 1", "0"],
+    ["((-1)*i)^2 + 1", "0"],
+    ["exp(pi/i) + 1", "0"],
+    ["exp(pi/(-i)) + 1", "0"],
+  ];
+  for (const [source, want] of rows99) {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    const got = report.unverified ? "unverified" : formatExact(report.value);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL v1.0.4 followup", source, got, "want", want);
+    }
+  }
+  const leaf = input(c(0, 0), "0");
+  learn(leaf, { imaginaryUnit: 1 });
+  if (factsOf(leaf).imaginaryUnit !== undefined) {
+    failed += 1;
+    console.log("FAIL learn on input leaf");
   }
 }
 

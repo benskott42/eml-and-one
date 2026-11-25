@@ -27,8 +27,9 @@ export function factsOf(node: Node): Facts {
   return table.get(node) ?? NONE;
 }
 
-/** Record facts on a node. A proven integer carries no angle: its range already says what it is. */
+/** Record facts on a node. Shared input leaves and proven integers carry no derived facts. */
 export function learn(node: Node, facts: Facts): Node {
+  if (node.type === "input") return node;
   const next: Facts = { ...table.get(node) };
   if (facts.angle && rangeOf(node).int === undefined) next.angle = facts.angle;
   if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
@@ -104,13 +105,41 @@ function angleOf(op: Op, a: Node, b: Node | undefined): Angle | null {
   }
   const under = integerOf(b);
   if (left && under !== null && under !== BigInt(0)) return scale(left, BigInt(1), under);
+  const ub = factsOf(b).imaginaryUnit;
+  if (left && ub) return turn(left, ub === 1 ? -1 : 1);
   return null;
+}
+
+function unitOf(op: Op, a: Node, b: Node | undefined): 1 | -1 | undefined {
+  const ua = factsOf(a).imaginaryUnit;
+  if (op === "neg") return ua ? (ua === 1 ? -1 : 1) : undefined;
+  if (!b) return undefined;
+  const ub = factsOf(b).imaginaryUnit;
+  const ia = integerOf(a);
+  const ib = integerOf(b);
+  if (op === "add") {
+    if (ua && ib === BigInt(0)) return ua;
+    if (ub && ia === BigInt(0)) return ub;
+    return undefined;
+  }
+  if (op === "sub") {
+    if (ua && ib === BigInt(0)) return ua;
+    if (ub && ia === BigInt(0)) return ub === 1 ? -1 : 1;
+    return undefined;
+  }
+  if (op === "mul") {
+    if (ua && (ib === BigInt(1) || ib === BigInt(-1))) return ib === BigInt(1) ? ua : ua === 1 ? -1 : 1;
+    if (ub && (ia === BigInt(1) || ia === BigInt(-1))) return ia === BigInt(1) ? ub : ub === 1 ? -1 : 1;
+    return undefined;
+  }
+  if (ua && (ib === BigInt(1) || ib === BigInt(-1))) return ib === BigInt(1) ? ua : ua === 1 ? -1 : 1;
+  return undefined;
 }
 
 /** Record on `out` the facts that follow from the operation and its operands. Returns `out`. */
 export function derive(op: Op, out: Node, a: Node, b?: Node): Node {
   const angle = angleOf(op, a, b);
-  const unit = op === "neg" ? factsOf(a).imaginaryUnit : undefined;
+  const unit = unitOf(op, a, b);
   if (!angle && !unit) return out;
-  return learn(out, { ...(angle ? { angle } : {}), ...(unit ? { imaginaryUnit: unit === 1 ? -1 : 1 } : {}) });
+  return learn(out, { ...(angle ? { angle } : {}), ...(unit ? { imaginaryUnit: unit } : {}) });
 }
