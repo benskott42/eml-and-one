@@ -587,6 +587,82 @@ async function main() {
   heldView.close();
   delete workerGlobal.Worker;
 
+  // Step 7 re-test: float mode keeps "this is e" naming and the rotation notice
+  // of a loaded word (1E1 -> 11E) across Undo and mode switches.
+  const rotDom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const rotView = rotDom.window;
+  globals.window = rotView;
+  globals.self = rotView;
+  globals.document = rotView.document;
+  globals.HTMLElement = rotView.HTMLElement;
+  const rotMount = rotView.document.getElementById("root");
+  if (!rotMount) {
+    console.error("missing rot root");
+    process.exit(1);
+  }
+  const rotRoot = createRoot(rotMount);
+  await act(async () => {
+    rotRoot.render(<EmlCalculator />);
+  });
+  const rotBtn = (label: string) =>
+    [...rotView.document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label);
+  const rotClick = async (label: string) => {
+    const button = rotBtn(label);
+    if (!(button instanceof rotView.HTMLButtonElement)) {
+      console.error(`missing ${label} in rot test`);
+      failed = true;
+      return;
+    }
+    await act(async () => {
+      button.click();
+    });
+  };
+  const rotWait = async (ms: number) => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+  };
+  await rotClick("hardware");
+  await rotWait(40);
+  const progInput = rotView.document.querySelector('input[aria-label="Program number or word"]');
+  const loadBtn = rotBtn("Load");
+  if (progInput instanceof rotView.HTMLInputElement && loadBtn instanceof rotView.HTMLButtonElement) {
+    const setter = Object.getOwnPropertyDescriptor(rotView.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(progInput, "1E1");
+      progInput.dispatchEvent(new rotView.Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      loadBtn.click();
+    });
+    await rotWait(40);
+    const checkRot = (phase: string) => {
+      const cap = rotView.document.querySelector(".ti-lcd-caption")?.textContent ?? "";
+      const note = rotView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
+      if (!cap.includes("this is e") || !note.includes("Rotated 1E1 to 11E.")) {
+        console.error(`float loaded-word naming/notice lost at ${phase}`, { cap, note });
+        failed = true;
+      }
+    };
+    checkRot("initial load");
+    await rotClick("1");
+    await rotClick("Undo");
+    await rotWait(40);
+    checkRot("after Undo");
+    await rotClick("exact");
+    await rotWait(60);
+    await rotClick("hardware");
+    await rotWait(60);
+    checkRot("after exact -> hardware mode switch");
+  }
+  await act(async () => {
+    rotRoot.unmount();
+  });
+  rotView.close();
+
   if (failed) process.exit(1);
   console.log("calculator smoke passed");
 }
