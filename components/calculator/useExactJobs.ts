@@ -4,12 +4,12 @@
 import { useCallback, useEffect, useRef } from "react";
 import { type C } from "@/lib/eml/complex";
 import { beyondFloatBound } from "@/lib/eml/float-bound";
-import { exactScreen, type History } from "@/lib/eml/history";
 import { EmlLimitError, substitute, type Node } from "@/lib/eml/node";
 import type { PackedEnvNodes } from "@/lib/eml/packed-eval";
 import { packCircuit } from "@/lib/eml/wire";
-import { type Entry, type Model, failure, isUnverifiedEntry, noteFor, resultError } from "@/components/calculator/entry";
+import { type Entry, failure, isUnverifiedEntry } from "@/components/calculator/entry";
 import { type ExactEngine, loadExactEngine, loadedExactEngine } from "@/components/calculator/exactEngine";
+import type { CalcAction, CalcState } from "@/components/calculator/reducer";
 
 type Ref<T> = { current: T };
 
@@ -30,18 +30,14 @@ type WorkerPayload =
 
 export function useExactJobs({
   stack,
-  modelRef,
-  historyRef,
-  recomputeRef,
+  stateRef,
   queueRef,
-  setModel,
+  dispatch,
 }: {
   stack: Entry[];
-  modelRef: Ref<Model>;
-  historyRef: Ref<History<Model>>;
-  recomputeRef: Ref<boolean>;
+  stateRef: Ref<CalcState>;
   queueRef: Ref<Array<() => void>>;
-  setModel: (next: Model) => void;
+  dispatch: (action: CalcAction) => void;
 }): { cancelExact: () => void } {
   const followedRef = useRef(new Set<number>());
   type JobKind = "fill" | "compare";
@@ -52,24 +48,12 @@ export function useExactJobs({
   const exactSerial = useRef(0);
   const startFillWorker = useRef<(() => void) | null>(null);
 
-  const publishWatch = useCallback((token: number, next: Entry) => {
-    // Do not overwrite an in-flight mode switch / submit rebuild with a stale reply from the prior mode.
-    if (recomputeRef.current) return;
-    const current = modelRef.current;
-    if (!current.stack.some((row) => row.watch === token)) return;
-    const stack = current.stack.map((row) => (row.watch === token ? next : row));
-    const top = stack[stack.length - 1];
-    const updated: Model = {
-      ...current,
-      stack,
-      note: top?.watch === token ? noteFor(next) : current.note,
-      // "Swap needs two values." pressed while the top computed stays up.
-      error: top?.watch === token ? (resultError(next) ?? current.error) : current.error,
-    };
-    modelRef.current = updated;
-    historyRef.current = { ...historyRef.current, current: updated };
-    setModel(updated);
-  }, [historyRef, modelRef, recomputeRef, setModel]);
+  const publishWatch = useCallback(
+    (token: number, next: Entry) => {
+      dispatch({ type: "PUBLISH_WATCH", watch: token, next });
+    },
+    [dispatch],
+  );
 
   const finishExact = useCallback(
     (request: number, payload: WorkerPayload) => {
@@ -78,7 +62,7 @@ export function useExactJobs({
       inflight.current.fill.delete(request);
       inflight.current.compare.delete(request);
       if (!job) return;
-      const current = modelRef.current.stack.find((row) => row.watch === job.watch);
+      const current = stateRef.current.model.stack.find((row) => row.watch === job.watch);
       if (!current || current.cancelled) return;
       if ("error" in payload) {
         if (job.kind !== "fill") {
@@ -130,13 +114,13 @@ export function useExactJobs({
         exactInfIm: payload.exactInfIm,
       });
     },
-    [modelRef, publishWatch],
+    [publishWatch, stateRef],
   );
 
   const cancelExact = useCallback(function cancel() {
     // A mode switch or undo shows "computing" before its rows exist. A cancel
     // then waits for them, or the rows it lands would start computing again.
-    if (recomputeRef.current) {
+    if (stateRef.current.busy) {
       queueRef.current.push(() => cancel());
       return;
     }
@@ -146,21 +130,8 @@ export function useExactJobs({
       exactWorkers.current[kind] = null;
       inflight.current[kind].clear();
     }
-    const blank = exactScreen("cancelled");
-    const stack = modelRef.current.stack.map((item) =>
-      item.pendingExact ? { ...item, pendingExact: false, cancelled: true, text: blank.text, value: { re: Number.NaN, im: Number.NaN } } : item,
-    );
-    const top = stack[stack.length - 1];
-    const updated: Model = {
-      ...modelRef.current,
-      stack,
-      note: top?.cancelled ? blank.note : modelRef.current.note,
-      error: null,
-    };
-    modelRef.current = updated;
-    historyRef.current = { ...historyRef.current, current: updated };
-    setModel(updated);
-  }, [historyRef, modelRef, queueRef, recomputeRef, setModel]);
+    dispatch({ type: "CANCEL_EXACT" });
+  }, [dispatch, queueRef, stateRef]);
 
   useEffect(() => {
     const workers = exactWorkers.current;
@@ -311,7 +282,7 @@ export function useExactJobs({
           void loadExactEngine().catch(() => undefined);
           const pending = [...exactJobs.current.entries()].filter(([, job]) => job.kind === kind);
           for (const [request, job] of pending) {
-            const row = modelRef.current.stack.find((item) => item.watch === job.watch);
+            const row = stateRef.current.model.stack.find((item) => item.watch === job.watch);
             if (!row) {
               exactJobs.current.delete(request);
               inflight.current[kind].delete(request);
@@ -361,7 +332,7 @@ export function useExactJobs({
     startFillWorker.current = () => {
       if (!exactWorkers.current.fill && !workersBrokenRef.current) ensure("fill");
     };
-  }, [finishExact, modelRef, stack]);
+  }, [finishExact, stack, stateRef]);
 
   // The fill worker starts on the first exact job. Its startup (fetching and
   // compiling decimal.js and the exact engine) was most of the wait for the first
