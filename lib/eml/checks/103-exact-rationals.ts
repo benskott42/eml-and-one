@@ -1,3 +1,4 @@
+import { exactFractionNote } from "../../../components/calculator/entry";
 import { exactReport, formatExact } from "../exact";
 import { exactRationalOf, isRecognized } from "../facts";
 import { compileExpression } from "../parse";
@@ -62,6 +63,21 @@ const checkModule: CheckModule = {
       const got = formatExact(rep.value);
       if (rep.unverified || got !== want || !isRecognized(node)) {
         ctx.fail(`FAIL exact-rational-angle ${src} got=${rep.unverified ? "unverified" : got} want=${want} recognized=${isRecognized(node)}`);
+      }
+    }
+    // UI exact fraction note: shows `= n/d` for non-terminating rationals, null for integers/terminating decimals.
+    const fracNotes: [string, string | null][] = [
+      ["1/3", "= 1/3"],
+      ["-2/3", "= −2/3"],
+      ["(2/3)^2", "= 4/9"],
+      ["1/2", null],
+      ["1/3 + 2/3", null],
+      ["1/3 + 1/6", null],
+    ];
+    for (const [src, want] of fracNotes) {
+      const got = exactFractionNote(compileExpression(src, {}));
+      if (got !== want) {
+        ctx.fail(`FAIL exact-fraction-note ${src} got=${got} want=${want}`);
       }
     }
   },

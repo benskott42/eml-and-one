@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The calculator LCD note now displays the exact reduced fraction (`= 1/3`, `= −2/3`, `= 4/9`) for non-terminating exact rationals.
+- Extended `lib/eml/exact-ball.ts` with 4-axis `exp(ln(A) + i·kπ/2)` exact magnitude preservation and promoted the ball enclosure as first judge for zero-component refusal checks in `lib/eml/exact.ts`.
+
 ## 1.0.6 — 2026-11-25
 
 - Extended `lib/eml/facts.ts` with exact reduced rational tracking (`exactRationalOf`, wire-serialized as `er`): non-terminating rational arithmetic such as `1/3 + 2/3 − 1`, `1/6 + 1/3 − 1/2`, `(1/3)·3 − 1`, `(2/3)² − 4/9`, and `(1/3)^(−1) − 3` now resolve to exact 0, and rational π-multiples like `cos((1/3)·π)`, `sin((1/6)·π)`, and `cos(π / (3/2))` recognize cleanly.

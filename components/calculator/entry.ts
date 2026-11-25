@@ -1,6 +1,7 @@
 // What one stack row holds, how it is computed, and the note under the screen.
 import { type C } from "@/lib/eml/complex";
 import { formatC, isUsable } from "@/lib/eml/format";
+import { exactRationalOf } from "@/lib/eml/facts";
 import { recognizedNote, seriesShortcutNote } from "@/lib/eml/library";
 import {
   EmlError,
@@ -240,6 +241,21 @@ export function isUnverifiedEntry(item: Entry): boolean {
   return item.unverified === true || item.notice?.split(" · ").includes("couldn't verify") === true;
 }
 
+/** Exact reduced fraction `= n/d` for non-terminating rationals (e.g. 1/3 -> `= 1/3`), or null. */
+export function exactFractionNote(node: Node): string | null {
+  const q = exactRationalOf(node);
+  if (!q || q.d <= BigInt(1)) return null;
+  // Skip terminating decimals (denominator 2^a * 5^b) that already print cleanly in decimal.
+  let d = q.d;
+  while (d % BigInt(2) === BigInt(0)) d /= BigInt(2);
+  while (d % BigInt(5) === BigInt(0)) d /= BigInt(5);
+  if (d === BigInt(1)) return null;
+  const absN = q.n < BigInt(0) ? -q.n : q.n;
+  if (absN.toString().length > 12 || q.d.toString().length > 12) return null;
+  const sign = q.n < BigInt(0) ? "−" : "";
+  return `= ${sign}${absN.toString()}/${q.d.toString()}`;
+}
+
 export function noteFor(item: Entry): string | null {
   const facts = factsOf(item.node);
   const number = facts.number;
@@ -252,6 +268,7 @@ export function noteFor(item: Entry): string | null {
     item.pendingExact ? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
     unverified && !item.notice?.split(" · ").includes("couldn't verify") ? "couldn't verify" : null,
+    !item.pendingExact && !item.cancelled && !unverified ? exactFractionNote(item.node) : null,
     item.notice,
     item.overflowed ? "overflow" : null,
     underflowDisclosure(item.value, item.underflowed === true),

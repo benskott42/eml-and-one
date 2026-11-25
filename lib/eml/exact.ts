@@ -1144,6 +1144,9 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     const lost = Math.max(0, out.trigGap ?? 0);
     const need = other.e - firstTinyParts[which] + 30 + lost;
     if (need > digits) {
+      // Ball enclosure as first judge: if it proves the zero component is exact 0 and the
+      // nonzero component matches, no precision retry or refusal is needed.
+      if (confirmedBeside(root, env, budget, v, digits, 24)) return false;
       if (need > PRECISION_CAP) return true;
       const wide = atPrecision(need, root, env, budget, false).value[which];
       if (!wide.isFinite() || (!wide.isZero() && wide.e > other.e - need + lost + 20)) return true;

@@ -320,6 +320,8 @@ export function ballEnclose(
   const expArg = new Map<number, Ball>();
   const lnArg = new Map<number, Ball>();
   const lnAtomArg = new Map<number, Ball>();
+  /** Positive-real Comp whose ln produced this real-component key. */
+  const lnMagArg = new Map<number, Comp>();
 
   const zeroBall = (re: Comp, im: Comp): Ball => {
     const key = !re.v.isNeg() && !im.v.isNeg() ? EMPTY : atom(`Z${re.v.isNeg() ? "-" : "+"}${im.v.isNeg() ? "-" : "+"}`);
@@ -490,6 +492,19 @@ export function ballEnclose(
     if (!stretch.isFinite()) fail();
     const rk = compKey(x.re);
     if (trig) {
+      // exp(ln(A) + i·kπ/2) = A · i^k when A is a known positive real Comp (keeps exactness on 6*i, 4*i, 0.00005*i).
+      if (rk !== undefined) {
+        const mag = lnMagArg.get(rk);
+        if (mag && !mag.v.isNeg() && mag.v.gt(mag.r)) {
+          const rotComp = (unit: Decimal): Comp => {
+            if (unit.isZero()) return signedZero(unit.isNeg());
+            if (!unit.isNeg()) return mag;
+            const mk = compKey(mag);
+            return { v: mag.v.neg(), r: mag.r, exact: mag.exact, ...(mk !== undefined ? { key: keyNeg(mk) } : {}) };
+          };
+          return [{ re: rotComp(trig.c), im: rotComp(trig.s), key }];
+        }
+      }
       const ek = rk !== undefined ? atom(`RE${rk}`) : undefined;
       const part = (unit: Decimal): Comp => {
         if (unit.isZero()) return signedZero(unit.isNeg());
@@ -612,6 +627,17 @@ export function ballEnclose(
     const yrk = compKey(y.re);
     const yik = compKey(y.im);
     const reKey = yrk !== undefined && yik !== undefined ? atom(`LM${absKey(yrk).k},${absKey(yik).k}`) : undefined;
+    if (reKey !== undefined && !lnMagArg.has(reKey)) {
+      if (isExactZero(y.im) && reStrictlyPos) lnMagArg.set(reKey, y.re);
+      else if (isExactZero(y.im) && reStrictlyNeg) {
+        const mk = compKey(y.re);
+        lnMagArg.set(reKey, { v: y.re.v.neg(), r: y.re.r, exact: y.re.exact, ...(mk !== undefined ? { key: keyNeg(mk) } : {}) });
+      } else if (isExactZero(y.re) && imStrictlyPos) lnMagArg.set(reKey, y.im);
+      else if (isExactZero(y.re) && imStrictlyNeg) {
+        const mk = compKey(y.im);
+        lnMagArg.set(reKey, { v: y.im.v.neg(), r: y.im.r, exact: y.im.exact, ...(mk !== undefined ? { key: keyNeg(mk) } : {}) });
+      }
+    }
     const re: Comp = { v: lnv, r: spread.add(tenU).add(up(lnv).mul(tenU)), exact: false, ...(reKey !== undefined ? { key: reKey } : {}) };
     // Two candidates are two values, so neither keeps the key.
     return ims.length === 1 ? [{ re, im: ims[0] as Comp, key }] : ims.map((im) => ({ re, im }));
