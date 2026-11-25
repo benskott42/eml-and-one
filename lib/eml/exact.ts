@@ -12,9 +12,9 @@ import {
   precisionMessage,
   trigArg,
 } from "./node";
-import { dependsOnUnverified, isExactUnsure, isMarkedExactInt, isUnverified, provenInteger } from "./facts";
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, knownValue, mayBeInfinite } from "./lowering";
-import { evaluate as floatEvaluate, isSeriesShortcut, maxSeriesErrorExp, precisionNoteOf } from "./node";
+import { decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
+import { knownValue } from "./lowering";
+import { evaluate as floatEvaluate, precisionNoteOf } from "./node";
 import { ballConfirmsValue } from "./exact-ball";
 
 /**

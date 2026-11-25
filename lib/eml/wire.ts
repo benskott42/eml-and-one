@@ -1,12 +1,12 @@
 import { packFacts, unpackFacts } from "./facts";
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, markSeriesError, markSeriesShortcut, notePrecision, precisionNoteOf, seriesErrorExp, seriesShortcutText, type Node } from "./node";
+import { knownValue, tagValue } from "./lowering";
+import { E, ONE, V, input, notePrecision, precisionNoteOf, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
   | { i: number; k: "1" }
   | { i: number; k: "v"; n: string }
-  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; xu?: 1; lead?: string; se?: number; cap?: 1; dec?: number; nfr?: -1 | 1; nfi?: -1 | 1; inf?: 1 }
+  | { i: number; k: "in"; re: number; im: number; label: string; int?: string; unver?: 1; xu?: 1; lead?: 1 | string; se?: number; cap?: 1; dec?: number; nfr?: -1 | 1; nfi?: -1 | 1; inf?: 1 }
   | {
       i: number;
       k: "E";
@@ -78,13 +78,6 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         else if (re === -Infinity) token.nfr = -1;
         if (im === Infinity) token.nfi = 1;
         else if (im === -Infinity) token.nfi = -1;
-        const leadNote = seriesShortcutText(frame.n);
-        if (leadNote !== undefined) token.lead = leadNote;
-        const se = seriesErrorExp(frame.n);
-        if (se !== undefined) token.se = se;
-        if (isLostTiny(frame.n)) token.cap = 1;
-        const decade = decadeOf(frame.n);
-        if (decade !== undefined) token.dec = decade;
         packFacts(frame.n, token);
         tokens.push(token);
       }
@@ -110,16 +103,6 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.addL = idOf.get(note.left);
       token.addR = idOf.get(note.right);
     }
-    if (isTwoScaled(frame.n)) token.lift = 1;
-    if (inScaledShell(frame.n)) token.shell = 1;
-    if (isLiftedCombine(frame.n)) token.lc = 1;
-    const leadNote = seriesShortcutText(frame.n);
-    if (leadNote !== undefined) token.lead = leadNote;
-    const se = seriesErrorExp(frame.n);
-    if (se !== undefined) token.se = se;
-    if (isLostTiny(frame.n)) token.cap = 1;
-    const decade = decadeOf(frame.n);
-    if (decade !== undefined) token.dec = decade;
     const known = knownValue(frame.n);
     if (known && tinyPoint(known.re, known.im)) {
       token.kr = known.re;
@@ -140,10 +123,6 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       const re = tok.nfr === 1 ? Infinity : tok.nfr === -1 ? -Infinity : tok.re;
       const im = tok.nfi === 1 ? Infinity : tok.nfi === -1 ? -Infinity : tok.im;
       const node = input({ re, im }, tok.label);
-      if (tok.lead !== undefined) markSeriesShortcut(node, tok.lead);
-      if (tok.se !== undefined) markSeriesError(node, tok.se);
-      if (tok.cap) noteLostTiny(node);
-      if (tok.dec !== undefined) noteDecade(node, tok.dec);
       unpackFacts(node, tok);
       nodes[tok.i] = node;
     }
@@ -159,13 +138,6 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       else if (tok.addL !== undefined && tok.addR !== undefined && nodes[tok.addL] && nodes[tok.addR]) {
         notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
       }
-      if (tok.lift) markTwoScaled(node);
-      if (tok.shell) noteScaledShell(node);
-      if (tok.lc) noteLiftedCombine(node);
-      if (tok.lead !== undefined) markSeriesShortcut(node, typeof tok.lead === "string" ? tok.lead : undefined);
-      if (tok.se !== undefined) markSeriesError(node, tok.se);
-      if (tok.cap) noteLostTiny(node);
-      if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
       unpackFacts(node, tok, tok.i === root);
     }
