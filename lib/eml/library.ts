@@ -169,6 +169,48 @@ function isSymbolicTanPole(arg: Node): boolean {
   return (twice / coeff.d) % BigInt(2) !== BigInt(0);
 }
 
+/** The coefficient of π in twelfths, mod 24 (one full turn), when it is a whole number of them. */
+function piTwelfths(arg: Node): number | null {
+  const coeff = piOf(arg);
+  if (!coeff) return null;
+  const scaled = BigInt(12) * coeff.n;
+  if (scaled % coeff.d !== BigInt(0)) return null;
+  const k = (scaled / coeff.d) % BigInt(24);
+  return Number(k < BigInt(0) ? k + BigInt(24) : k);
+}
+
+/**
+ * sin at a multiple of π/6 where the value is 0, ±1/2 or ±1. The gates leave a
+ * residue near 10^(−16) there, which exact mode refuses: sin(π), cos(π/2) and
+ * sin(π/6) − 1/2 said "couldn't verify". The angle is the recorded multiple of π,
+ * not a float near it. ±√3/2 keeps its circuit.
+ */
+function sinAtPiMultiple(twelfths: number | null): Node | null {
+  if (twelfths === null || twelfths % 2 !== 0) return null;
+  const sixths = (twelfths / 2) % 12;
+  if (sixths === 0 || sixths === 6) return tZero();
+  if (sixths === 3) return tagInteger(ONE, BigInt(1));
+  if (sixths === 9) return tMinusOne();
+  if (sixths === 1 || sixths === 5) return tHalf();
+  if (sixths === 7 || sixths === 11) return tNeg(tHalf());
+  return null;
+}
+
+/**
+ * i times a rational multiple of π, recorded when the product is built, so that
+ * exp(iπ) is −1 and exp(iπ) + 1 is 0 (it said "couldn't verify").
+ */
+const imagPiCoeff = new WeakMap<Node, PiQ>();
+
+/** i^n for an integer n. */
+function unitPower(quarter: number): Node {
+  const q = ((quarter % 4) + 4) % 4;
+  if (q === 0) return tagInteger(ONE, BigInt(1));
+  if (q === 1) return tI();
+  if (q === 2) return tMinusOne();
+  return tNeg(tI());
+}
+
 /**
  * A known point, or the center of an interval only a few ulps wide.
  * Negation widens ±i, and a sum widens 2+10^(−18)i, so neither is a point.
@@ -188,6 +230,14 @@ function tightValue(t: Node): { re: number; im: number } | null {
 }
 
 export function tExp(t: Node): Node {
+  // exp(i·kπ/2) is i^k.
+  const turn = imagPiCoeff.get(t);
+  if (turn && (BigInt(2) * turn.n) % turn.d === BigInt(0)) return unitPower(Number(((BigInt(2) * turn.n) / turn.d) % BigInt(4)));
+  return expGates(t);
+}
+
+/** exp as its gate, with no value recognized. The tan pole is built from these gates. */
+function expGates(t: Node): Node {
   const node = noteExp(E(t, ONE), t);
   expArg.set(node, t);
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
@@ -398,7 +448,10 @@ export function tSub(a: Node, b: Node): Node {
 export function tNeg(b: Node): Node {
   const dir = directionOf(b);
   if (dir) return rememberDirection(dir.magnitude, dir.quarter + 2);
-  return tagPi(domainNeg(b), piNeg(b));
+  const negated = tagPi(domainNeg(b), piNeg(b));
+  const imagTurn = imagPiCoeff.get(b);
+  if (imagTurn) imagPiCoeff.set(negated, { n: -imagTurn.n, d: imagTurn.d });
+  return negated;
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -797,6 +850,14 @@ export function tMul(a: Node, b: Node): Node {
     return markUnverified(markInfiniteSource(rawMul(a, b)));
   }
   const product = tagPi(carryTinyScale(rawMul(a, b), a, b, "mul"), piMul(a, b));
+  // i·(qπ), and an integer times it: 2·π·i is built as 2·(π·i).
+  const ia = imagPiCoeff.get(a);
+  const ib = imagPiCoeff.get(b);
+  const na = intFactor(a);
+  const nb = intFactor(b);
+  const imagTurn =
+    a === tI() ? piOf(b) : b === tI() ? piOf(a) : ia && nb !== null ? piQ(ia.n * nb, ia.d) : ib && na !== null ? piQ(ib.n * na, ib.d) : null;
+  if (imagTurn) imagPiCoeff.set(product, imagTurn);
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
   // product of the two signs. An infinity on the right already has that sign.
@@ -835,7 +896,12 @@ export function tDiv(a: Node, b: Node): Node {
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
   const quotient = integerQuotient(a, b);
   if (quotient) return quotient;
-  return tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
+  const divided = tagPi(carryTinyScale(rawDiv(a, b), a, b, "div"), piDiv(a, b));
+  const imagTop = imagPiCoeff.get(a);
+  const under = intFactor(b);
+  const imagTurn = imagTop && under !== null && under !== BigInt(0) ? piQ(imagTop.n, imagTop.d * under) : null;
+  if (imagTurn) imagPiCoeff.set(divided, imagTurn);
+  return divided;
 }
 
 /** A proven integer exponent, including negatives. A float that is not integral is not one. */
@@ -863,6 +929,11 @@ export function tPow(a: Node, b: Node): Node {
     if (exp !== null && exp > BigInt(0)) return rememberDirection(dir.magnitude, dir.quarter * Number(exp % BigInt(4)));
     if (exp !== null && exp < BigInt(0)) return tZero();
     return markUnverified(markInfiniteSource(applyProgram("pow", { x: a, y: b })));
+  }
+  // i^n is 1, i, −1 or −i. The power word leaves a residue: i^2 + 1 said "couldn't verify".
+  if (a === tI()) {
+    const exp = integerExponent(b);
+    if (exp !== null) return unitPower(Number(exp % BigInt(4)));
   }
   const node = applyProgram("pow", { x: a, y: b });
   const ia = rangeOf(a).int;
@@ -1156,6 +1227,8 @@ function oddAtZero(t: Node): Node | null {
 export function tSin(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
+  const special = sinAtPiMultiple(piTwelfths(t));
+  if (special) return special;
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, SIN_ODD, SERIES_POLY);
@@ -1166,6 +1239,10 @@ export function tSin(t: Node): Node {
 }
 
 export function tCos(t: Node): Node {
+  // cos x = sin(x + π/2).
+  const twelfths = piTwelfths(t);
+  const special = sinAtPiMultiple(twelfths === null ? null : (twelfths + 6) % 24);
+  if (special) return special;
   const it = tMul(tI(), t);
   const node = flagAngle(tHalfOf(tAdd(tExp(it), tExp(tNeg(it)))), t, false);
   cosArg.set(node, t);
@@ -1175,6 +1252,11 @@ export function tCos(t: Node): Node {
 export function tTan(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
+  // tan(kπ) is 0 and tan(π/4 + kπ/2) is ±1. The pole at π/2 + kπ is handled below.
+  const twelfths = piTwelfths(t);
+  if (twelfths !== null && twelfths % 12 === 0) return tZero();
+  if (twelfths !== null && twelfths % 12 === 3) return tagInteger(ONE, BigInt(1));
+  if (twelfths !== null && twelfths % 12 === 9) return tMinusOne();
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TAN_ODD, SERIES_WIDE);
@@ -1183,7 +1265,9 @@ export function tTan(t: Node): Node {
   // A large positive exponent overflows to +∞ and the quotient vanishes,
   // so the same circuit covers both signs of Im(z). sin/cos does not.
   const w = tMul(tI(), t);
-  const grown = tExp(tMul(tTwo(), w));
+  // At the pole exp(2w) is exp(iπ). Recognized as −1 it would make this 2/0 − a real
+  // infinity; the gates keep the large finite value the pole is built from below.
+  const grown = isSymbolicTanPole(t) ? expGates(tMul(tTwo(), w)) : tExp(tMul(tTwo(), w));
   const tanh = tSub(ONE, tDiv(tTwo(), tAdd(grown, ONE)));
   const built = flagAngle(tMul(tNeg(tI()), tanh), t, true);
   if (!isSymbolicTanPole(t)) return built;
