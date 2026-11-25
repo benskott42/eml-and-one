@@ -2059,7 +2059,9 @@ function formatDec(d: Decimal): string {
   const sign = d.isNeg() ? "−" : "";
   const abs = d.abs();
   if (abs.lt("1e16") && exactInteger(abs)) return sign + abs.toFixed(0);
-  if (abs.lt("1e16") && abs.gte("1e-9")) {
+  // Fixed notation has twelve places, so below 10^(−6) it shows six digits or fewer
+  // (0.000000271828, where float shows 2.718282×10^−7). Scientific keeps twelve.
+  if (abs.lt("1e16") && abs.gte("1e-6")) {
     const shown = new D(abs.toFixed(12));
     const gap = abs.sub(shown).abs();
     const intGap = abs.sub(abs.round()).abs();
@@ -2067,8 +2069,9 @@ function formatDec(d: Decimal): string {
     // Twelve digits hide 0.5 − 10^(−72) and 1 − 10^(−72). Print the first digits of that tail.
     // Only when the 12 places look rounder than the value (trailing zeros dropped): when
     // places 13–14 merely happen to be 0, as in 0.019930868458|0096, twelve places are the
-    // usual display, not a hidden tail.
-    const looksRound = /\.\d{0,11}$|^\d+$/.test(abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""));
+    // usual display, not a hidden tail. At least three of the twelve places must be
+    // trailing zeros. One zero is common (0.73105857863|000488 is sigma(1)), three are not.
+    const looksRound = /\.\d{0,9}$|^\d+$/.test(abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, ""));
     const hiddenTail = gap.gt(dust) && gap.e < -14 && looksRound;
     const hiddenInt = intGap.gt(dust) && intGap.e < -9;
     if (hiddenTail || hiddenInt) {

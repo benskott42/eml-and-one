@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Exact mode prints a value below 10^(−6) in scientific notation with twelve digits. Fixed notation has twelve places, so 1e−7·e printed as 0.000000271828, with six digits, beside float's 2.718282×10^−7. sigma(1) printed 0.73105857863000488: a value whose 12th to 14th places happen to be 0 was taken for a round value hiding a tail. The tail is now revealed only when at least three of the twelve places are trailing zeros, as in 0.5 − 10^(−72) and 0.5 − 10^(−16).
 ## 1.0.3 — 2026-11-24
 
 - arctan(±i) is ±∞i and artanh(±1) is ±∞, with that direction kept, so exp of a turn of one is undefined. 1 + exp(−arctan(i)), σ(arctan(i)), and σ(i·artanh(1)) were certified as 1; none has a limit. arctan(i) was built as −i·artanh(i·i), and i·i was not seen as −1, so the infinity came out real. An infinity off the axes, such as ln(ln(0)) = ∞ + iπ, times ±i is refused, and so is anything computed from a refused node anywhere in the circuit: σ(ln(ln(0))·i) was a certified 1.
