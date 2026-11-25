@@ -131,4 +131,4 @@ Small, independent, and each its own pull request:
 | 5 site check script | done | #96 |
 | 6 calculator reducer | open | |
 | 7 limitations list | open | |
-| 8 housekeeping (fuzz tool, bumps, old branches) | open; 1.0.4 released | |
+| 8 housekeeping (fuzz tool, bumps, old branches) | fuzz tool done; 1.0.4 released; bumps/old branches open | |
