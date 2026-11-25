@@ -1,6 +1,6 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
+import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, learn, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
 
 export { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isTwoScaled, markInfiniteSource, markMaybeInfinite, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteNonfinite, noteOverflow, noteScaledShell };
 
@@ -748,7 +748,11 @@ let turn: Node | undefined;
 
 /** The K 21 word. Under this cut it is +iπ, and it is the rotator for every rotSub. */
 function ipiNode(): Node {
-  if (!turn) turn = tagValue(programNode("ipi"), { re: 0, im: Math.PI });
+  if (!turn) {
+    turn = learn(tagValue(programNode("ipi"), { re: 0, im: Math.PI }), {
+      angle: { q: { n: BigInt(1), d: BigInt(1) }, unit: "imag" },
+    });
+  }
   return turn;
 }
 

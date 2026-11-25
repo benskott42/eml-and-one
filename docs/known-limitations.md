@@ -39,7 +39,6 @@ A fuzz of about 7,800 expressions against mpmath on 2026-11-25 (in-process and t
 
 These are still certified and wrong. All sit where a term near 10^(−240) or smaller is cancelled against its own leading terms:
 
-- exp(10^(−237)) − 1 − 10^(−237) shows 1×10^(−357). The value is 5×10^(−475).
 - tanh(z) − z and arctan(z) − z for a pure imaginary z near 10^(−122) i or smaller show a real part that is rounding dust, or wrong digits: (arctan(−3×10^(−122) i) + 3×10^(−122) i)·10^100 shows 3×10^(−22) i, and the value is −9×10^(−266) i.
 - ln(tanh(10^(−236) + 10^(−236) i)) shows −543.410081946595 + 1.570796326795i. The value is −543.063508356315 + 0.785398163397i.
 

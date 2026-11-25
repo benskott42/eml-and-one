@@ -1155,8 +1155,14 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     if (top >= -300 && top < firstBig - (digits - 12)) return !confirmedBeside(root, env, budget, v, digits);
   }
   // A second-order term (x²/2 of exp or cos) was rounded into 1 inside a gate and the
-  // result vanished to 0: confirm the 0 with a rigorous ball enclosure, or refuse.
-  if ((out.absorb2 ?? 0) > digits - 12 && !out.sawLead && !agreesWithInteger(root, v) && vanished(v)) {
+  // result vanished to 0 or sits at the working-precision floor (e.g. exp(10^(−237)) − 1 − 10^(−237)):
+  // confirm with a rigorous ball enclosure, or refuse.
+  if (
+    (out.absorb2 ?? 0) > digits - 12 &&
+    !out.sawLead &&
+    !agreesWithInteger(root, v) &&
+    (vanished(v) || (digits > D.precision && zFinite(v) && Math.abs(exponentCeil(v) + digits) <= 4))
+  ) {
     if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits, 24)) return true;
   }
   return false;
