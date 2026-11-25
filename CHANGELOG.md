@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed `tanh(i·π/2)` certifying `−∞` instead of `undefined` (near a pole), fixed `sinh(i·kπ)` returning unverified instead of `0`, and added exact rational `log(base, value)` tracking in `tLogBase` (`log(2, 8) − 3 = 0`, `log(10, 1000) − 3 = 0`, `log(1/2, 4) + 2 = 0`, `log(4, 8) − 3/2 = 0`, `log(8, 2) = 1/3`).
+- Added `dyckProfile` and `binaryToFormula` to `lib/eml/binary.ts`, plus `max stack` metadata and a `Copy hex` button in `PressLine`.
+
 - Fixed positive powers of `−0` (`(−0)^2 = 0`, `(−0)^3 = −0`, `(−0)^(1/2) = 0`) instead of returning unverified when `exp(b·ln(−0))` dropped its angle, and fixed malformed `0x`/`0b` prefixes in `parseProgramInput` falling through to variable `x`.
 - Added Binary ↔ Catalan rank bijection (`binaryToRank` / `rankToBinary`) and structural metrics (`binaryTreeMetrics`) in `lib/eml/binary.ts`.
 

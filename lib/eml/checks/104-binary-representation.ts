@@ -1,9 +1,11 @@
 import {
   binaryProgramInfo,
+  binaryToFormula,
   binaryToRank,
   binaryToRpn,
   binaryTreeMetrics,
   cycleOrbit,
+  dyckProfile,
   isValidBinaryProgram,
   maxBinaryProgram,
   minBinaryProgram,
@@ -137,16 +139,28 @@ const checkModule: CheckModule = {
     if (mE.gates !== 1 || mE.depth !== 1 || mE.maxStack !== 2) ctx.fail(`FAIL metrics e ${JSON.stringify(mE)}`);
     if (mZero.gates !== 3 || mZero.depth !== 3 || mZero.maxStack !== 3) ctx.fail(`FAIL metrics 0 ${JSON.stringify(mZero)}`);
 
-    // Signed-zero positive powers: (-0)^2 = 0, (-0)^3 = -0, (-0)^(1/2) = 0.
+    // Dyck profile and formula decoding from binary.
+    if (dyckProfile("1110100").join(",") !== "1,2,3,2,3,2,1") {
+      ctx.fail(`FAIL dyck-profile 0 got=${dyckProfile("1110100").join(",")}`);
+    }
+    if (binaryToFormula("110") !== "E(1, 1)" || binaryToFormula("1110100") !== "E(1, E(E(1, 1), 1))") {
+      ctx.fail(`FAIL binary-formula got=${binaryToFormula("1110100")}`);
+    }
+
+    // Signed-zero positive powers and hyperbolic imaginary-pi identities/poles.
     for (const [src, want] of [
       ["(-0)^2", "0"],
       ["(-0)^3", "−0"],
       ["(-0)^(1/2)", "0"],
+      ["sinh(i*pi)", "0"],
+      ["sinh(-2*i*pi)", "0"],
+      ["tanh(i*pi/2)", "undefined"],
+      ["tanh(3*i*pi/2)", "undefined"],
     ] as const) {
       const rep = exactReport(compileExpression(src, {}), {}, { maxNodes: 800_000 });
       const gotText = formatExact(rep.value);
       if (rep.unverified || gotText !== want) {
-        ctx.fail(`FAIL neg-zero-pow ${src} got=${rep.unverified ? "unverified" : gotText} want=${want}`);
+        ctx.fail(`FAIL neg-zero-pow-and-hyp ${src} got=${rep.unverified ? "unverified" : gotText} want=${want}`);
       }
     }
   },

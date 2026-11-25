@@ -203,3 +203,39 @@ export function binaryTreeMetrics(bits: string): BinaryTreeMetrics {
     depth: depths[0] ?? 0,
   };
 }
+
+/**
+ * Dyck-path stack-height profile after each bit of a valid binary EML program.
+ * Starts at 1, stays >= 1 throughout, and ends at 1.
+ */
+export function dyckProfile(bits: string): number[] {
+  const rpn = binaryToRpn(bits);
+  if (!isProgram(rpn)) throw new RangeError("Not a valid binary EML program.");
+  const out: number[] = [];
+  let h = 0;
+  for (let i = 0; i < rpn.length; i += 1) {
+    h += rpn[i] === "1" ? 1 : -1;
+    out.push(h);
+  }
+  return out;
+}
+
+/**
+ * Decode a valid binary EML program directly into its nested E(a, b) formula string.
+ * For example: "110" -> "E(1, 1)", "1110100" -> "E(1, E(E(1, 1), 1))".
+ */
+export function binaryToFormula(bits: string): string {
+  const rpn = binaryToRpn(bits);
+  if (!isProgram(rpn)) throw new RangeError("Not a valid binary EML program.");
+  const stack: string[] = [];
+  for (let i = 0; i < rpn.length; i += 1) {
+    if (rpn[i] === "1") {
+      stack.push("1");
+    } else {
+      const b = stack.pop()!;
+      const a = stack.pop()!;
+      stack.push(`E(${a}, ${b})`);
+    }
+  }
+  return stack[0] ?? "1";
+}

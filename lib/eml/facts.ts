@@ -94,6 +94,8 @@ export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
   imaginaryUnit?: 1 | -1;
+  /** The node is q·i for an exact rational q (e.g. 3*i, (1/2)*i), used to derive (q·i)·π angles. */
+  imagRational?: Rational;
   infinity?: InfinityFact;
   /** Exact terminating decimal n·10^(−s); null means poisoned by conflicting values on the same node. */
   decimal?: ExactDecimal | null;
@@ -181,6 +183,7 @@ export function learn(node: Node, facts: Facts): Node {
   if (node.type !== "input") {
     if (facts.angle && provenInteger(node) === undefined && facts.integer === undefined) next.angle = facts.angle;
     if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
+    if (facts.imagRational) next.imagRational = facts.imagRational;
     if (facts.decimal !== undefined && !isUnverified(node) && !isExactUnsure(node)) {
       if (facts.decimal === null || prev?.decimal === null) {
         next.decimal = null;
@@ -235,6 +238,7 @@ export function learn(node: Node, facts: Facts): Node {
   if (
     next.angle ||
     next.imaginaryUnit ||
+    next.imagRational ||
     next.infinity ||
     next.decimal !== undefined ||
     next.rational !== undefined ||
@@ -655,6 +659,10 @@ function angleOf(op: Op, a: Node, b: Node | undefined): Angle | null {
     const ub = factsOf(b).imaginaryUnit;
     if (left && ub) return turn(left, ub);
     if (right && ua) return turn(right, ua);
+    const ira = !left ? factsOf(a).imagRational : undefined;
+    const irb = !right ? factsOf(b).imagRational : undefined;
+    if (left && irb && irb.d <= BigInt(1_000_000_000_000)) return scale(turn(left, 1), irb.n, irb.d);
+    if (right && ira && ira.d <= BigInt(1_000_000_000_000)) return scale(turn(right, 1), ira.n, ira.d);
     return null;
   }
   const under = integerOf(b);
@@ -817,17 +825,51 @@ function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
   return ia * ib;
 }
 
+function imagRationalOf(op: Op, a: Node, b: Node | undefined): Rational | undefined {
+  const irOf = (n: Node): Rational | undefined => {
+    const f = factsOf(n);
+    if (f.imagRational) return f.imagRational;
+    if (f.imaginaryUnit !== undefined) return { n: BigInt(f.imaginaryUnit), d: BigInt(1) };
+    return undefined;
+  };
+  const ia = irOf(a);
+  if (op === "neg") return ia ? { n: -ia.n, d: ia.d } : undefined;
+  if (!b) return undefined;
+  const ib = irOf(b);
+  if (op === "add" || op === "sub") {
+    if (ia && ib) {
+      const sign = op === "add" ? BigInt(1) : BigInt(-1);
+      return normalizeRational({ n: ia.n * ib.d + sign * ib.n * ia.d, d: ia.d * ib.d }) ?? undefined;
+    }
+    return undefined;
+  }
+  if (op === "mul") {
+    const ra = !ia ? exactRationalOf(a) : null;
+    const rb = !ib ? exactRationalOf(b) : null;
+    if (ia && rb) return normalizeRational({ n: ia.n * rb.n, d: ia.d * rb.d }) ?? undefined;
+    if (ib && ra) return normalizeRational({ n: ib.n * ra.n, d: ib.d * ra.d }) ?? undefined;
+    return undefined;
+  }
+  if (op === "div") {
+    const rb = exactRationalOf(b);
+    if (ia && rb && rb.n !== BigInt(0)) return normalizeRational({ n: ia.n * rb.d, d: ia.d * rb.n }) ?? undefined;
+  }
+  return undefined;
+}
+
 /** Record on `out` the facts that follow from the operation and its operands. Returns `out`. */
 export function derive(op: Op, out: Node, a: Node, b?: Node): Node {
   const angle = angleOf(op, a, b);
   const unit = unitOf(op, a, b);
+  const imagRat = unit === undefined ? imagRationalOf(op, a, b) : undefined;
   const decimal = decimalOf(op, a, b);
   const rat = decimal ? null : rationalOf(op, a, b);
   const intVal = out.type !== "input" && !isUnverified(out) && !isExactUnsure(out) ? intOf(op, a, b) : undefined;
-  if (!angle && !unit && !decimal && !rat && intVal === undefined) return out;
+  if (!angle && !unit && !imagRat && !decimal && !rat && intVal === undefined) return out;
   return learn(out, {
     ...(angle ? { angle } : {}),
     ...(unit ? { imaginaryUnit: unit } : {}),
+    ...(imagRat ? { imagRational: imagRat } : {}),
     ...(decimal ? { decimal } : {}),
     ...(rat ? { rational: rat } : {}),
     ...(intVal !== undefined ? { integer: { value: intVal } } : {}),

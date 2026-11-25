@@ -915,6 +915,9 @@ export function tSigmoid(t: Node): Node {
 export function tSinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
+  // sinh(i·kπ) = 0 for any integer k.
+  const ang = factsOf(t).angle;
+  if (ang && ang.unit === "imag" && ang.q.d === BigInt(1)) return recognized(tZero());
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
   // The dropped cubic is not exact, so z is marked as a series shortcut with its cubic error
@@ -938,6 +941,11 @@ export function tCosh(t: Node): Node {
 export function tTanh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
+  // tanh(i·(k + 1/2)π) = i·tan((k + 1/2)π) is a pole (undefined, not −∞).
+  const ang = factsOf(t).angle;
+  if (ang && ang.unit === "imag" && ang.q.d === BigInt(2)) {
+    return tTan(tMul(tNeg(tI()), t));
+  }
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
@@ -1426,8 +1434,57 @@ export function tArtanh(t: Node): Node {
   return tArtanhClosed(t);
 }
 
+/** Exact rational log_base(value) = p/q when base^p = value^q for small integers |p| <= 64, 1 <= q <= 8. */
+function exactRationalLog(base: Rational, value: Rational): Rational | null {
+  if (base.n <= BigInt(0) || value.n <= BigInt(0) || base.n === base.d) return null;
+  if (value.n === value.d) return { n: BigInt(0), d: BigInt(1) };
+  // Normalize base > 1 by inverting if base < 1 (flips sign of log).
+  let bn = base.n;
+  let bd = base.d;
+  let flipBase = false;
+  if (bn < bd) {
+    [bn, bd] = [bd, bn];
+    flipBase = true;
+  }
+  let vn = value.n;
+  let vd = value.d;
+  let flipVal = false;
+  if (vn < vd) {
+    [vn, vd] = [vd, vn];
+    flipVal = true;
+  }
+  const sign = flipBase === flipVal ? BigInt(1) : BigInt(-1);
+  // Check value^q === base^p for 1 <= q <= 8 and 1 <= p <= 64 (strictly increasing powers).
+  let vnq = BigInt(1);
+  let vdq = BigInt(1);
+  for (let q = 1; q <= 8; q += 1) {
+    vnq *= vn;
+    vdq *= vd;
+    if (vnq.toString().length > 200 || vdq.toString().length > 200) break;
+    let bnp = BigInt(1);
+    let bdp = BigInt(1);
+    for (let p = 1; p <= 64; p += 1) {
+      bnp *= bn;
+      bdp *= bd;
+      if (bnp === vnq && bdp === vdq) return { n: sign * BigInt(p), d: BigInt(q) };
+      if (bnp > vnq && bdp >= vdq) break;
+      if (bnp.toString().length > 200 || bdp.toString().length > 200) break;
+    }
+  }
+  return null;
+}
+
 export function tLogBase(base: Node, value: Node): Node {
-  return applyProgram("log", { x: base, y: value });
+  const node = applyProgram("log", { x: base, y: value });
+  if (!isUnverified(base) && !isUnverified(value) && !isExactUnsure(base) && !isExactUnsure(value)) {
+    const rb = exactRationalOf(base);
+    const rv = exactRationalOf(value);
+    if (rb && rv) {
+      const q = exactRationalLog(rb, rv);
+      if (q) learn(node, { rational: q });
+    }
+  }
+  return node;
 }
 
 export function tAvg(a: Node, b: Node): Node {

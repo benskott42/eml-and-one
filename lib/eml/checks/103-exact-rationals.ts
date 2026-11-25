@@ -23,6 +23,12 @@ const checkModule: CheckModule = {
       "(1/3 + 2/3)*0.5 - 0.5",
       "(1/3 - 1/6) - 1/6",
       "((1/3) / (2/3)) - 0.5",
+      "log(2, 8) - 3",
+      "log(10, 1000) - 3",
+      "log(1/2, 4) + 2",
+      "log(2, 1/8) + 3",
+      "log(4, 8) - 3/2",
+      "log(8, 2) - 1/3",
     ];
     for (const src of exactZeros) {
       const node = compileExpression(src, {});
@@ -70,6 +76,7 @@ const checkModule: CheckModule = {
       ["1/3", "= 1/3"],
       ["-2/3", "= −2/3"],
       ["(2/3)^2", "= 4/9"],
+      ["log(8, 2)", "= 1/3"],
       ["1/2", null],
       ["1/3 + 2/3", null],
       ["1/3 + 1/6", null],
