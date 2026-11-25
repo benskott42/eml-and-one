@@ -1,5 +1,5 @@
 // Small pieces of the calculator screen that keep their own state.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { GolfHit } from "@/lib/eml/golf";
 import { ln0Dependence } from "@/lib/eml/golf-label";
 import { type Node } from "@/lib/eml/node";
@@ -235,6 +235,31 @@ export function GolfPanel() {
           Cancel
         </button>
       </div>
+    </details>
+  );
+}
+
+const subscribeNothing = () => () => {};
+
+/**
+ * A closed fold. The static page and hydration carry its text, so a reader without
+ * scripts has it and crawlers index it. Once React owns the page the text of a closed
+ * fold is dropped, and kept after the fold has been opened. Left in, the browser still
+ * shapes about 3,000 characters per closed fold when something reads the page (one
+ * first layout of 25 ms at 6x CPU throttling), which counts as a long task.
+ */
+export function Fold({ summary, children }: { summary: string; children: ReactNode }) {
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+  const [opened, setOpened] = useState(false);
+  return (
+    <details
+      className="ti-fold"
+      onToggle={(event) => {
+        if ((event.currentTarget as HTMLDetailsElement).open) setOpened(true);
+      }}
+    >
+      <summary>{summary}</summary>
+      {hydrated && !opened ? null : children}
     </details>
   );
 }

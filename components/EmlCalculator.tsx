@@ -34,7 +34,7 @@ import {
 } from "@/components/calculator/entry";
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "@/components/calculator/twoButtons";
 import { useExactJobs } from "@/components/calculator/useExactJobs";
-import { CopyNumber, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
+import { CopyNumber, Fold, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
 import { compileSubmission, nextTurn } from "@/components/submitTurn";
 
 /** False in the static HTML and during hydration, true once React owns the keys. */
@@ -1122,8 +1122,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         </p>
         {twoButtons ? null : <GolfPanel />}
 
-        <details className="ti-fold">
-          <summary>Branch, subtraction, and infinity</summary>
+        <Fold summary="Branch, subtraction, and infinity">
           <p>
             Exact mode and float64 use the same cut: on a negative real, the log inside eml has
             argument −π, so the composed ln is the principal logarithm and i is +i. The K 21
@@ -1176,10 +1175,9 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
               </li>
             ))}
           </ul>
-        </details>
+        </Fold>
 
-        <details className="ti-fold">
-          <summary>Known float limits</summary>
+        <Fold summary="Known float limits">
           <p>
             Exact mode is the default. It evaluates this circuit and the screen says computing
             until that finishes. Cancel stops it. A previous result is not left on screen while
@@ -1214,17 +1212,16 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
             is stored beside the node. A subtrahend with a real part around 1.3×10^154 or larger overflows the
             scale, so x − y is undefined and flagged out of float range.
           </p>
-        </details>
+        </Fold>
 
-        <details className="ti-fold">
-          <summary>How ln is only 1 and EML</summary>
+        <Fold summary="How ln is only 1 and EML">
           <p>
             ln x = eml(1, eml(eml(1, x), 1)). On the stack that is the program{" "}
             <span className="ti-tape">1 1 x E 1 E E</span>. Pressing ln runs that program.
             Sine, π, and the rest are longer programs of the same kind. Keys 1 and E work from
             the keyboard; Backspace undoes.
           </p>
-        </details>
+        </Fold>
 
         <p className="ti-fold">
           Andrzej Odrzywołek,{" "}
