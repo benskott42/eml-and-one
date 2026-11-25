@@ -52,6 +52,27 @@ export type RefusedFact = {
   dependsUnverified?: boolean;
 };
 
+/**
+ * Scale and series-shortcut facts (replaces seriesShortcuts, seriesErrorExps in node.ts
+ * and lostTiny, decades, twoScaled, scaledShell, liftedCombines in lowering.ts).
+ */
+export type ScaleFact = {
+  /** Series shortcut note; a vanished result that still holds one is not a certified 0. Crosses the wire as `lead`. */
+  seriesShortcut?: string;
+  /** Base-10 exponent of the dropped error term on a crude linear series shortcut. Crosses the wire as `se`. */
+  seriesErrorExp?: number;
+  /** A past-cap tiny term the 480-digit pass cannot recover. Crosses the wire as `cap`. */
+  lostTiny?: boolean;
+  /** Signed power-of-ten exponent of a known real, including values float64 cannot hold. Crosses the wire as `dec`. */
+  decade?: number;
+  /** A sum or difference lifted by a power of ten. Crosses the wire as `lift`. */
+  twoScaled?: boolean;
+  /** Gates built only to lift a tiny pair by a power of ten and bring it back. Crosses the wire as `shell`. */
+  scaledShell?: boolean;
+  /** The add or sub gate between a 10^k lift and its drop. Crosses the wire as `lc`. */
+  liftedCombine?: boolean;
+};
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
@@ -63,6 +84,8 @@ export type Facts = {
   integer?: IntegerFact;
   /** Refusal marks for exact and float certification. */
   refused?: RefusedFact;
+  /** Scale, decade, lift, and series-shortcut facts. */
+  scale?: ScaleFact;
 };
 
 export type WireFacts = {
@@ -71,6 +94,13 @@ export type WireFacts = {
   pint?: string;
   unver?: 1;
   xu?: 1;
+  lead?: 1 | string;
+  se?: number;
+  cap?: 1;
+  dec?: number;
+  lift?: 1;
+  shell?: 1;
+  lc?: 1;
 };
 
 export type Op = "add" | "sub" | "mul" | "div" | "neg";
@@ -133,10 +163,125 @@ export function learn(node: Node, facts: Facts): Node {
   if (facts.refused) {
     next.refused = { ...prev?.refused, ...facts.refused };
   }
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused) {
+  if (facts.scale) {
+    const prevErr = prev?.scale?.seriesErrorExp;
+    const nextErr = facts.scale.seriesErrorExp;
+    const mergedErr = prevErr !== undefined && nextErr !== undefined ? Math.max(prevErr, nextErr) : (nextErr ?? prevErr);
+    next.scale = {
+      ...prev?.scale,
+      ...facts.scale,
+      ...(mergedErr !== undefined ? { seriesErrorExp: mergedErr } : {}),
+    };
+  }
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused || next.scale) {
     table.set(node, next);
   }
   return node;
+}
+
+export function markSeriesShortcut(node: Node, note = "series shortcut"): Node {
+  return learn(node, { scale: { seriesShortcut: note } });
+}
+
+/** Record the exponent (base 10) of the dropped error term for a crude linear series shortcut. */
+export function markSeriesError(node: Node, errExp: number): Node {
+  return learn(node, { scale: { seriesErrorExp: errExp } });
+}
+
+export function seriesErrorExp(node: Node): number | undefined {
+  return factsOf(node).scale?.seriesErrorExp;
+}
+
+/** Largest dropped-term exponent among crude series shortcuts reachable from `root`, if any. */
+export function maxSeriesErrorExp(root: Node): number | undefined {
+  let max: number | undefined;
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    const err = factsOf(node).scale?.seriesErrorExp;
+    if (err !== undefined && (max === undefined || err > max)) max = err;
+    if (node.type === "eml") {
+      if (node.a) stack.push(node.a);
+      if (node.b) stack.push(node.b);
+    }
+  }
+  return max;
+}
+
+export function isSeriesShortcut(node: Node): boolean {
+  return factsOf(node).scale?.seriesShortcut !== undefined;
+}
+
+export function seriesShortcutText(node: Node): string | undefined {
+  return factsOf(node).scale?.seriesShortcut;
+}
+
+export function seriesShortcutNoteFrom(root: Node): string | null {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    const note = factsOf(node).scale?.seriesShortcut;
+    if (note) return note;
+    if (node.type === "eml") {
+      if (node.a) stack.push(node.a);
+      if (node.b) stack.push(node.b);
+    }
+  }
+  return null;
+}
+
+export function usesSeriesShortcut(root: Node): boolean {
+  return seriesShortcutNoteFrom(root) !== null;
+}
+
+export function noteLostTiny(node: Node): Node {
+  return learn(node, { scale: { lostTiny: true } });
+}
+
+export function isLostTiny(node: Node): boolean {
+  return factsOf(node).scale?.lostTiny === true;
+}
+
+/** Signed power-of-ten exponent of a known real, including values float64 cannot hold. */
+export function noteDecade(node: Node, exp: number): Node {
+  if (Number.isFinite(exp)) learn(node, { scale: { decade: Math.trunc(exp) } });
+  return node;
+}
+
+export function decadeOf(node: Node): number | undefined {
+  return factsOf(node).scale?.decade;
+}
+
+/** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
+export function markTwoScaled(node: Node): Node {
+  return learn(node, { scale: { twoScaled: true } });
+}
+
+export function isTwoScaled(node: Node): boolean {
+  return factsOf(node).scale?.twoScaled === true;
+}
+
+export function inScaledShell(node: Node): boolean {
+  return factsOf(node).scale?.scaledShell === true;
+}
+
+export function noteScaledShell(node: Node): void {
+  learn(node, { scale: { scaledShell: true } });
+}
+
+export function isLiftedCombine(node: Node): boolean {
+  return factsOf(node).scale?.liftedCombine === true;
+}
+
+/** The worker rebuilds the circuit from the wire, so the mark travels with it. */
+export function noteLiftedCombine(node: Node): void {
+  learn(node, { scale: { liftedCombine: true } });
 }
 
 /** A result that dropped a term. The screen says it could not verify, in either mode. */
@@ -224,6 +369,18 @@ export function packFacts(node: Node, target: WireFacts, isRoot = false): void {
   else if (isRoot && node.type !== "one" && f.integer !== undefined) target.pint = f.integer.value.toString();
   if (f.refused?.unverified) target.unver = 1;
   if (f.refused?.exactUnsure) target.xu = 1;
+  const s = f.scale;
+  if (s) {
+    if (node.type === "eml") {
+      if (s.twoScaled) target.lift = 1;
+      if (s.scaledShell) target.shell = 1;
+      if (s.liftedCombine) target.lc = 1;
+    }
+    if (s.seriesShortcut !== undefined) target.lead = s.seriesShortcut;
+    if (s.seriesErrorExp !== undefined) target.se = s.seriesErrorExp;
+    if (s.lostTiny) target.cap = 1;
+    if (s.decade !== undefined) target.dec = s.decade;
+  }
 }
 
 /** Restore facts that crossed the worker wire onto an unpacked node. */
@@ -233,6 +390,13 @@ export function unpackFacts(node: Node, source: WireFacts, isRoot = false): void
   else if (isRoot && source.pint !== undefined) learn(node, { integer: { value: BigInt(source.pint) } });
   if (source.unver) markUnverified(node);
   if (source.xu) markExactUnsure(node);
+  if (source.lift) markTwoScaled(node);
+  if (source.shell) noteScaledShell(node);
+  if (source.lc) noteLiftedCombine(node);
+  if (source.lead !== undefined) markSeriesShortcut(node, typeof source.lead === "string" ? source.lead : undefined);
+  if (source.se !== undefined) markSeriesError(node, source.se);
+  if (source.cap) noteLostTiny(node);
+  if (source.dec !== undefined) noteDecade(node, source.dec);
 }
 
 export function mayBeInfinite(node: Node): boolean {

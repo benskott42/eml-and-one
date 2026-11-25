@@ -1,8 +1,8 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, isSeriesShortcut, markSeriesShortcut, notePrecision, onCircuitIsolate, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { clearProvenInt, isExactUnsure, isMarkedExactInt, isNonfiniteNode, markExactUnsure, markInfiniteSource, markMaybeInfinite, markUnverified, mayBeInfinite, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, provenInteger, recordedPoleSign } from "./facts";
+import { clearProvenInt, decadeOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign } from "./facts";
 
-export { isMarkedExactInt, isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow };
+export { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isTwoScaled, markInfiniteSource, markMaybeInfinite, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteNonfinite, noteOverflow, noteScaledShell };
 
 /**
  * Structural ranges for subtraction and the exponential.
@@ -1047,24 +1047,7 @@ function liftedFloat(x: number, k: number): number {
   return liftSteps(k).reduce((acc, step) => acc * 10 ** step, x);
 }
 
-/**
- * (a·10^k + b·10^k) / 10^k. The unscaled add only has about 10^(−16) of absolute
- * accuracy, so two values near 10^(−10) need to be lifted before they are added.
- */
-const twoScaled = new WeakSet<Node>();
-const decades = new WeakMap<Node, number>();
-/** A term the 480-digit pass cannot recover. A vanished result that still holds one is not a certified 0. */
-const lostTiny = new WeakSet<Node>();
 const negationOf = new WeakMap<Node, Node>();
-
-export function noteLostTiny(node: Node): Node {
-  lostTiny.add(node);
-  return node;
-}
-
-export function isLostTiny(node: Node): boolean {
-  return lostTiny.has(node);
-}
 
 /** An underflow with no decade and no known nonzero value. Raising precision cannot recover it. */
 export function hiddenUnderflow(node: Node): boolean {
@@ -1120,12 +1103,6 @@ export function carryTinyScale(node: Node, a: Node, b: Node, op: "mul" | "div"):
   return node;
 }
 
-/** Signed power-of-ten exponent of a known real, including values float64 cannot hold. */
-export function noteDecade(node: Node, exp: number): Node {
-  if (Number.isFinite(exp)) decades.set(node, Math.trunc(exp));
-  return node;
-}
-
 /**
  * A real whose leading term sits at `decade`, signed when that sign is known.
  * The interval is wide enough that the next series term stays inside it, and
@@ -1139,36 +1116,6 @@ export function noteTinyReal(node: Node, decade: number, negative: boolean): Nod
   const lo = negative ? -10 * mag : mag / 10;
   const hi = negative ? -mag / 10 : 10 * mag;
   return setRange(marked, { re: { lo, hi }, im: { lo: 0, hi: 0 } });
-}
-
-export function decadeOf(node: Node): number | undefined {
-  return decades.get(node);
-}
-
-/** A sum or difference lifted by a power of ten. Its small component is the value, not dust. */
-export function markTwoScaled(node: Node): Node {
-  twoScaled.add(node);
-  return node;
-}
-
-export function isTwoScaled(node: Node): boolean {
-  return twoScaled.has(node);
-}
-
-/**
- * Gates built only to lift a tiny pair by a power of ten and bring it back.
- * Their terms reach that scale, which says nothing about the size the circuit
- * works at, so the exact engine leaves them out when it sizes rounding dust.
- * The lifted operands are not in the set.
- */
-const scaledShell = new WeakSet<Node>();
-
-export function inScaledShell(node: Node): boolean {
-  return scaledShell.has(node);
-}
-
-export function noteScaledShell(node: Node): void {
-  scaledShell.add(node);
 }
 
 /** Hide a lift's internal cancellation so it is not mistaken for the value's work. */
@@ -1185,7 +1132,7 @@ function markShell(root: Node, operands: Node[]): Node {
     if (!node || stop.has(node) || seen.has(node)) continue;
     seen.add(node);
     if (node.type !== "eml") continue;
-    scaledShell.add(node);
+    noteScaledShell(node);
     stack.push(node.a, node.b);
   }
   return root;
@@ -1221,25 +1168,9 @@ function scaledTiny(a: Node, b: Node, k: number): Node {
   return markTwoScaled(markShell(dropBy(combined, k), [a, b]));
 }
 
-/**
- * The add or sub gate between a lift and its drop. It sits in the scaled shell,
- * so its cancellation is not in the exact engine's work tally; the engine reads
- * this mark to size the precision that cancellation needs.
- */
-const liftedCombines = new WeakSet<Node>();
-
 function liftedCombine(node: Node): Node {
-  liftedCombines.add(node);
+  noteLiftedCombine(node);
   return node;
-}
-
-export function isLiftedCombine(node: Node): boolean {
-  return liftedCombines.has(node);
-}
-
-/** The worker rebuilds the circuit from the wire, so the mark travels with it. */
-export function noteLiftedCombine(node: Node): void {
-  liftedCombines.add(node);
 }
 
 /** (a·10^k − b·10^k) / 10^k. The short subtraction loses a difference near 10^(−20). */
