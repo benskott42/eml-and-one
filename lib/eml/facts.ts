@@ -1,4 +1,3 @@
-import { rangeOf } from "./lowering";
 import { isExactUnsure, isUnverified, type Node } from "./node";
 
 /**
@@ -31,6 +30,15 @@ export type ExactDecimal = { n: bigint; s: number };
 
 export const DECIMAL_SCALE_MAX = 1000;
 
+/**
+ * Exact integer value known for a node (replaces provenBig, markedExactInt, Range.int).
+ * When `marked` is true, exact evaluation reads `value` directly.
+ */
+export type IntegerFact = {
+  value: bigint;
+  marked?: boolean;
+};
+
 export type Facts = {
   angle?: Angle;
   /** The node is i (1) or −i (−1). */
@@ -38,10 +46,14 @@ export type Facts = {
   infinity?: InfinityFact;
   /** Exact terminating decimal n·10^(−s); null means poisoned by conflicting values on the same node. */
   decimal?: ExactDecimal | null;
+  /** Exact integer value; `marked: true` means exact evaluation reads it directly. */
+  integer?: IntegerFact;
 };
 
 export type WireFacts = {
   inf?: 1;
+  int?: string;
+  pint?: string;
 };
 
 export type Op = "add" | "sub" | "mul" | "div" | "neg";
@@ -78,7 +90,7 @@ export function learn(node: Node, facts: Facts): Node {
   const prev = table.get(node);
   const next: Facts = { ...prev };
   if (node.type !== "input") {
-    if (facts.angle && rangeOf(node).int === undefined) next.angle = facts.angle;
+    if (facts.angle && provenInteger(node) === undefined && facts.integer === undefined) next.angle = facts.angle;
     if (facts.imaginaryUnit) next.imaginaryUnit = facts.imaginaryUnit;
     if (facts.decimal !== undefined && !isUnverified(node) && !isExactUnsure(node)) {
       if (facts.decimal === null || prev?.decimal === null) {
@@ -95,8 +107,47 @@ export function learn(node: Node, facts: Facts): Node {
   if (facts.infinity) {
     next.infinity = { ...prev?.infinity, ...facts.infinity };
   }
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined) table.set(node, next);
+  if (facts.integer) {
+    next.integer = {
+      value: facts.integer.value,
+      ...(prev?.integer?.marked || facts.integer.marked ? { marked: true } : {}),
+    };
+  }
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer) {
+    table.set(node, next);
+  }
   return node;
+}
+
+/** The integer a node was built as. `ONE` is always 1. */
+export function provenInteger(node: Node): bigint | undefined {
+  if (node.type === "one") return BigInt(1);
+  return factsOf(node).integer?.value;
+}
+
+/** Record that `node` was built as the exact integer `value`. */
+export function noteProvenInt(node: Node, value: bigint): Node {
+  return learn(node, { integer: { value } });
+}
+
+/** Remove any recorded integer fact from `node` (e.g. when a wider incompatible range is attached). */
+export function clearProvenInt(node: Node): void {
+  const prev = table.get(node);
+  if (!prev || prev.integer === undefined) return;
+  const next: Facts = { ...prev };
+  delete next.integer;
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined) table.set(node, next);
+  else table.delete(node);
+}
+
+/** Exact evaluation reads this integer directly. The float value stays the rounded one. */
+export function isMarkedExactInt(node: Node): boolean {
+  return factsOf(node).integer?.marked === true;
+}
+
+/** Record an exact integer that exact evaluation reads directly. */
+export function noteMarkedExactInt(node: Node, value: bigint): Node {
+  return learn(node, { integer: { value, marked: true } });
 }
 
 /** Exact terminating decimal of a node, or null if unknown or poisoned. */
@@ -104,7 +155,7 @@ export function exactDecimalOf(node: Node): ExactDecimal | null {
   const known = factsOf(node).decimal;
   if (known !== undefined) return known;
   if (isUnverified(node) || isExactUnsure(node)) return null;
-  const int = rangeOf(node).int;
+  const int = provenInteger(node);
   return int === undefined ? null : { n: int, s: 0 };
 }
 
@@ -114,13 +165,18 @@ export function noteExactDecimal(node: Node, value: ExactDecimal): Node {
 }
 
 /** Pack facts that cross the worker wire onto a wire token. */
-export function packFacts(node: Node, target: WireFacts): void {
-  if (factsOf(node).infinity?.maybe) target.inf = 1;
+export function packFacts(node: Node, target: WireFacts, isRoot = false): void {
+  const f = factsOf(node);
+  if (f.infinity?.maybe) target.inf = 1;
+  if (f.integer?.marked) target.int = f.integer.value.toString();
+  else if (isRoot && node.type !== "one" && f.integer !== undefined) target.pint = f.integer.value.toString();
 }
 
 /** Restore facts that crossed the worker wire onto an unpacked node. */
-export function unpackFacts(node: Node, source: WireFacts): void {
+export function unpackFacts(node: Node, source: WireFacts, isRoot = false): void {
   if (source.inf) learn(node, { infinity: { maybe: true } });
+  if (source.int !== undefined) learn(node, { integer: { value: BigInt(source.int), marked: true } });
+  else if (isRoot && source.pint !== undefined) learn(node, { integer: { value: BigInt(source.pint) } });
 }
 
 export function mayBeInfinite(node: Node): boolean {
@@ -187,7 +243,7 @@ export function rational(n: bigint, d: bigint): Rational | null {
 /** The node's integer value, when it is a proven integer and not an angle. */
 function integerOf(node: Node): bigint | null {
   if (factsOf(node).angle) return null;
-  const n = rangeOf(node).int;
+  const n = provenInteger(node);
   return n === undefined ? null : n;
 }
 
@@ -347,15 +403,29 @@ export function derivePow(out: Node, a: Node, b: Node): Node {
   return value ? learn(out, { decimal: value }) : out;
 }
 
+function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
+  const ia = provenInteger(a);
+  if (ia === undefined) return undefined;
+  if (op === "neg") return ia === BigInt(0) ? undefined : -ia;
+  if (!b || op === "div") return undefined;
+  const ib = provenInteger(b);
+  if (ib === undefined) return undefined;
+  if (op === "add") return ia + ib;
+  if (op === "sub") return ia - ib;
+  return ia * ib;
+}
+
 /** Record on `out` the facts that follow from the operation and its operands. Returns `out`. */
 export function derive(op: Op, out: Node, a: Node, b?: Node): Node {
   const angle = angleOf(op, a, b);
   const unit = unitOf(op, a, b);
   const decimal = decimalOf(op, a, b);
-  if (!angle && !unit && !decimal) return out;
+  const intVal = out.type !== "input" && !isUnverified(out) && !isExactUnsure(out) ? intOf(op, a, b) : undefined;
+  if (!angle && !unit && !decimal && intVal === undefined) return out;
   return learn(out, {
     ...(angle ? { angle } : {}),
     ...(unit ? { imaginaryUnit: unit } : {}),
     ...(decimal ? { decimal } : {}),
+    ...(intVal !== undefined ? { integer: { value: intVal } } : {}),
   });
 }

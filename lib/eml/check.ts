@@ -31,7 +31,7 @@ import {
   tTwo,
   unaryNode,
 } from "./library";
-import { decadeOf, domainAdd, domainSub, knownValue, naiveSub, rangeOf, rotSubCircuit } from "./lowering";
+import { decadeOf, domainAdd, domainSub, knownValue, naiveSub, rotSubCircuit } from "./lowering";
 import {
   type Node,
   E,
@@ -51,12 +51,12 @@ import {
   expUnderflows,
   input,
   isolateCircuit,
-  provenInteger,
   isPure,
   nodeFromRpn,
   rpnTokens,
   substitute,
 } from "./node";
+import { provenInteger } from "./facts";
 import {
   approximateIndexBits,
   catalan,
@@ -1394,7 +1394,7 @@ if (shardTurn(26)) {
   const sum = evaluateReport(summed, {}, { maxNodes: 2_000_000 });
   if (!close(sum.value, c(20000), 1e-12) || sum.value.im !== 0) {
     failed += 1;
-    console.log("FAIL 20000 ones", sum.value, sum.singular, rangeOf(summed).int?.toString(), provenInteger(summed)?.toString(), summed.type);
+    console.log("FAIL 20000 ones", sum.value, sum.singular, provenInteger(summed)?.toString(), summed.type);
   }
 }
 
@@ -1995,7 +1995,7 @@ if (shardTurn(34)) {
   if (shown.replace(/\u200b/g, "") !== "9007199254740993" || shown40.replace(/\u200b/g, "") !== bigInt) {
     failed += 1;
     const lit = compileExpression("9007199254740993", {});
-    console.log("FAIL exact integer text", shown, shown40, rangeOf(lit).int?.toString(), provenInteger(lit)?.toString());
+    console.log("FAIL exact integer text", shown, shown40, provenInteger(lit)?.toString());
   }
   const signed = evaluate(literalNode("-0"));
   if (!Object.is(signed.re, -0) || signed.im !== 0) {
@@ -3444,9 +3444,9 @@ if (shardTurn(50)) {
   }
   const barePow = compileExpression("10^(-400)", {});
   const bareExp = compileExpression("exp(-1000)", {});
-  if (rangeOf(barePow).int !== undefined || knownValue(barePow) !== null || knownValue(bareExp) !== null) {
+  if (provenInteger(barePow) !== undefined || knownValue(barePow) !== null || knownValue(bareExp) !== null) {
     failed += 1;
-    console.log("FAIL underflow tagged as exact 0", rangeOf(barePow).int, knownValue(barePow), knownValue(bareExp));
+    console.log("FAIL underflow tagged as exact 0", provenInteger(barePow), knownValue(barePow), knownValue(bareExp));
   }
   const signed = evaluate(compileExpression("-0", {}));
   if (!Object.is(signed.re, -0) || signed.im !== 0) {

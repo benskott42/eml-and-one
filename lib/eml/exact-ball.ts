@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
-import { isMarkedExactInt } from "./lowering";
-import { provenInteger, type Node } from "./node";
+import { isMarkedExactInt, provenInteger } from "./facts";
+import type { Node } from "./node";
 
 /**
  * A rigorous enclosure of a circuit's value, used to confirm a result that a

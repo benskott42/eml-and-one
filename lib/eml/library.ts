@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, learn, noteExactDecimal, recordedDirection } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, learn, noteExactDecimal, provenInteger, recordedDirection } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -184,7 +184,7 @@ export function tLn(t: Node): Node {
   if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
-  if (rangeOf(t).int === BigInt(0)) markInfiniteSource(node);
+  if (provenInteger(t) === BigInt(0)) markInfiniteSource(node);
   // ln of an imaginary infinity is not the real infinity the log word prints.
   if (oddDirection(t)) return markUnverified(markMaybeInfinite(node, t));
   const inner = plus ?? minus;
@@ -267,7 +267,7 @@ function realIsNegative(node: Node): boolean {
 }
 
 function isOneNode(node: Node): boolean {
-  if (rangeOf(node).int === BigInt(1)) return true;
+  if (provenInteger(node) === BigInt(1)) return true;
   const v = knownValue(node);
   return !!v && v.im === 0 && v.re === 1;
 }
@@ -423,7 +423,7 @@ function userSum(a: Node, b: Node, sub: boolean): Node {
   const node = userSumBuild(a, b, sub);
   if (!isUnverified(node) && !isExactUnsure(node)) {
     const exact = exactDecimalOf(node);
-    if (exact && exact.n === BigInt(0) && factsOf(node).decimal !== null && rangeOf(node).int === undefined) {
+    if (exact && exact.n === BigInt(0) && factsOf(node).decimal !== null && provenInteger(node) === undefined) {
       markExactInt(node, BigInt(0));
     }
   }
@@ -467,7 +467,7 @@ export function tInv(b: Node): Node {
 
 function exactZero(node: Node): boolean {
   if (isUnverified(node) || isExactUnsure(node)) return false;
-  if (rangeOf(node).int === BigInt(0)) return true;
+  if (provenInteger(node) === BigInt(0)) return true;
   const known = knownValue(node);
   return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
 }
@@ -740,7 +740,7 @@ function expArgument(node: Node): Node | null {
 
 function moderateExponent(node: Node): boolean {
   const re = rangeOf(node).re;
-  if (rangeOf(node).int !== undefined) return true;
+  if (provenInteger(node) !== undefined) return true;
   if (!re) return false;
   return Math.abs(re.lo) < 40 && Math.abs(re.hi) < 40;
 }
@@ -764,7 +764,7 @@ export function tDiv(a: Node, b: Node): Node {
 
 /** A proven integer exponent, including negatives. A float that is not integral is not one. */
 function integerExponent(node: Node): bigint | null {
-  const tagged = rangeOf(node).int;
+  const tagged = provenInteger(node);
   if (tagged !== undefined) return tagged;
   const v = node.type === "input" ? node.value : knownValue(node);
   if (!v || v.im !== 0 || !Number.isInteger(v.re)) return null;
@@ -795,8 +795,8 @@ export function tPow(a: Node, b: Node): Node {
     if (exp !== null) return unitPower(Number((exp * BigInt(unit)) % BigInt(4)));
   }
   const node = applyProgram("pow", { x: a, y: b });
-  const ia = rangeOf(a).int;
-  const ib = rangeOf(b).int;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
     return tagInteger(node, ia ** ib);
   }
@@ -862,7 +862,7 @@ export function tSqrt(t: Node): Node {
   if (v.im === 0 && v.re >= 0) {
     // Only the root of a proven integer square is that integer: sqrt(4.0000000000000001e0) is not 2.
     const root = Math.sqrt(v.re);
-    return rangeOf(t).int !== undefined && root * root === v.re ? tagReal(node, root) : tagValue(node, { re: root, im: 0 });
+    return provenInteger(t) !== undefined && root * root === v.re ? tagReal(node, root) : tagValue(node, { re: root, im: 0 });
   }
   const ax = Math.abs(v.re);
   const ay = Math.abs(v.im);
@@ -1079,7 +1079,7 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
  * "couldn't verify", and arcsin(−0) was undefined in float.
  */
 function oddAtZero(t: Node): Node | null {
-  if (rangeOf(t).int === BigInt(0)) return tZero();
+  if (provenInteger(t) === BigInt(0)) return tZero();
   if (t.type === "input" && Object.is(t.value.re, -0) && t.value.im === 0) return t;
   return null;
 }
@@ -1138,8 +1138,8 @@ export function tTan(t: Node): Node {
 
 /** The sign of Im(t) when the range proves it. 0 is a proven real. null is unknown. */
 function provenImagSign(t: Node): 1 | -1 | 0 | null {
+  if (provenInteger(t) !== undefined) return 0;
   const range = rangeOf(t);
-  if (range.int !== undefined) return 0;
   if (!range.im) return null;
   if (range.im.lo === 0 && range.im.hi === 0) return 0;
   if (range.im.lo > 0) return 1;
@@ -1148,18 +1148,19 @@ function provenImagSign(t: Node): 1 | -1 | 0 | null {
 }
 
 function realBounds(t: Node): { lo: number; hi: number } | null {
-  const range = rangeOf(t);
-  if (range.int !== undefined) {
-    const n = Number(range.int);
+  const int = provenInteger(t);
+  if (int !== undefined) {
+    const n = Number(int);
     return Number.isFinite(n) ? { lo: n, hi: n } : null;
   }
-  return range.re;
+  return rangeOf(t).re;
 }
 
 /** The raw sub program keeps a tiny imaginary part. It needs a moderate real subtrahend. */
 function rawSubtrahendOk(t: Node): boolean {
+  const int = provenInteger(t);
+  if (int !== undefined) return int > BigInt(-700) && int < BigInt(700);
   const range = rangeOf(t);
-  if (range.int !== undefined) return range.int > BigInt(-700) && range.int < BigInt(700);
   if (!range.re || !range.im) return false;
   const edge = Math.PI - 1e-3;
   return range.re.lo > -700 && range.re.hi < 700 && range.im.lo > -edge && range.im.hi < edge;
@@ -1167,7 +1168,7 @@ function rawSubtrahendOk(t: Node): boolean {
 
 function minMagnitude(t: Node): number {
   const re = realBounds(t);
-  const im = rangeOf(t).int !== undefined ? { lo: 0, hi: 0 } : rangeOf(t).im;
+  const im = provenInteger(t) !== undefined ? { lo: 0, hi: 0 } : rangeOf(t).im;
   if (!re || !im) return 0;
   const gap = (iv: { lo: number; hi: number }) => (iv.lo > 0 ? iv.lo : iv.hi < 0 ? -iv.hi : 0);
   return Math.hypot(gap(re), gap(im));
@@ -1240,7 +1241,7 @@ export function tArcsin(t: Node): Node {
     const half = tHalfOf(tPi());
     return known.re < 0 ? tNeg(half) : half;
   }
-  if (rangeOf(t).int === BigInt(0)) return tZero();
+  if (provenInteger(t) === BigInt(0)) return tZero();
   const box = asinhBox(t);
   // Below 10^(−4), the adaptive factored Horner series avoids float64 cancellation
   // while keeping the truncation tail past 124 digits. Below 10^(−60) the x³/6
@@ -1342,7 +1343,7 @@ export function tArsinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
   const known = knownValue(t);
-  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || rangeOf(t).int === BigInt(0))) return tZero();
+  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || provenInteger(t) === BigInt(0))) return tZero();
   const unit = factsOf(t).imaginaryUnit;
   if (unit) {
     const quarter = tMul(tI(), tHalfOf(tPi()));
@@ -1375,7 +1376,7 @@ function tArtanhClosed(t: Node): Node {
   // artanh(±1) is ±∞, kept as ln 0 so it has a direction. The quotient of square
   // roots divides by a 0 and gives an infinity with none, which i·artanh(1) turned
   // into a real ∞.
-  const unit = rangeOf(t).int;
+  const unit = provenInteger(t);
   if (unit === BigInt(1)) return tNeg(tLn(tZero()));
   if (unit === BigInt(-1)) return tLn(tZero());
   if (known && imagZero(known) && known.re > 1) return artanhAboveOne(t);

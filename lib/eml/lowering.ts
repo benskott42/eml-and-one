@@ -1,8 +1,8 @@
-import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, clearProvenInt, input, isExactUnsure, isSeriesShortcut, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, onCircuitIsolate, provenInteger, type Node } from "./node";
+import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, isExactUnsure, isSeriesShortcut, markExactUnsure, markSeriesShortcut, markUnverified, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow, recordedPoleSign } from "./facts";
+import { clearProvenInt, isMarkedExactInt, isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, provenInteger, recordedPoleSign } from "./facts";
 
-export { isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow };
+export { isMarkedExactInt, isNonfiniteNode, markInfiniteSource, markMaybeInfinite, mayBeInfinite, noteNonfinite, noteOverflow };
 
 /**
  * Structural ranges for subtraction and the exponential.
@@ -44,8 +44,6 @@ type Iv = { lo: number; hi: number };
 export type Range = {
   re: Iv | null;
   im: Iv | null;
-  /** Present only when the node was built as that integer. */
-  int?: bigint;
 };
 
 const UNKNOWN: Range = { re: null, im: null };
@@ -113,19 +111,18 @@ function keepsInteger(range: Range, value: bigint): boolean {
   return range.re.lo <= approx && range.re.hi >= approx;
 }
 
-function setRange(node: Node, range: Range): Node {
-  const previous = provenInteger(node);
-  if (previous !== undefined && range.int === undefined) {
-    if (keepsInteger(range, previous)) range = { ...range, int: previous };
-    else clearProvenInt(node);
+function setRange(node: Node, range: Range, int?: bigint): Node {
+  if (int === undefined && node.type !== "one") {
+    const previous = provenInteger(node);
+    if (previous !== undefined && !keepsInteger(range, previous)) clearProvenInt(node);
   }
   ranges.set(node, range);
-  if (range.int !== undefined) noteProvenInt(node, range.int);
+  if (int !== undefined) noteProvenInt(node, int);
   return node;
 }
 
 export function rangeOf(node: Node): Range {
-  if (node.type === "one") return { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 }, int: BigInt(1) };
+  if (node.type === "one") return { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 } };
   const hit = ranges.get(node);
   if (hit) return hit;
   if (node.type === "input") {
@@ -186,14 +183,18 @@ function safeInt(value: bigint): boolean {
   return value >= -SAFE && value <= SAFE;
 }
 
-function attachInt(node: Node, value: bigint): Node {
+function intRange(value: bigint): Range {
   if (safeInt(value)) {
     const n = Number(value);
-    return setRange(node, { re: { lo: n, hi: n }, im: { lo: 0, hi: 0 }, int: value });
+    return { re: { lo: n, hi: n }, im: { lo: 0, hi: 0 } };
   }
   const approx = Number(value);
   const re = Number.isFinite(approx) ? widen(approx, approx) : null;
-  return setRange(node, { re, im: { lo: 0, hi: 0 }, int: value });
+  return { re, im: { lo: 0, hi: 0 } };
+}
+
+function attachInt(node: Node, value: bigint): Node {
+  return setRange(node, intRange(value), value);
 }
 
 export function tagValue(node: Node, value: { re: number; im: number }): Node {
@@ -203,10 +204,9 @@ export function tagValue(node: Node, value: { re: number; im: number }): Node {
 
 export function tagReal(node: Node, re: number): Node {
   const range = point(re, 0);
-  const existing = rangeOf(node).int;
-  if (existing !== undefined) range.int = existing;
-  else if (Number.isInteger(re) && Number.isSafeInteger(re)) range.int = BigInt(re);
-  return setRange(node, range);
+  const existing = provenInteger(node);
+  const int = existing !== undefined ? existing : Number.isInteger(re) && Number.isSafeInteger(re) ? BigInt(re) : undefined;
+  return setRange(node, range, int);
 }
 
 export function tagInteger(node: Node, value: bigint): Node {
@@ -214,8 +214,9 @@ export function tagInteger(node: Node, value: bigint): Node {
 }
 
 export function knownValue(node: Node): { re: number; im: number } | null {
+  const int = provenInteger(node);
+  if (int !== undefined && safeInt(int)) return { re: Number(int), im: 0 };
   const range = rangeOf(node);
-  if (range.int !== undefined && safeInt(range.int)) return { re: Number(range.int), im: 0 };
   if (!isPoint(range) || !range.re || !range.im) return null;
   return { re: range.re.lo, im: range.im.lo };
 }
@@ -356,31 +357,32 @@ function ivMul(a: Range, b: Range): Range {
   return { re: reUnder ? pad(re, 2 * Number.MIN_VALUE) : re, im: imUnder ? pad(im, 2 * Number.MIN_VALUE) : im };
 }
 
-function combine(a: Range, b: Range, op: "add" | "sub" | "mul" | "div"): Range {
-  if (op !== "div" && a.int !== undefined && b.int !== undefined && (op === "add" || op === "sub" || op === "mul")) {
-    const value = op === "add" ? a.int + b.int : op === "sub" ? a.int - b.int : a.int * b.int;
-    if (safeInt(value)) {
-      const n = Number(value);
-      return { re: { lo: n, hi: n }, im: { lo: 0, hi: 0 }, int: value };
-    }
-    const approx = Number(value);
-    return { re: Number.isFinite(approx) ? widen(approx, approx) : null, im: { lo: 0, hi: 0 }, int: value };
+type CombinedRange = { range: Range; int?: bigint };
+
+function combine(a: Node, b: Node, op: "add" | "sub" | "mul" | "div"): CombinedRange {
+  const ra = rangeOf(a);
+  const rb = rangeOf(b);
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
+  if (op !== "div" && ia !== undefined && ib !== undefined && (op === "add" || op === "sub" || op === "mul")) {
+    const value = op === "add" ? ia + ib : op === "sub" ? ia - ib : ia * ib;
+    return { range: intRange(value), int: value };
   }
   if (op === "mul") {
-    const product = ivMul(a, b);
-    if (product !== UNKNOWN && (a.int === undefined || b.int === undefined)) return product;
+    const product = ivMul(ra, rb);
+    if (product !== UNKNOWN && (ia === undefined || ib === undefined)) return { range: product };
   }
-  if (a.im && b.im && a.re && b.re && op !== "mul" && op !== "div") {
+  if (ra.im && rb.im && ra.re && rb.re && op !== "mul" && op !== "div") {
     const sign = op === "sub" ? -1 : 1;
-    const re = ivAdd(a.re, b.re, sign);
-    const im = ivAdd(a.im, b.im, sign);
-    if (re && im) return { re, im };
+    const re = ivAdd(ra.re, rb.re, sign);
+    const im = ivAdd(ra.im, rb.im, sign);
+    if (re && im) return { range: { re, im } };
   }
-  if (!isPoint(a) || !isPoint(b) || !a.re || !a.im || !b.re || !b.im) return UNKNOWN;
-  const ar = a.re.lo;
-  const ai = a.im.lo;
-  const br = b.re.lo;
-  const bi = b.im.lo;
+  if (!isPoint(ra) || !isPoint(rb) || !ra.re || !ra.im || !rb.re || !rb.im) return { range: UNKNOWN };
+  const ar = ra.re.lo;
+  const ai = ra.im.lo;
+  const br = rb.re.lo;
+  const bi = rb.im.lo;
   let re = 0;
   let im = 0;
   if (op === "add") {
@@ -391,32 +393,33 @@ function combine(a: Range, b: Range, op: "add" | "sub" | "mul" | "div"): Range {
     im = ai - bi;
   } else if (op === "mul") {
     // Reached only when ivMul gave nothing, and ivMul is what pads an underflow.
-    if ([[ar, br], [ai, bi], [ar, bi], [ai, br]].some(([x, y]) => underflowed(x, y, x * y))) return UNKNOWN;
+    if ([[ar, br], [ai, bi], [ar, bi], [ai, br]].some(([x, y]) => underflowed(x, y, x * y))) return { range: UNKNOWN };
     re = ar * br - ai * bi;
     im = ar * bi + ai * br;
   } else {
     const den = br * br + bi * bi;
-    if (!(den > 0) || !Number.isFinite(den)) return UNKNOWN;
+    if (!(den > 0) || !Number.isFinite(den)) return { range: UNKNOWN };
     // A quotient read from underflowed terms, or one that itself underflowed, is
     // not a point: 10^(−300)/10^100 came out the point 0.
     const terms = [[ar, br], [ai, bi], [ai, br], [ar, bi], [br, br], [bi, bi]];
-    if (terms.some(([x, y]) => underflowed(x, y, x * y))) return UNKNOWN;
+    if (terms.some(([x, y]) => underflowed(x, y, x * y))) return { range: UNKNOWN };
     re = (ar * br + ai * bi) / den;
     im = (ai * br - ar * bi) / den;
-    if (underflowed(ar * br + ai * bi, 1, re) || underflowed(ai * br - ar * bi, 1, im)) return UNKNOWN;
+    if (underflowed(ar * br + ai * bi, 1, re) || underflowed(ai * br - ar * bi, 1, im)) return { range: UNKNOWN };
   }
   const rv = widen(re, re);
   const iv = widen(im, im);
-  if (!rv || !iv) return UNKNOWN;
-  return { re: rv, im: iv };
+  if (!rv || !iv) return { range: UNKNOWN };
+  return { range: { re: rv, im: iv } };
 }
 
-function subRange(a: Node, b: Node): Range {
-  return combine(rangeOf(a), rangeOf(b), "sub");
+function subRange(a: Node, b: Node): CombinedRange {
+  return combine(a, b, "sub");
 }
 
 export function naiveSub(a: Node, b: Node): Node {
-  return setRange(applyProgram("sub", { x: a, y: b }), subRange(a, b));
+  const { range, int } = subRange(a, b);
+  return setRange(applyProgram("sub", { x: a, y: b }), range, int);
 }
 
 /**
@@ -425,20 +428,23 @@ export function naiveSub(a: Node, b: Node): Node {
  * so eml(H, exp b) is the same value and eight tokens shorter.
  */
 function subOfExp(a: Node, b: Node): Node {
-  if (a.type === "eml" && a.a && a.b === ONE) return setRange(E(a.a, E(b, ONE)), subRange(a, b));
+  if (a.type === "eml" && a.a && a.b === ONE) {
+    const { range, int } = subRange(a, b);
+    return setRange(E(a.a, E(b, ONE)), range, int);
+  }
   return naiveSub(a, b);
 }
 
 function rawAdd(a: Node, b: Node): Node {
-  const range = combine(rangeOf(a), rangeOf(b), "add");
-  const node = setRange(applyProgram("add", { x: a, y: b }), range);
-  return range.int !== undefined ? attachInt(node, range.int) : node;
+  const { range, int } = combine(a, b, "add");
+  const node = setRange(applyProgram("add", { x: a, y: b }), range, int);
+  return int !== undefined ? attachInt(node, int) : node;
 }
 
 export function rawMul(a: Node, b: Node): Node {
-  const range = combine(rangeOf(a), rangeOf(b), "mul");
-  const node = setRange(applyProgram("mul", { x: a, y: b }), range);
-  const tagged = range.int !== undefined ? attachInt(node, range.int) : node;
+  const { range, int } = combine(a, b, "mul");
+  const node = setRange(applyProgram("mul", { x: a, y: b }), range, int);
+  const tagged = int !== undefined ? attachInt(node, int) : node;
   const out = markMaybeInfinite(tagged, a, b);
   if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) unresolvedHuge.add(out);
   return out;
@@ -471,9 +477,9 @@ export function rawDiv(a: Node, b: Node): Node {
     const neg = Object.is(num.re, -0) !== den.re < 0;
     return neg ? negativeZero() : zeroNode();
   }
-  const node = setRange(applyProgram("div", { x: a, y: b }), combine(rangeOf(a), rangeOf(b), "div"));
-  if (rangeOf(b).int === BigInt(0) && rangeOf(a).int !== BigInt(0)) {
-    const numerator = rangeOf(a).int;
+  const node = setRange(applyProgram("div", { x: a, y: b }), combine(a, b, "div").range);
+  if (provenInteger(b) === BigInt(0) && provenInteger(a) !== BigInt(0)) {
+    const numerator = provenInteger(a);
     const neg = numerator !== undefined && numerator < BigInt(0);
     return markQuotient(noteNonfinite(node, neg ? -1 : 1), a, b);
   }
@@ -498,7 +504,7 @@ function markQuotient(node: Node, numerator: Node, denominator: Node): Node {
 }
 
 function denominatorMayBeZero(den: Node): boolean {
-  if (rangeOf(den).int === BigInt(0)) return true;
+  if (provenInteger(den) === BigInt(0)) return true;
   const v = knownValue(den);
   return v !== null && realZeroValue(v);
 }
@@ -549,7 +555,7 @@ function twoNode(): Node {
 function smallInt(n: number): Node {
   if (integerBuilder && !building.has(n)) return integerBuilder(n);
   if (n === 0) return zeroNode();
-  if (n === 1) return setRange(ONE, { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 }, int: BigInt(1) });
+  if (n === 1) return setRange(ONE, { re: { lo: 1, hi: 1 }, im: { lo: 0, hi: 0 } }, BigInt(1));
   if (n === 2) return twoNode();
   if (n === -1) return oneNeg();
   const hit = ints.get(n);
@@ -570,8 +576,9 @@ function scaleFor(mag: number): Node {
 
 /** True when the range cannot contain 0. An unknown endpoint is not a proof. */
 function provenNonzero(node: Node): boolean {
+  const int = provenInteger(node);
+  if (int !== undefined) return int !== BigInt(0);
   const range = rangeOf(node);
-  if (range.int !== undefined) return range.int !== BigInt(0);
   if (range.re && (range.re.lo > 0 || range.re.hi < 0)) return true;
   if (range.im && (range.im.lo > 0 || range.im.hi < 0)) return true;
   return false;
@@ -604,8 +611,8 @@ function scaledRot(a: Node, b: Node, kFrom: Node = b): Node {
 }
 
 function pureReal(node: Node): boolean {
+  if (provenInteger(node) !== undefined) return true;
   const range = rangeOf(node);
-  if (range.int !== undefined) return true;
   return !!range.re && !!range.im && range.im.lo === 0 && range.im.hi === 0;
 }
 
@@ -637,7 +644,7 @@ function noteUnresolvedHuge(node: Node, a: Node, b: Node): void {
   const rightHuge = floatOverflowInt(b) !== null;
   if (leftHuge === rightHuge) return;
   const other = leftHuge ? b : a;
-  if (rangeOf(other).int === undefined) unresolvedHuge.add(node);
+  if (provenInteger(other) === undefined) unresolvedHuge.add(node);
 }
 
 function noteRealSum(node: Node, left: Node, right: Node): void {
@@ -687,13 +694,13 @@ function subComplement(minuend: Node, subtrahend: Node): Node | null {
 
 /** The integer 0 or the −0 leaf. Its fold is a − a, which is +0, not its negation. */
 function zeroValued(node: Node): boolean {
-  if (rangeOf(node).int === BigInt(0)) return true;
+  if (provenInteger(node) === BigInt(0)) return true;
   return node.type === "input" && node.value.re === 0 && node.value.im === 0;
 }
 
 /** An integer past the float range. Number(10^400) is already Infinity. */
 function floatOverflowInt(node: Node): -1 | 1 | null {
-  const n = rangeOf(node).int;
+  const n = provenInteger(node);
   if (n === undefined) return null;
   const limit = BigInt(2) ** BigInt(1024);
   if (n >= limit) return 1;
@@ -703,7 +710,7 @@ function floatOverflowInt(node: Node): -1 | 1 | null {
 
 function finiteBeside(node: Node): boolean {
   if (floatOverflowInt(node)) return false;
-  if (rangeOf(node).int !== undefined) return true;
+  if (provenInteger(node) !== undefined) return true;
   const v = knownValue(node);
   if (v !== null && Number.isFinite(v.re) && Number.isFinite(v.im)) return true;
   // 0.5 is a narrow interval, not a point. Dust such as 10^(−15) stays on the ordinary circuit.
@@ -721,8 +728,8 @@ function finiteBeside(node: Node): boolean {
 export function provenFinite(node: Node): boolean {
   if (isNonfiniteNode(node) || realInfinitySign(node) !== null) return false;
   if (isLostTiny(node)) return true;
+  if (provenInteger(node) !== undefined) return true;
   const range = rangeOf(node);
-  if (range.int !== undefined) return true;
   if (!range.re || !range.im) return false;
   return [range.re.lo, range.re.hi, range.im.lo, range.im.hi].every((end) => Number.isFinite(end));
 }
@@ -787,9 +794,9 @@ function knownInsideStrip(b: Node): boolean {
   return re < ROT_REAL_MAX;
 }
 
-function finish(node: Node, range: Range): Node {
-  if (range.int !== undefined) return attachInt(node, range.int);
-  return setRange(node, range);
+function finish(node: Node, combined: CombinedRange): Node {
+  if (combined.int !== undefined) return attachInt(node, combined.int);
+  return setRange(node, combined.range);
 }
 
 function moderate(a: Node, b: Node): boolean {
@@ -800,7 +807,7 @@ function moderate(a: Node, b: Node): boolean {
 function buildSub(a: Node, b: Node, kFrom: Node = b): Node {
   const range = subRange(a, b);
   const rb = rangeOf(b);
-  if (rb.int === BigInt(0)) return a;
+  if (provenInteger(b) === BigInt(0)) return a;
   if (isNegInf(rb)) return finish(naiveSub(a, b), range);
   const tiny = scaledTinySub(a, b);
   if (tiny) return tiny;
@@ -837,15 +844,8 @@ function underflowedReal(node: Node): boolean {
   return mag > 0 && mag <= 1e-300;
 }
 
-const markedExactInt = new WeakSet<Node>();
-
-/** Exact evaluation reads this integer. The float value stays the rounded one. */
-export function isMarkedExactInt(node: Node): boolean {
-  return markedExactInt.has(node);
-}
-
 export function markExactInt(node: Node, value: bigint): Node {
-  markedExactInt.add(node);
+  noteMarkedExactInt(node, value);
   return attachInt(node, value);
 }
 
@@ -886,8 +886,8 @@ function rememberHugeReal(huge: Node, other: Node, op: "add" | "sub"): Node {
 
 function overflowIntDiff(a: Node, b: Node): Node | null {
   if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
-  const ia = rangeOf(a).int;
-  const ib = rangeOf(b).int;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
   if (ia === undefined || ib === undefined) return null;
   const diff = ia - ib;
   if (diff === BigInt(0)) return zeroNode();
@@ -897,8 +897,8 @@ function overflowIntDiff(a: Node, b: Node): Node | null {
 
 function overflowIntSum(a: Node, b: Node): Node | null {
   if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
-  const ia = rangeOf(a).int;
-  const ib = rangeOf(b).int;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
   if (ia === undefined || ib === undefined) return null;
   const sum = ia + ib;
   if (sum === BigInt(0)) return zeroNode();
@@ -911,8 +911,8 @@ function overflowIntSum(a: Node, b: Node): Node | null {
 /** Exact quotient of an integer past the float range, when the quotient itself still fits in a float. */
 export function integerQuotient(a: Node, b: Node): Node | null {
   if (!floatOverflowInt(a) && !floatOverflowInt(b)) return null;
-  const ia = provenInteger(a) ?? rangeOf(a).int;
-  const ib = provenInteger(b) ?? rangeOf(b).int;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
   if (ia === undefined || ib === undefined || ib === BigInt(0)) return null;
   if (ia % ib !== BigInt(0)) return null;
   const q = ia / ib;
@@ -954,8 +954,8 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
   // Two huge-carried terms whose small parts are not both exact integers.
   // The real circuit drops one of them and would certify the rest.
   if (unresolvedHuge.has(a) || unresolvedHuge.has(b)) return unverifiedResult();
-  const ia = rangeOf(a).int;
-  const ib = rangeOf(b).int;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
   if (ia !== undefined && ib !== undefined) {
     const diff = ia - ib;
     if (diff === BigInt(0)) return zeroNode();
@@ -972,10 +972,11 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
 
 function safeNeg(b: Node): Node {
   const size = extent(b);
+  const ib = provenInteger(b);
   if (size && size.im < Math.PI - CUT_MARGIN && size.re < REAL_CAP) {
     const node = applyProgram("minus", { x: b });
+    if (ib !== undefined) return attachInt(node, -ib);
     const range = rangeOf(b);
-    if (range.int !== undefined) return attachInt(node, -range.int);
     if (range.re && range.im) {
       const re = widen(-range.re.hi, -range.re.lo);
       const im = widen(-range.im.hi, -range.im.lo);
@@ -984,8 +985,8 @@ function safeNeg(b: Node): Node {
     return node;
   }
   const node = rawMul(oneNeg(), b);
+  if (ib !== undefined) return attachInt(node, -ib);
   const range = rangeOf(b);
-  if (range.int !== undefined) return attachInt(node, -range.int);
   if (range.re && range.im) {
     const re = widen(-range.re.hi, -range.re.lo);
     const im = widen(-range.im.hi, -range.im.lo);
@@ -1086,7 +1087,7 @@ function magnitudeDecade(node: Node): number | null {
   if (known && known.im === 0 && known.re !== 0 && Number.isFinite(known.re)) {
     return Math.floor(Math.log10(Math.abs(known.re)) + 1e-10);
   }
-  const n = rangeOf(node).int;
+  const n = provenInteger(node);
   if (n === undefined || n === BigInt(0)) return null;
   const digits = (n < BigInt(0) ? -n : n).toString();
   return digits.length - 1;
@@ -1099,7 +1100,7 @@ function magnitudeDecade(node: Node): number | null {
  * shortcut must not resolve it.
  */
 export function carryTinyScale(node: Node, a: Node, b: Node, op: "mul" | "div"): Node {
-  if (rangeOf(node).int === BigInt(0)) return node;
+  if (provenInteger(node) === BigInt(0)) return node;
   const da = magnitudeDecade(a);
   const db = magnitudeDecade(b);
   if (da !== null && db !== null) {
@@ -1279,9 +1280,9 @@ function domainAddBuild(a: Node, b: Node): Node {
   // (−x) + x is 0. The sum circuit cannot see a past-cap x.
   if (negationOf.get(a) === b || negationOf.get(b) === a) return zeroNode();
   // 0 + b is b. The add circuit rounds an underflowed b to exact 0.
-  if (rangeOf(a).int === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
-  if (rangeOf(b).int === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
-  const range = combine(rangeOf(a), rangeOf(b), "add");
+  if (provenInteger(a) === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
+  if (provenInteger(b) === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
+  const { range, int } = combine(a, b, "add");
   const mag = maxMag(a, b);
   let node: Node;
   let unknown = false;
@@ -1303,7 +1304,7 @@ function domainAddBuild(a: Node, b: Node): Node {
     node = domainSub(a, safeNeg(b), b);
     unknown = true;
   }
-  const tagged = range.int !== undefined ? attachInt(node, range.int) : setRange(node, range);
+  const tagged = int !== undefined ? attachInt(node, int) : setRange(node, range);
   noteRealSum(tagged, a, b);
   if (unknown) notePrecision(tagged, { kind: "add", left: a, right: b });
   // exp(−1000)+exp(−1000) is a real tiny sum the circuit prints as 0.
@@ -1336,7 +1337,7 @@ export function domainNeg(b: Node): Node {
 }
 
 function domainNegBuild(b: Node): Node {
-  if (rangeOf(b).int === BigInt(0)) return negativeZero();
+  if (provenInteger(b) === BigInt(0)) return negativeZero();
   const v = knownValue(b);
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
   if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();
