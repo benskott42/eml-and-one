@@ -35,7 +35,15 @@ import type { Node } from "./node";
 type Comp = { v: Decimal; r: Decimal; exact: boolean; q?: number; key?: number };
 type Ball = { re: Comp; im: Comp; key?: number };
 
-class BallFail extends Error {}
+class BallFail extends Error {
+  constructor(reason = "fail") {
+    super(reason);
+  }
+}
+
+export type BallCompOut = { v: Decimal; r: Decimal; exact: boolean };
+export type BallOut = { re: BallCompOut; im: BallCompOut };
+export type BallEncloseResult = { ok: true; balls: BallOut[] } | { ok: false; reason: string };
 
 export type BallValue = { re: Decimal | number; im: Decimal | number };
 
@@ -65,6 +73,7 @@ type PrecCtx = {
   tenU: Decimal;
   pi: Decimal;
   piL: Decimal;
+  ln10L?: Decimal;
   piLowD: Decimal;
   ZERO: Comp;
   NEG_ZERO: Comp;
@@ -72,6 +81,26 @@ type PrecCtx = {
 };
 
 const precCache = new Map<number, PrecCtx>();
+
+function lnReducedL(x: Decimal, L: Decimal.Constructor, epsL: Decimal): Decimal {
+  // Repeatedly take square roots until |x - 1| < 0.05, then use 2*artanh((x-1)/(x+1)).
+  // Never calls decimal.js's built-in LN10 table (which caps out around 500-1000 digits).
+  let r = new L(x);
+  let k = 0;
+  while (r.sub(1).abs().gt("0.05") && k < 16) {
+    r = r.sqrt();
+    k += 1;
+  }
+  const u = r.sub(1).div(r.plus(1));
+  const u2 = u.mul(u);
+  let term = u;
+  let sum = u;
+  for (let n = 3; term.abs().gt(epsL) && n < 4001; n += 2) {
+    term = term.mul(u2);
+    sum = sum.plus(term.div(n));
+  }
+  return sum.mul(2 * (1 << k));
+}
 
 function precCtx(P: number): PrecCtx {
   let ctx = precCache.get(P);
@@ -85,10 +114,10 @@ function precCtx(P: number): PrecCtx {
   const tenU = epsU.mul(10);
   const pi = B.acos(-1);
   const piL = L.acos(-1);
+  const epsL = new L(10).pow(-(P + 10));
   const piLowD = dn(pi).mul(oneD.sub(new DD(tenU)));
   const ZERO: Comp = { v: zeroB, r: zeroU, exact: true };
   const NEG_ZERO: Comp = { v: new B(-0), r: zeroU, exact: true };
-  const epsL = new L(10).pow(-(P + 10));
   ctx = { B, L, zeroB, oneB, negOneB, epsU, tenU, pi, piL, piLowD, ZERO, NEG_ZERO, epsL };
   precCache.set(P, ctx);
   return ctx;
@@ -105,18 +134,7 @@ function atan2FastCore(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal | null {
   if (!Number.isFinite(ys) || !Number.isFinite(xs) || (ys === 0 && xs === 0)) return null;
   const seed = Math.atan2(ys, xs);
   const th = new L(seed);
-  const a = Math.abs(seed);
-  let c: Decimal;
-  let s: Decimal;
-  if (a < Math.PI / 4 || a > (3 * Math.PI) / 4) {
-    s = th.sin();
-    c = L.sqrt(L.sub(1, s.mul(s)));
-    if (a > Math.PI / 2) c = c.neg();
-  } else {
-    c = th.cos();
-    s = L.sqrt(L.sub(1, c.mul(c)));
-    if (seed < 0) s = s.neg();
-  }
+  const { c, s } = cosSinL(th, ctx);
   const t = Y.mul(c).sub(X.mul(s)).div(X.mul(c).plus(Y.mul(s)));
   if (!t.isFinite() || t.abs().gt("1e-8")) return null;
   const t2 = t.mul(t);
@@ -128,6 +146,79 @@ function atan2FastCore(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal | null {
   }
   if (term.abs().gt(epsL)) return null;
   return th.plus(sum);
+}
+
+function cosSinSmallL(r: Decimal, L: Decimal.Constructor, epsL: Decimal): { c: Decimal; s: Decimal } {
+  try {
+    return { c: r.cos(), s: r.sin() };
+  } catch (err) {
+    if (!(err instanceof Error) || !/DecimalError/.test(err.message)) throw err;
+  }
+  // Halve r until |r| < 0.1 so Taylor converges fast, then double back.
+  let h = new L(r);
+  let halves = 0;
+  while (h.abs().gt("0.1") && halves < 12) {
+    h = h.div(2);
+    halves += 1;
+  }
+  const h2 = h.mul(h);
+  let c = new L(1);
+  let s = h;
+  let cTerm = new L(1);
+  let sTerm = h;
+  for (let n = 1; (cTerm.abs().gt(epsL) || sTerm.abs().gt(epsL)) && n < 2000; n += 1) {
+    cTerm = cTerm.mul(h2).neg().div((2 * n - 1) * (2 * n));
+    sTerm = sTerm.mul(h2).neg().div((2 * n) * (2 * n + 1));
+    c = c.plus(cTerm);
+    s = s.plus(sTerm);
+  }
+  for (let j = 0; j < halves; j += 1) {
+    const c2 = c.mul(c).sub(s.mul(s));
+    const s2 = c.mul(s).mul(2);
+    c = c2;
+    s = s2;
+  }
+  return { c, s };
+}
+
+function cosSinL(theta: Decimal, ctx: PrecCtx): { c: Decimal; s: Decimal } {
+  const { L, piL, epsL } = ctx;
+  const thL = new L(theta);
+  if (thL.abs().lt(1)) return cosSinSmallL(thL, L, epsL);
+  const halfPi = piL.div(2);
+  const kDec = thL.div(halfPi).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  if (!kDec.isFinite() || kDec.abs().gt("1e12")) return cosSinSmallL(thL, L, epsL);
+  const r = thL.sub(halfPi.mul(kDec));
+  const { c, s } = cosSinSmallL(r, L, epsL);
+  const k = ((kDec.toNumber() % 4) + 4) % 4;
+  if (k === 0) return { c, s };
+  if (k === 1) return { c: s.neg(), s: c };
+  if (k === 2) return { c: c.neg(), s: s.neg() };
+  return { c: s, s: c.neg() };
+}
+
+function cosSinBall(theta: Decimal, ctx: PrecCtx): { cos: Decimal; sin: Decimal } {
+  const { B } = ctx;
+  const { c, s } = cosSinL(theta, ctx);
+  return { cos: new B(c), sin: new B(s) };
+}
+
+function lnPosBall(h: Decimal, ctx: PrecCtx): Decimal {
+  try {
+    return h.ln();
+  } catch (err) {
+    if (!(err instanceof Error) || !/DecimalError/.test(err.message)) throw err;
+  }
+  const { B, L, epsL } = ctx;
+  const diff = h.sub(1);
+  if (diff.isZero()) return ctx.zeroB;
+  if (diff.abs().lt("0.05")) return new B(lnReducedL(h, L, epsL));
+  const e = h.e;
+  if (e === 0) return new B(lnReducedL(h, L, epsL));
+  if (!ctx.ln10L) ctx.ln10L = lnReducedL(new L(10), L, epsL);
+  const m = new L(h).div(new L(10).pow(e));
+  const lnM = m.eq(1) ? new L(0) : lnReducedL(m, L, epsL);
+  return new B(lnM.plus(ctx.ln10L.mul(e)));
 }
 
 function atan2Ball(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal {
@@ -153,14 +244,12 @@ function atan2Ball(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal {
  * exp(a)·exp(−a), and only the gates' snap makes it exact) leaves the ball unable
  * to take its ln, and the value is not confirmed.
  */
-export function ballConfirmsValue(
+export function ballEnclose(
   root: Node,
   env: Record<string, BallValue>,
-  value: { re: Decimal; im: Decimal },
   precision: number,
-  agree: number,
   budget: { maxNodes?: number; deadline?: number } = {},
-): boolean {
+): BallEncloseResult {
   const maxNodes = budget.maxNodes ?? 400_000;
   const deadline = budget.deadline ?? 0;
   const P = Math.max(precision, 40);
@@ -171,8 +260,8 @@ export function ballConfirmsValue(
   const isExactZero = (c: Comp) => c.exact && c.v.isZero();
   const isInf = (c: Comp) => !c.v.isFinite() && !c.v.isNaN();
   const zeroVector = (x: Ball) => isExactZero(x.re) && isExactZero(x.im);
-  const fail = (): never => {
-    throw new BallFail();
+  const fail = (reason = "fail"): never => {
+    throw new BallFail(reason);
   };
   /** Upper bound on one ulp of `w` at precision P, computed on DU. */
   const ulp = (w: Decimal): Decimal => up(w).mul(epsU);
@@ -362,8 +451,9 @@ export function ballConfirmsValue(
     if (key !== undefined && !expArg.has(key)) expArg.set(key, x);
     const trig = axisTrig(x.im);
     const r = trig ? zeroU : x.im.r.add(tenU);
-    const cos = trig ? trig.c : x.im.v.cos();
-    const sin = trig ? trig.s : x.im.v.sin();
+    const cs = trig ? { cos: trig.c, sin: trig.s } : cosSinBall(x.im.v, ctx);
+    const cos = cs.cos;
+    const sin = cs.sin;
     if (isInf(x.re)) {
       if (!x.re.exact) fail();
       const out: Ball[] = [];
@@ -516,7 +606,7 @@ export function ballConfirmsValue(
       }
       ims.push({ v: atan2Ball(y.im.v, y.re.v, ctx), r: rho.div(dist).add(tenU.mul(4)), exact: false, ...(imKey !== undefined ? { key: imKey } : {}) });
     }
-    const lnv = h.ln();
+    const lnv = lnPosBall(h, ctx);
     // |ln|z+δ| − ln|z|| ≤ ρ / dist(0, Z), plus rounding of |z| and of ln.
     const spread = rho.isZero() ? zeroU : rho.div(dist);
     const yrk = compKey(y.re);
@@ -604,8 +694,8 @@ export function ballConfirmsValue(
       if (!frame) break;
       const n = frame.n;
       if (memo.has(n)) continue;
-      if (++steps > maxNodes * 2) return false;
-      if ((steps & 63) === 0 && deadline && performance.now() > deadline) return false;
+      if (++steps > maxNodes * 2) return { ok: false, reason: "maxNodes" };
+      if ((steps & 63) === 0 && deadline && performance.now() > deadline) return { ok: false, reason: "deadline" };
       const exactFromFacts = (): Ball | null => {
         if (isUnverified(n) || isExactUnsure(n)) return null;
         const big = provenInteger(n);
@@ -641,7 +731,7 @@ export function ballConfirmsValue(
       else if (n.type === "input") memo.set(n, [leaf(n.value.re, n.value.im)]);
       else if (n.type === "var") {
         const v = env[n.name];
-        if (!v) return false;
+        if (!v) return { ok: false, reason: "missingVar" };
         memo.set(n, [leaf(v.re.toString(), v.im.toString())]);
       } else if (!frame.seen) {
         stack.push({ n, seen: true });
@@ -650,7 +740,7 @@ export function ballConfirmsValue(
       } else {
         const a = memo.get(n.a);
         const b = memo.get(n.b);
-        if (!a || !b) return false;
+        if (!a || !b) return { ok: false, reason: "missingChild" };
         const res = gate(a, b);
         if (res.length === 1 && res[0] && res[0].key === undefined && res[0].re.v.isFinite() && res[0].im.v.isFinite()) {
           res[0] = { ...res[0], key: atom(`D${n.id}`) };
@@ -660,14 +750,31 @@ export function ballConfirmsValue(
     }
     out = memo.get(root);
   } catch (err) {
-    if (err instanceof BallFail) return false;
+    if (err instanceof BallFail) return { ok: false, reason: err.message };
     // decimal.js refuses a trig argument past its π table, among others.
-    if (err instanceof Error && /DecimalError/.test(err.message)) return false;
+    if (err instanceof Error && /DecimalError/.test(err.message)) return { ok: false, reason: err.message };
     throw err;
   }
-  if (!out || out.length === 0) return false;
+  if (!out || out.length === 0) return { ok: false, reason: "empty" };
+  return { ok: true, balls: out };
+}
+
+export function ballConfirmsValue(
+  root: Node,
+  env: Record<string, BallValue>,
+  value: { re: Decimal; im: Decimal },
+  precision: number,
+  agree: number,
+  budget: { maxNodes?: number; deadline?: number } = {},
+): boolean {
+  const enclosed = ballEnclose(root, env, precision, budget);
+  if (!enclosed.ok) return false;
+  const P = Math.max(precision, 40);
+  const { B, epsU } = precCtx(P);
+  const ulp = (w: Decimal): Decimal => up(w).mul(epsU);
+  const isExactZero = (c: BallCompOut) => c.exact && c.v.isZero();
   const tolD = new DD(10).pow(-agree);
-  const confirms = (got: Decimal, c: Comp): boolean => {
+  const confirms = (got: Decimal, c: BallCompOut): boolean => {
     if (!got.isFinite() || !c.v.isFinite()) return false;
     if (got.isZero()) return isExactZero(c);
     if (isExactZero(c)) return false;
@@ -677,5 +784,5 @@ export function ballConfirmsValue(
     const limitDn = dn(g).mul(tolD);
     return errUp.lte(limitDn);
   };
-  return out.every((ball) => confirms(value.re, ball.re) && confirms(value.im, ball.im));
+  return enclosed.balls.every((ball) => confirms(value.re, ball.re) && confirms(value.im, ball.im));
 }

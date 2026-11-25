@@ -52,7 +52,7 @@ const checkModule: CheckModule = {
     }
 
     // Over-refused absorbed-term expressions rescued by the ball enclosure (direct & wire),
-    // plus sin(2/exp(200)) which must stay certified.
+    // previously known-wrong cases now computed and certified accurately, plus sin(2/exp(200)).
     const certifiedRows: [string, string][] = [
       ["10^(-500) + 10^400", "1×10^400"],
       ["avg(10^(-400), 10^400)", "5×10^399"],
@@ -60,6 +60,13 @@ const checkModule: CheckModule = {
       ["arsinh(exp(-1000) + 2)", "1.443635475179"],
       ["hypot(10^160, -1)", "1×10^160"],
       ["hypot(10^400, 10^400)", "1.414213562373×10^400"],
+      ["hypot(10^(-400), 10^400)", "1×10^400"],
+      ["arctan(exp(-800)) - pi/2", "−1.570796326795"],
+      ["cosh(0.7 - 10^(-400))", "1.255169005631"],
+      ["(exp(-300) + 10^(-20) + 10^(-400)) - exp(-300)", "1×10^−20"],
+      ["(exp(800)+1)-exp(800)", "1"],
+      ["tanh(10^(-122)*i) - 10^(-122)*i", "3.333333333333×10^−367i"],
+      ["ln(tanh(10^(-236) + 10^(-236)*i))", "−543.063508356315 + 0.785398163397i"],
       ["sin(2/exp(200))", "2.767793053473×10^−87"],
     ];
     for (const [src, want] of certifiedRows) {
@@ -86,6 +93,8 @@ const checkModule: CheckModule = {
       "exp(3*10^(-238)) - 1 - 3*10^(-238)",
       "ln(exp(7*10^(-120))) - 7*10^(-120)",
       "sqrt(1 + 1.5*10^(-239)) - 1 - 1.5*10^(-239)/2",
+      "(arctan(-3*10^(-122)*i) + 3*10^(-122)*i)*10^100",
+      "(exp(1200)+1)-exp(1200)",
     ];
     for (const src of mustRefuse) {
       const node = compileExpression(src, {});
@@ -96,10 +105,9 @@ const checkModule: CheckModule = {
     }
 
     const ballMustReject = [
-      "exp(10^(-237)) - 1 - 10^(-237)",
       "sqrt(1 + 10^(-250)) - 1 - 10^(-250)/2",
       "(arctan(-3*10^(-122)*i) + 3*10^(-122)*i)*10^100",
-      "ln(tanh(10^(-236) + 10^(-236)*i))",
+      "(exp(1200)+1)-exp(1200)",
     ];
     for (const src of ballMustReject) {
       const node = compileExpression(src, {});

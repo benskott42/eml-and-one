@@ -8,12 +8,14 @@ Usage:
   python3 tools/fuzz/oracle.py fuzz.json
 """
 import json
+import re
 import sys
 import mpmath as mp
 
 mp.mp.dps = 2500
 
 ENV = {
+    "mpf": mp.mpf,
     "pi": mp.pi,
     "e": mp.e,
     "i": mp.mpc(0, 1),
@@ -36,8 +38,11 @@ ENV = {
 }
 
 
+NUM_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![A-Za-z0-9_])")
+
+
 def eval_mp(source: str):
-    py_expr = source.replace("^", "**")
+    py_expr = NUM_RE.sub(r"mpf('\1')", source).replace("^", "**")
     return mp.mpc(eval(py_expr, {"__builtins__": {}}, ENV))
 
 

@@ -205,7 +205,7 @@ const checks: CheckModule[] = [
       // circuit passes through a 0 that only the gates' snap makes exact (known-limitations).
       const refused = [
         "((1+10^(-500))-1)+i/2",
-        "(exp(800)+1)-exp(800)",
+        "(exp(1200)+1)-exp(1200)",
         "exp(800)*0",
         "ln(1-10^(-500))",
         "ln(1+exp(-1000))",

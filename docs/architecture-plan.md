@@ -125,10 +125,10 @@ Small, independent, and each its own pull request:
 | 1e refused marks | done | #94 |
 | 1f scale facts | done | #95 |
 | 1g structure memos | done | |
-| 2 enclosure as certifier | 148/162 (91.4%) golden, p50 272 ms, 0 timeouts; absorbed-term rescue & second-order guards landed | |
+| 2 enclosure as certifier | done — 0 known-wrong certified cases, 9/10 over-refused cases rescued (incl. `(exp(800)+1)-exp(800)`), `cosSinSmallL`/`lnPosBall` avoid decimal.js precision-table limits, verified by mpmath fuzz | |
 | 3 shortcut policy | done | #97 |
 | 4 split check.ts | done | #98 |
 | 5 site check script | done | #96 |
 | 6 calculator reducer | done | |
 | 7 limitations list | done | |
-| 8 housekeeping (fuzz tool, bumps, old branches) | fuzz tool, 1.0.4, old branches, #16 done; #17/#18/#20 need workflow scope / owner click | #99 |
+| 8 housekeeping (fuzz tool, bumps, old branches) | done (fuzz tool, 1.0.5, old branches closed, Dependabot #16/#17/#18/#20 merged) | #99 |

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Eliminated the last remaining known-wrong certified expressions in exact mode (`tanh(10^(−122) i) − 10^(−122) i` now certifies `3.333333333333×10^−367i`, `ln(tanh(10^(−236) + 10^(−236) i))` now certifies `−543.063508356315 + 0.785398163397i`, and `(arctan(−3×10^(−122) i) + 3×10^(−122) i)·10^100` is refused rather than certified wrong).
+- Added `lnPosBall` and `cosSinSmallL` fallbacks in `lib/eml/exact-ball.ts` and a 180-digit fast path in `confirmedBeside` to avoid `decimal.js` precision-table limits, rescuing `hypot(10^(−400), 10^400)`, `arctan(exp(−800)) − π/2`, `cosh(0.7 − 10^(−400))`, `(exp(−300) + 10^(−20) + 10^(−400)) − exp(−300)`, and `(exp(800) + 1) − exp(800)` (now certified `1`).
+
 ## 1.0.5 — 2026-11-25
 
 - Improved the rigorous ball enclosure (`lib/eml/exact-ball.ts`) with cached precision contexts, fast `atan2`, exact unit-circle `ln`, per-component even/odd symbolic keys, generalized `ln(exp(a + i·qπ))`, exact π-multiple quotients, and Step 1 exact facts (including `ipiNode()` and wire serialization): golden confirmation rose from 43/162 (26.5%) to 148/162 (91.4%) with p50 latency dropping from 1,070 ms to 272 ms and 0 timeouts. Exact mode now uses the ball to certify rescued absorbed-term results (`10^(−500) + 10^400`, `avg(10^(−400), 10^400)`, `hypot(exp(700), 10^350)`, `arsinh(exp(−1000) + 2)`) and refuse vanished or precision-floor second-order cancellations (`sqrt(1 + 10^(−250)) − 1 − 10^(−250)/2`, `exp(10^(−237)) − 1 − 10^(−237)`).

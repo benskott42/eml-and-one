@@ -1185,7 +1185,10 @@ function confirmedBeside(
   passDigits = D.precision,
   agree = D.precision - 20,
 ): boolean {
-  const prec = Math.min(600, Math.max(D.precision, passDigits) + 60);
+  // Try 180 digits first when passDigits is already high: many large/absorbed expressions
+  // confirm immediately at 180 digits without paying for a 480-digit ball pass.
+  if (passDigits > 180 && ballConfirmsValue(root, env, v, 180, agree, budget)) return true;
+  const prec = Math.min(480, Math.max(D.precision, passDigits) + 60);
   return ballConfirmsValue(root, env, v, prec, agree, budget);
 }
 
@@ -1452,13 +1455,13 @@ function exactReportCore(
   const firstOrderGap = (r: ExactReport): number => {
     const gap = r.absorbRe ?? 0;
     const digits = r.digits ?? D.precision;
-    if (gap <= digits + 4) return 0;
+    if (gap <= digits + 1) return 0;
     if (r.sawLead || agreesWithInteger(root, r.value)) return 0;
     if (vanished(r.value) || r.absorbExposed) return gap;
     const top = exponentCeil(r.value);
     const termExp = r.absorbReTerm ?? Number.NEGATIVE_INFINITY;
     if (Number.isFinite(top) && top <= termExp + 24) return gap;
-    if ((r.surviveLoss ?? 0) > 8) return gap;
+    if ((r.surviveLoss ?? 0) > 8 || (r.lossGap ?? 0) > 8) return gap;
     return 0;
   };
   // A second-order term (x^2/2 of exp, t^2/2 of cos) matters when the result vanished or sits at its
@@ -1547,15 +1550,21 @@ function exactReportCore(
       const nonzeroResidue = residueParts(again).some((name) => !again.value[name].isZero());
       let revealed = nonzeroResidue ? settleResidue(again, root, env, budget) : again;
       if (revealed.unverified) return revealed;
-      // Ensure full D.precision digits survived any deep non-snapped cancellation
-      // (e.g. (1e200 + 0.5) − (1e200 − 0.5) at 249 digits leaves 10^−49 dust).
+      // Ensure full D.precision digits survived any deep cancellation
+      // (e.g. (1e200 + 0.5) − (1e200 − 0.5) at 249 digits leaves 10^−49 dust, or
+      // tanh(10^(−122) i) − 10^(−122) i at 365 digits leaves 5e−366 real dust).
       const sl = revealed.surviveLoss ?? 0;
+      const lg = revealed.lossGap ?? 0;
       const rd = revealed.digits ?? D.precision;
-      if (!vanished(revealed.value) && sl > 8 && rd - sl < D.precision - 12 && rd < PRECISION_CAP) {
-        const full = Math.min(PRECISION_CAP, sl + D.precision);
+      if (!vanished(revealed.value) && (sl > 8 || lg > rd - 24) && rd - Math.max(sl, lg > rd - 24 ? lg : 0) < D.precision - 12 && rd < PRECISION_CAP) {
+        const full = Math.min(PRECISION_CAP, Math.max(sl + D.precision, lg > rd - 24 ? rd + 48 : 0));
         if (full > rd) {
           const wider = atPrecision(full, root, env, budget);
-          if (!wider.unverified) revealed = wider;
+          if (!wider.unverified) {
+            const widerNonzeroResidue = residueParts(wider).some((name) => !wider.value[name].isZero());
+            revealed = widerNonzeroResidue ? settleResidue(wider, root, env, budget) : wider;
+            if (revealed.unverified) return revealed;
+          }
         }
       }
       // A part that vanished at the first pass and came back nonzero can still be the
@@ -1928,8 +1937,8 @@ function exactReportOnce(
     const aNoisy = realNoise(turn, work.get(n.a));
     const bNoisy = realNoise(b, work.get(n.b));
     // Record when exp(turn.re) silently absorbs a genuine tiny real term into 1.
-    // Strictly below −(D.precision + 4) excludes 1-ulp rounding dust near −D.precision.
-    if (!angleInfinite && turn.re.isFinite() && !turn.re.isZero() && turn.re.e < -(D.precision + 4)) {
+    // Strictly below −(D.precision + 1) excludes 1-ulp rounding dust near −D.precision.
+    if (!angleInfinite && turn.re.isFinite() && !turn.re.isZero() && turn.re.e < -(D.precision + 1)) {
       const gap = -turn.re.e;
       if (gap > absorbRe) absorbRe = gap;
       if (turn.re.e > absorbReTerm) absorbReTerm = turn.re.e;
@@ -1957,7 +1966,7 @@ function exactReportOnce(
     const subAbsorbReTerm = Math.max(absorbReTerm, absorbReTermOf.get(n.a) ?? Number.NEGATIVE_INFINITY, absorbReTermOf.get(n.b) ?? Number.NEGATIVE_INFINITY);
     // A gate that outputs 0 from a subtree with an absorbed real term (e.g. ln(1 + 1e-200) -> 0
     // inside (1 + 1e-200)^1e200, or (1 + 1e-200) - 1 -> 0) exposed the absorbed term.
-    const ownAbsorbExposed = zZero(value) && Math.max(absorbReOf.get(n.a) ?? 0, absorbReOf.get(n.b) ?? 0) > D.precision + 4;
+    const ownAbsorbExposed = zZero(value) && Math.max(absorbReOf.get(n.a) ?? 0, absorbReOf.get(n.b) ?? 0) > D.precision + 1;
     const subAbsorbExposed = ownAbsorbExposed || absorbExposedOf.get(n.a) === true || absorbExposedOf.get(n.b) === true;
     if (subAbsorbExposed) absorbExposed = true;
     const subAbsorb2 = Math.max(absorb2, absorb2Of.get(n.a) ?? 0, absorb2Of.get(n.b) ?? 0);
