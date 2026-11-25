@@ -24,7 +24,10 @@ const checkModule: CheckModule = {
       "i",
       "pi",
       "ln(-1)",
+      "sin(1)",
       "cos(1)",
+      "4*i+0.5*i",
+      "(i*(1+10^(-110))-i)*i+i*1/2",
       "hypot(10^160, -1)",
       "hypot(10^400, 10^400)",
     ];
@@ -78,6 +81,7 @@ const checkModule: CheckModule = {
     // Vanished second-order cancellation must be refused rather than certified as 0,
     // and ballConfirmsValue must reject all known-wrong second-order expressions.
     const mustRefuse = [
+      "exp(10^(-237)) - 1 - 10^(-237)",
       "sqrt(1 + 10^(-250)) - 1 - 10^(-250)/2",
       "exp(3*10^(-238)) - 1 - 3*10^(-238)",
       "ln(exp(7*10^(-120))) - 7*10^(-120)",

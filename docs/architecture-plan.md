@@ -125,7 +125,7 @@ Small, independent, and each its own pull request:
 | 1e refused marks | done | #94 |
 | 1f scale facts | done | #95 |
 | 1g structure memos | done | |
-| 2 enclosure as certifier | in progress (112/162 = 69.1% golden, p50 287 ms, 0 timeouts; absorbed-term rescue & vanished absorb2 guard landed) | |
+| 2 enclosure as certifier | 148/162 (91.4%) golden, p50 272 ms, 0 timeouts; absorbed-term rescue & second-order guards landed | |
 | 3 shortcut policy | done | #97 |
 | 4 split check.ts | done | #98 |
 | 5 site check script | done | #96 |
