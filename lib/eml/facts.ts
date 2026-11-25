@@ -29,6 +29,7 @@ export type InfinityFact = {
 export type ExactDecimal = { n: bigint; s: number };
 
 export const DECIMAL_SCALE_MAX = 1000;
+export const RATIONAL_DIGITS_MAX = 200;
 
 /**
  * Exact integer value known for a node (replaces provenBig, markedExactInt, Range.int).
@@ -96,6 +97,8 @@ export type Facts = {
   infinity?: InfinityFact;
   /** Exact terminating decimal n·10^(−s); null means poisoned by conflicting values on the same node. */
   decimal?: ExactDecimal | null;
+  /** Exact reduced rational n/d (d > 0); null means poisoned by conflicting values on the same node. */
+  rational?: Rational | null;
   /** Exact integer value; `marked: true` means exact evaluation reads it directly. */
   integer?: IntegerFact;
   /** Refusal marks for exact and float certification. */
@@ -115,6 +118,7 @@ export type WireFacts = {
   iu?: 1 | -1;
   ang?: [string, string, "r" | "i"];
   ed?: [string, number];
+  er?: [string, string];
   unver?: 1;
   xu?: 1;
   lead?: 1 | string;
@@ -161,6 +165,15 @@ function sameDecimal(a: ExactDecimal, b: ExactDecimal): boolean {
   return a.n * BigInt(10) ** BigInt(s - a.s) === b.n * BigInt(10) ** BigInt(s - b.s);
 }
 
+function normalizeRational(value: Rational): Rational | null {
+  const q = rational(value.n, value.d);
+  if (!q) return null;
+  const nDigits = (q.n < BigInt(0) ? -q.n : q.n).toString().length;
+  const dDigits = q.d.toString().length;
+  if (nDigits > RATIONAL_DIGITS_MAX || dDigits > RATIONAL_DIGITS_MAX) return null;
+  return q;
+}
+
 /** Record facts on a node. Shared finite input leaves and proven integers carry no derived angle/unit/decimal facts. */
 export function learn(node: Node, facts: Facts): Node {
   const prev = table.get(node);
@@ -176,6 +189,17 @@ export function learn(node: Node, facts: Facts): Node {
         if (norm) {
           if (prev?.decimal !== undefined && !sameDecimal(prev.decimal, norm)) next.decimal = null;
           else next.decimal = norm;
+        }
+      }
+    }
+    if (facts.rational !== undefined && !isUnverified(node) && !isExactUnsure(node)) {
+      if (facts.rational === null || prev?.rational === null) {
+        next.rational = null;
+      } else {
+        const norm = normalizeRational(facts.rational);
+        if (norm) {
+          if (prev?.rational !== undefined && (prev.rational.n !== norm.n || prev.rational.d !== norm.d)) next.rational = null;
+          else next.rational = norm;
         }
       }
     }
@@ -213,6 +237,7 @@ export function learn(node: Node, facts: Facts): Node {
     next.imaginaryUnit ||
     next.infinity ||
     next.decimal !== undefined ||
+    next.rational !== undefined ||
     next.integer ||
     next.refused ||
     next.scale ||
@@ -454,6 +479,16 @@ export function noteExactDecimal(node: Node, value: ExactDecimal): Node {
   return learn(node, { decimal: value });
 }
 
+/** Exact reduced rational of a node (including exact decimals and proven integers), or null if unknown or poisoned. */
+export function exactRationalOf(node: Node): Rational | null {
+  const f = factsOf(node);
+  if (f.rational !== undefined) return f.rational;
+  if (isUnverified(node) || isExactUnsure(node)) return null;
+  const dec = exactDecimalOf(node);
+  if (!dec || dec.s > RATIONAL_DIGITS_MAX) return null;
+  return normalizeRational({ n: dec.n, d: BigInt(10) ** BigInt(dec.s) });
+}
+
 /** Pack facts that cross the worker wire onto a wire token. */
 export function packFacts(node: Node, target: WireFacts): void {
   const f = factsOf(node);
@@ -463,6 +498,7 @@ export function packFacts(node: Node, target: WireFacts): void {
   if (f.imaginaryUnit !== undefined) target.iu = f.imaginaryUnit;
   if (f.angle) target.ang = [f.angle.q.n.toString(), f.angle.q.d.toString(), f.angle.unit === "real" ? "r" : "i"];
   if (f.decimal) target.ed = [f.decimal.n.toString(), f.decimal.s];
+  if (f.rational) target.er = [f.rational.n.toString(), f.rational.d.toString()];
   if (f.refused?.unverified) target.unver = 1;
   if (f.refused?.exactUnsure) target.xu = 1;
   const s = f.scale;
@@ -494,6 +530,7 @@ export function unpackFacts(node: Node, source: WireFacts): void {
     });
   }
   if (source.ed) learn(node, { decimal: { n: BigInt(source.ed[0]), s: source.ed[1] } });
+  if (source.er) learn(node, { rational: { n: BigInt(source.er[0]), d: BigInt(source.er[1]) } });
   if (source.unver) markUnverified(node);
   if (source.xu) markExactUnsure(node);
   if (source.lift) markTwoScaled(node);
@@ -610,10 +647,10 @@ function angleOf(op: Op, a: Node, b: Node | undefined): Angle | null {
     const ib = integerOf(b);
     if (left && ib !== null) return scale(left, ib, BigInt(1));
     if (right && ia !== null) return scale(right, ia, BigInt(1));
-    const da = !left ? exactDecimalOf(a) : null;
-    const db = !right ? exactDecimalOf(b) : null;
-    if (left && db && db.s <= 20) return scale(left, db.n, BigInt(10) ** BigInt(db.s));
-    if (right && da && da.s <= 20) return scale(right, da.n, BigInt(10) ** BigInt(da.s));
+    const ra = !left ? exactRationalOf(a) : null;
+    const rb = !right ? exactRationalOf(b) : null;
+    if (left && rb && rb.d <= BigInt(1_000_000_000_000)) return scale(left, rb.n, rb.d);
+    if (right && ra && ra.d <= BigInt(1_000_000_000_000)) return scale(right, ra.n, ra.d);
     const ua = factsOf(a).imaginaryUnit;
     const ub = factsOf(b).imaginaryUnit;
     if (left && ub) return turn(left, ub);
@@ -622,6 +659,11 @@ function angleOf(op: Op, a: Node, b: Node | undefined): Angle | null {
   }
   const under = integerOf(b);
   if (left && under !== null && under !== BigInt(0)) return scale(left, BigInt(1), under);
+  const rbDiv = left ? exactRationalOf(b) : null;
+  if (left && rbDiv && rbDiv.n !== BigInt(0)) {
+    const absN = rbDiv.n < BigInt(0) ? -rbDiv.n : rbDiv.n;
+    if (absN <= BigInt(1_000_000_000_000)) return scale(left, rbDiv.d, rbDiv.n);
+  }
   const ub = factsOf(b).imaginaryUnit;
   if (left && ub) return turn(left, ub === 1 ? -1 : 1);
   return null;
@@ -716,17 +758,51 @@ function decimalOf(op: Op, a: Node, b: Node | undefined): ExactDecimal | null {
   return decimalDiv(x, y);
 }
 
-/** Record exact decimal for a^b when a is an exact decimal and b is a small non-negative integer. */
+function rationalOf(op: Op, a: Node, b: Node | undefined): Rational | null {
+  const x = exactRationalOf(a);
+  if (op === "neg") return x ? { n: -x.n, d: x.d } : null;
+  if (!b) return null;
+  const y = exactRationalOf(b);
+  if (!x || !y) return null;
+  if (op === "add") return normalizeRational({ n: x.n * y.d + y.n * x.d, d: x.d * y.d });
+  if (op === "sub") return normalizeRational({ n: x.n * y.d - y.n * x.d, d: x.d * y.d });
+  if (op === "mul") return normalizeRational({ n: x.n * y.n, d: x.d * y.d });
+  if (y.n === BigInt(0)) return null;
+  return normalizeRational({ n: x.n * y.d, d: x.d * y.n });
+}
+
+/** Record exact decimal/rational for a^b when a is an exact decimal/rational and b is a small integer. */
 export function derivePow(out: Node, a: Node, b: Node): Node {
-  const x = exactDecimalOf(a);
   const p = integerOf(b);
-  if (!x || p === null || p < BigInt(0) || p > BigInt(100)) return out;
-  const exp = Number(p);
-  if (x.s * exp > DECIMAL_SCALE_MAX) return out;
-  const digits = (x.n < BigInt(0) ? -x.n : x.n).toString().length;
-  if (digits * exp > DECIMAL_SCALE_MAX + 20) return out;
-  const value = normalizeDecimal({ n: x.n ** p, s: x.s * exp });
-  return value ? learn(out, { decimal: value }) : out;
+  if (p === null || p < BigInt(-100) || p > BigInt(100)) return out;
+  let dec: ExactDecimal | null = null;
+  const x = exactDecimalOf(a);
+  if (x && p >= BigInt(0)) {
+    const exp = Number(p);
+    const digits = (x.n < BigInt(0) ? -x.n : x.n).toString().length;
+    if (x.s * exp <= DECIMAL_SCALE_MAX && digits * exp <= DECIMAL_SCALE_MAX + 20) {
+      dec = normalizeDecimal({ n: x.n ** p, s: x.s * exp });
+    }
+  }
+  let rat: Rational | null = null;
+  if (!dec) {
+    const q = exactRationalOf(a);
+    if (q) {
+      const absP = p < BigInt(0) ? -p : p;
+      const exp = Number(absP);
+      const nDigits = (q.n < BigInt(0) ? -q.n : q.n).toString().length;
+      const dDigits = q.d.toString().length;
+      if (nDigits * exp <= RATIONAL_DIGITS_MAX && dDigits * exp <= RATIONAL_DIGITS_MAX) {
+        if (p >= BigInt(0)) rat = normalizeRational({ n: q.n ** absP, d: q.d ** absP });
+        else if (q.n !== BigInt(0)) rat = normalizeRational({ n: q.d ** absP, d: q.n ** absP });
+      }
+    }
+  }
+  if (!dec && !rat) return out;
+  return learn(out, {
+    ...(dec ? { decimal: dec } : {}),
+    ...(rat ? { rational: rat } : {}),
+  });
 }
 
 function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
@@ -746,12 +822,14 @@ export function derive(op: Op, out: Node, a: Node, b?: Node): Node {
   const angle = angleOf(op, a, b);
   const unit = unitOf(op, a, b);
   const decimal = decimalOf(op, a, b);
+  const rat = decimal ? null : rationalOf(op, a, b);
   const intVal = out.type !== "input" && !isUnverified(out) && !isExactUnsure(out) ? intOf(op, a, b) : undefined;
-  if (!angle && !unit && !decimal && intVal === undefined) return out;
+  if (!angle && !unit && !decimal && !rat && intVal === undefined) return out;
   return learn(out, {
     ...(angle ? { angle } : {}),
     ...(unit ? { imaginaryUnit: unit } : {}),
     ...(decimal ? { decimal } : {}),
+    ...(rat ? { rational: rat } : {}),
     ...(intVal !== undefined ? { integer: { value: intVal } } : {}),
   });
 }

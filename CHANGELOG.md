@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Extended `lib/eml/facts.ts` with exact reduced rational tracking (`exactRationalOf`, wire-serialized as `er`): non-terminating rational arithmetic such as `1/3 + 2/3 − 1`, `1/6 + 1/3 − 1/2`, `(1/3)·3 − 1`, `(2/3)² − 4/9`, and `(1/3)^(−1) − 3` now resolve to exact 0, and rational π-multiples like `cos((1/3)·π)`, `sin((1/6)·π)`, and `cos(π / (3/2))` recognize cleanly.
 - Eliminated the last remaining known-wrong certified expressions in exact mode (`tanh(10^(−122) i) − 10^(−122) i` now certifies `3.333333333333×10^−367i`, `ln(tanh(10^(−236) + 10^(−236) i))` now certifies `−543.063508356315 + 0.785398163397i`, and `(arctan(−3×10^(−122) i) + 3×10^(−122) i)·10^100` is refused rather than certified wrong).
 - Added `lnPosBall` and `cosSinSmallL` fallbacks in `lib/eml/exact-ball.ts` and a 180-digit fast path in `confirmedBeside` to avoid `decimal.js` precision-table limits, rescuing `hypot(10^(−400), 10^400)`, `arctan(exp(−800)) − π/2`, `cosh(0.7 − 10^(−400))`, `(exp(−300) + 10^(−20) + 10^(−400)) − exp(−300)`, and `(exp(800) + 1) − exp(800)` (now certified `1`).
 

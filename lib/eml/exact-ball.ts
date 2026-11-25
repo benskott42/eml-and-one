@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { exactDecimalOf, factsOf, isExactUnsure, isUnverified, provenInteger } from "./facts";
+import { exactDecimalOf, exactRationalOf, factsOf, isExactUnsure, isUnverified, provenInteger } from "./facts";
 import type { Node } from "./node";
 
 /**
@@ -722,6 +722,17 @@ export function ballEnclose(
         if (dec) {
           const text = dec.s === 0 ? dec.n.toString() : `${dec.n.toString()}e-${dec.s}`;
           return leaf(text, 0);
+        }
+        const rat = exactRationalOf(n);
+        if (rat) {
+          if (rat.d === BigInt(1)) return leaf(rat.n.toString(), 0);
+          const v = new B(rat.n.toString()).div(rat.d.toString());
+          if (v.isFinite()) {
+            const absN = rat.n < BigInt(0) ? -rat.n : rat.n;
+            const rk = atom(`FQ${absN.toString()}/${rat.d.toString()}`);
+            const comp: Comp = { v, r: ulp(v), exact: false, key: rat.n < BigInt(0) ? keyNeg(rk) : rk };
+            return { re: comp, im: ZERO, key: atom(`BQ${rat.n.toString()}/${rat.d.toString()}`) };
+          }
         }
         return null;
       };

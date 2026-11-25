@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -430,8 +430,9 @@ export function userNeg(b: Node): Node {
 function userSum(a: Node, b: Node, sub: boolean): Node {
   const node = userSumBuild(a, b, sub);
   if (!isUnverified(node) && !isExactUnsure(node)) {
-    const exact = exactDecimalOf(node);
-    if (exact && exact.n === BigInt(0) && factsOf(node).decimal !== null && provenInteger(node) === undefined) {
+    const exact = exactRationalOf(node);
+    const f = factsOf(node);
+    if (exact && exact.n === BigInt(0) && f.decimal !== null && f.rational !== null && provenInteger(node) === undefined) {
       markExactInt(node, BigInt(0));
     }
   }
