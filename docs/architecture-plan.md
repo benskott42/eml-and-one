@@ -128,7 +128,7 @@ Small, independent, and each its own pull request:
 | 2 enclosure as certifier | open | |
 | 3 shortcut policy | open | |
 | 4 split check.ts | open | |
-| 5 site check script | open | |
+| 5 site check script | done | |
 | 6 calculator reducer | open | |
 | 7 limitations list | open | |
 | 8 housekeeping (fuzz tool, bumps, old branches) | open; 1.0.4 released | |
