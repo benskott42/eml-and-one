@@ -29,7 +29,6 @@ These float results stay wrong, and the flag is what publishes that. There is no
 What the flag does not catch:
 
 - A relative error at or below about 5×10^(−12) on a component. That is one digit past the 12 on screen. A few ulps, and 0.1 + 0.2 − 0.3, sit in this band.
-- In float mode, sinh(+-0.00005i) can show a -1e-16 real part below the flag threshold.
 - 0 minus the smallest positive float, 5×10^(−324). Float keeps a signed zero and exact keeps 0. The comparison treats those magnitudes as equal.
 - 1 − 10^400 is NaN in float. That is overflow, not a value the flag replaces.
 - A cancellation whose size is not visible in a known leaf and not visible as a residual at 120 digits can still agree with float. The reference does not search every expression for a hidden scale.
