@@ -13,7 +13,7 @@ import {
   rpnTokens,
 } from "@/lib/eml/node";
 import { agreementNote } from "@/lib/eml/parse";
-import { FLOAT_DIFFERS, exactScreen, finiteLossMessage, underflowDisclosure } from "@/lib/eml/history";
+import { exactScreen, finiteLossMessage, underflowDisclosure } from "@/lib/eml/history";
 import { programIndexDigits, programNumberText } from "@/lib/eml/programIndex";
 import { readScalar } from "@/components/keyTables";
 
@@ -27,6 +27,14 @@ export type Entry = {
   node: Node;
   caption: string;
   bound?: Record<string, C>;
+  boundNodes?: Record<string, Node>;
+  /** True when the caption combines items with conflicting x/y bindings, so referenceExpression cannot match it. */
+  skipAgreement?: boolean;
+  /** True when exact/float evaluation refused to certify this entry (kept separate from user notices like rotation). */
+  unverified?: boolean;
+  /** Exact-mode true ±∞ flags from Decimal (distinct from float64 overflow in `value`). */
+  exactInfRe?: -1 | 0 | 1;
+  exactInfIm?: -1 | 0 | 1;
   touchedLn0?: boolean;
   overflowed?: boolean;
   underflowed?: boolean;
@@ -77,9 +85,9 @@ function programText(node: Node): string | null {
   return summary;
 }
 
-function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "notice"> {
+function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entry, "value" | "text" | "singular" | "mode" | "touchedLn0" | "overflowed" | "underflowed" | "nearCut" | "pendingExact" | "unverified" | "notice"> {
   if (node.type === "one") {
-    return { value: { re: 1, im: 0 }, text: "1", singular: null, mode, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, pendingExact: false, notice: null };
+    return { value: { re: 1, im: 0 }, text: "1", singular: null, mode, touchedLn0: false, overflowed: false, underflowed: false, nearCut: false, pendingExact: false, unverified: false, notice: null };
   }
   if (mode === "exact") {
     const blank = exactScreen("computing");
@@ -93,6 +101,7 @@ function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entr
       underflowed: false,
       nearCut: false,
       pendingExact: true,
+      unverified: false,
       notice: null,
     };
   }
@@ -109,7 +118,8 @@ function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entr
         underflowed: false,
         nearCut: false,
         pendingExact: false,
-        notice: "couldn't verify",
+        unverified: true,
+        notice: null,
       };
     }
     return {
@@ -122,6 +132,7 @@ function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entr
       underflowed: report.underflowed,
       nearCut: report.nearCut,
       pendingExact: false,
+      unverified: false,
       notice: null,
     };
   } catch (err) {
@@ -136,17 +147,29 @@ function runNode(node: Node, mode: Mode, env: Record<string, C> = {}): Pick<Entr
       underflowed: false,
       nearCut: false,
       pendingExact: false,
-      notice: "couldn't verify",
+      unverified: true,
+      notice: null,
     };
   }
 }
 
 function programFlags(item: Entry): string | null {
   const bits: string[] = [];
-  if (item.value.re === Infinity) bits.push("+∞");
-  else if (item.value.re === -Infinity) bits.push("−∞");
-  if (item.value.im === Infinity) bits.push("+∞i");
-  else if (item.value.im === -Infinity) bits.push("−∞i");
+  if (item.mode === "exact") {
+    // In exact mode, item.value is exactToFloat and overflows to ±Infinity for finite values > 1e308.
+    // Use exactInfRe/exactInfIm (or text fallback for synthetic workers) so finite exp(800) never says "+∞".
+    const infRe = item.exactInfRe ?? (item.text.includes("∞") && item.value.re === Infinity ? 1 : item.text.includes("−∞") && item.value.re === -Infinity ? -1 : 0);
+    const infIm = item.exactInfIm ?? (item.text.includes("∞i") && item.value.im === Infinity ? 1 : item.text.includes("∞i") && item.value.im === -Infinity ? -1 : 0);
+    if (infRe === 1) bits.push("+∞");
+    else if (infRe === -1) bits.push("−∞");
+    if (infIm === 1) bits.push("+∞i");
+    else if (infIm === -1) bits.push("−∞i");
+  } else {
+    if (item.value.re === Infinity) bits.push("+∞");
+    else if (item.value.re === -Infinity) bits.push("−∞");
+    if (item.value.im === Infinity) bits.push("+∞i");
+    else if (item.value.im === -Infinity) bits.push("−∞i");
+  }
   if (item.touchedLn0) bits.push("ln 0");
   return bits.length ? bits.join(" · ") : null;
 }
@@ -213,24 +236,31 @@ export function programDigits(node: Node): string | null {
   return facts.digits;
 }
 
+export function isUnverifiedEntry(item: Entry): boolean {
+  return item.unverified === true || item.notice?.split(" · ").includes("couldn't verify") === true;
+}
+
 export function noteFor(item: Entry): string | null {
   const facts = factsOf(item.node);
   const number = facts.number;
+  const unverified = isUnverifiedEntry(item);
+  // floatDiffers and shownSingular are rendered in their own .ti-lcd-flag lines above .ti-lcd-note.
   const bits = [
     facts.program,
     number,
     number ? programFlags(item) : null,
     item.pendingExact ? exactScreen("computing").note : null,
     item.cancelled ? exactScreen("cancelled").note : null,
-    item.floatDiffers && item.exactBeside ? `${FLOAT_DIFFERS} · ${item.exactBeside}` : null,
+    unverified && !item.notice?.split(" · ").includes("couldn't verify") ? "couldn't verify" : null,
     item.notice,
     item.overflowed ? "overflow" : null,
     underflowDisclosure(item.value, item.underflowed === true),
     item.nearCut ? "on or very near the branch cut" : null,
     seriesShortcutNote(item.node),
     facts.pure ? "pure" : null,
-    shownSingular(item),
-    agreementText(item.caption, item.value, item.bound ?? {}, item.text),
+    !item.pendingExact && !item.cancelled && !unverified && !item.skipAgreement
+      ? agreementText(item.caption, item.value, item.bound ?? {}, item.text)
+      : null,
   ].filter(Boolean);
   return bits.length ? bits.join(" · ") : null;
 }
@@ -247,16 +277,65 @@ export function unaryCaption(id: string, label: string, arg: string): string {
   return `${label}(${arg})`;
 }
 
+/** True when `text` is a single primary expression (atom, parenthesized group, or function call). */
+function isAtomicCaption(text: string): boolean {
+  const s = text.trim();
+  if (!s) return true;
+  if (/^(?:[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|[A-Za-zπ√][A-Za-z0-9]*)$/.test(s)) return true;
+  // Balanced outer parentheses: "(...)" or function call "fn(...)" or "√(...)".
+  const open = s.indexOf("(");
+  if (open === -1 || !s.endsWith(")")) return false;
+  if (open > 0 && !/^[A-Za-z√][A-Za-z0-9]*$/.test(s.slice(0, open))) return false;
+  let depth = 0;
+  for (let i = open; i < s.length; i += 1) {
+    if (s[i] === "(") depth += 1;
+    else if (s[i] === ")") {
+      depth -= 1;
+      if (depth === 0 && i < s.length - 1) return false;
+    }
+  }
+  return depth === 0;
+}
+
+/** Lowest-precedence top-level binary operator in `text` (outside parentheses), or null. */
+function topLevelOps(text: string): Set<string> {
+  const ops = new Set<string>();
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (depth === 0) {
+      if (ch === "+" || ch === "×" || ch === "*" || ch === "÷" || ch === "/" || ch === "^") ops.add(ch);
+      else if ((ch === "-" || ch === "−") && i > 0 && text[i - 1] !== "e" && text[i - 1] !== "E") ops.add("−");
+    }
+  }
+  return ops;
+}
+
+function wrapCaption(text: string, need: boolean): string {
+  return need && !isAtomicCaption(text) ? `(${text})` : text;
+}
+
 export function binaryCaption(id: string, x: string, y: string): string {
-  if (id === "add") return `${x} + ${y}`;
-  if (id === "sub") return `${x} − ${y}`;
-  if (id === "mul") return `${x} × ${y}`;
-  if (id === "div") return `${x} ÷ ${y}`;
-  if (id === "pow") return `${x}^${y}`;
-  if (id === "log") return `log(${x}, ${y})`;
-  if (id === "avg") return `avg(${x}, ${y})`;
-  if (id === "hypot") return `hypot(${x}, ${y})`;
-  return `${x} ${id} ${y}`;
+  const lx = x.trim();
+  const ly = y.trim();
+  const xOps = topLevelOps(lx);
+  const yOps = topLevelOps(ly);
+  const xAddSub = xOps.has("+") || xOps.has("−");
+  const yAddSub = yOps.has("+") || yOps.has("−");
+  const yMulDiv = yOps.has("×") || yOps.has("*") || yOps.has("÷") || yOps.has("/");
+  const yUnaryMinus = ly.startsWith("-") || ly.startsWith("−");
+  const xUnaryMinus = lx.startsWith("-") || lx.startsWith("−");
+  if (id === "add") return `${lx} + ${wrapCaption(ly, yUnaryMinus)}`;
+  if (id === "sub") return `${lx} − ${wrapCaption(ly, yAddSub || yUnaryMinus)}`;
+  if (id === "mul") return `${wrapCaption(lx, xAddSub)} × ${wrapCaption(ly, yAddSub || yUnaryMinus)}`;
+  if (id === "div") return `${wrapCaption(lx, xAddSub)} ÷ ${wrapCaption(ly, yAddSub || yMulDiv || yUnaryMinus)}`;
+  if (id === "pow") return `${wrapCaption(lx, !isAtomicCaption(lx) || xUnaryMinus)}^${wrapCaption(ly, !isAtomicCaption(ly) || yUnaryMinus)}`;
+  if (id === "log") return `log(${lx}, ${ly})`;
+  if (id === "avg") return `avg(${lx}, ${ly})`;
+  if (id === "hypot") return `hypot(${lx}, ${ly})`;
+  return `${lx} ${id} ${ly}`;
 }
 
 let watchSerial = 1;
@@ -267,6 +346,7 @@ export function resultError(item: Entry): string | null {
   // The printed exact value stays, without a second "left the finite numbers".
   return finiteLossMessage({
     usable: isUsable(item.value),
+    unverified: isUnverifiedEntry(item),
     notice: item.notice,
     singular: shownSingular(item),
     mode: item.mode,
@@ -275,9 +355,18 @@ export function resultError(item: Entry): string | null {
 }
 
 /** bound holds the x and y values a word of x and y leaves reads, in float as in exact. */
-export function entry(node: Node, caption: string, mode: Mode, bound?: Record<string, C>): Entry {
+export function entry(
+  node: Node,
+  caption: string,
+  mode: Mode,
+  bound?: Record<string, C>,
+  boundNodes?: Record<string, Node>,
+  skipAgreement?: boolean,
+): Entry {
   const item: Entry = { node, caption, watch: watchSerial++, ...runNode(node, mode, bound) };
   if (bound) item.bound = bound;
+  if (boundNodes) item.boundNodes = boundNodes;
+  if (skipAgreement) item.skipAgreement = true;
   return item;
 }
 

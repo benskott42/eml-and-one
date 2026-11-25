@@ -54,15 +54,16 @@ class V:
     small: s*exp(-L), L a real V (fin with L > 10^6, or big)
     """
 
-    __slots__ = ("kind", "re", "im", "k", "s", "L", "sym", "prov", "lin", "off", "lm")
+    __slots__ = ("kind", "re", "im", "k", "s", "L", "sym", "prov", "lin", "off", "off_bound", "lm")
 
     def __init__(self, kind, sym, re=None, im=None, k=None, s=None, L=None, prov=None, lin=None):
         self.kind, self.sym, self.re, self.im, self.k, self.s, self.L, self.prov = kind, sym, re, im, k, s, L, prov
         # A finite value's form as an integer combination of atoms ("1", "exp(..)", "ln(..)").
         self.lin = lin if lin is not None else {sym: 1}
-        # off: the value is its form plus an infinitesimal delta (|delta| < 1e-1000) of
-        # this sign. Set where exp(L) - c is rewritten as exp(L + delta).
+        # off: the value is its form plus a nonzero perturbation delta of this sign,
+        # rigorously bounded by |delta| <= off_bound (an iv-rounded upper bound mpf).
         self.off = None
+        self.off_bound = None
         # huge: lm is a lower bound on ln|value| (None: a tower of towers, beyond any bound)
         self.lm = None
 
@@ -112,59 +113,56 @@ def eff_off(v):
     return v.s if v.kind == "small" else v.off
 
 
-def tag(sym, off):
-    """Atoms of a value with an offset must differ from those of the exact form."""
-    return sym if off is None else f"{sym}~{'+' if off == 1 else '-' if off == -1 else '?'}"
+def eff_off_bound(v):
+    if v.kind == "small":
+        return iv.exp(-iv.mpf(LIMIT)).b
+    return v.off_bound
 
 
-def zero():
-    return V("fin", "0", iv.mpf(0), iv.mpf(0), 0, lin={})
-
-
-def is_zero(v):
-    return v.kind == "fin" and v.k == 0 and v.re.a == 0 and v.re.b == 0
-
-
-def real(v):
-    return v.kind in ("big", "small") or (v.kind == "fin" and v.k == 0)
-
-
-def cexp(v):
-    out = cexp_raw(v)
-    if out.kind in ("fin", "big", "small") and out.sym.startswith("exp("):
-        EXP_ARG.setdefault(out.sym, v)
-    return out
+def add_bounds(b1, b2):
+    if b1 is None:
+        return b2
+    if b2 is None:
+        return b1
+    return (iv.mpf(b1) + iv.mpf(b2)).b
 
 
 def cexp_raw(v):
     sym = f"exp({v.sym})"
     if v.kind == "bigk":
-        # exp(s*exp(L) + k*pi*i) = (-1)^k exp(s*exp(L)), exactly (k is an integer)
-        sign = 1 if v.k % 2 == 0 else -1
-        tower = V("big", f"exp({v.L.sym})", s=1, L=v.L)
-        return V("big", sym, s=sign, L=tower) if v.s > 0 else V("small", sym, s=sign, L=tower)
+        # Docstring contract: bigk is excluded and never reused; delegate to towers.py.
+        raise Undecided("exp of a tower with a phase")
     if v.kind == "huge":
         raise Undecided("exp of a huge value")
     if v.kind == "fin" and v.k is None and v.re.a > LIMIT:
         return huge(sym, v.re.a)  # |exp(L + i theta)| = exp(L)
     if v.kind == "fin" and v.prov and v.prov[0] == "nudge" and v.prov[1] == 0 and v.k is not None:
-        # exp(k*pi*i + delta) = (-1)^k e^delta: within 1e-999 of (-1)^k, on the side
-        # given by the sign of (-1)^k * delta.
+        # exp(k*pi*i + delta) = (-1)^k e^delta: |e^delta - 1| <= 2*|delta| for |delta| <= 1/2.
+        b = v.off_bound
+        if b is None or b > mpf("0.25"):
+            raise Undecided("exp of unbounded nudge")
         sign = 1 if v.k % 2 == 0 else -1
-        d = iv.mpf([-1e-999, 1e-999])
+        rad = (2 * iv.mpf(b)).b
+        d = iv.mpf([-rad, rad])
         out = V("fin", sym + "~", iv.mpf(sign) + d, iv.mpf(0), 0, prov=("nudge", mpf(sign), sign * v.prov[2]), lin={"1": sign})
         out.off = sign * v.prov[2]
+        out.off_bound = rad
         return out
     if v.kind == "fin" and v.k is not None and v.off in (1, -1) and v.re.b < LIMIT and v.re.a > -LIMIT:
-        # exp(X + k*pi*i + delta) = (-1)^k exp(X) (1 + delta), X the exact real part
-        xlin = {a: c for a, c in v.lin.items() if a != "ipi"}
-        X = V("fin", key_of(xlin), v.re, iv.mpf(0), 0, lin=xlin)
-        atom = f"exp({X.sym})"
-        EXP_ARG.setdefault(atom, X)
-        sign = 1 if v.k % 2 == 0 else -1
-        out = V("fin", tag(atom if sign == 1 else f"-{atom}", sign * v.off), iv.exp(v.re) * sign, iv.mpf(0), 0, lin={atom: sign})
-        out.off = sign * v.off
-        return out
+        # exp(X + k*pi*i + delta) = (-1)^k exp(X) (1 + O(delta)); check magnified bound rigorously.
+        b = v.off_bound
+        if b is not None and b <= mpf("0.25"):
+            mag_err = (2 * iv.exp(iv.mpf(v.re.b)) * iv.mpf(b)).b
+            if mag_err <= mpf("0.25"):
+                xlin = {a: c for a, c in v.lin.items() if a != "ipi"}
+                X = V("fin", key_of(xlin), v.re, iv.mpf(0), 0, lin=xlin)
+                atom = f"exp({X.sym})"
+                EXP_ARG.setdefault(atom, X)
+                sign = 1 if v.k % 2 == 0 else -1
+                out = V("fin", tag(atom if sign == 1 else f"-{atom}", sign * v.off), iv.exp(v.re) * sign, iv.mpf(0), 0, lin={atom: sign})
+                out.off = sign * v.off
+                out.off_bound = mag_err
+                return out
     if is_zero(v):
         return V("fin", "1", iv.mpf(1), iv.mpf(0), 0)  # exp(0) = 1
     if v.prov and v.prov[0] == "ln" and v.off is None:
@@ -185,18 +183,25 @@ def cexp_raw(v):
             return V("big", sym, s=1, L=v, prov=("exp", v))
         return V("small", sym, s=1, L=V("big", f"-({v.sym})", s=1, L=v.L), prov=("exp", v))
     if v.kind == "small":
-        d = iv.mpf([-1e-1000, 1e-1000])
+        rad = (2 * iv.exp(-iv.mpf(LIMIT))).b
+        d = iv.mpf([-rad, rad])
         return V("fin", sym, 1 + d, iv.mpf(0), 0, prov=("exp", v))
     re, im, k = v.re, v.im, v.k
     sign = None if k is None else (1 if k % 2 == 0 else -1)
     if re.a > LIMIT:
         if sign is None:
             raise Undecided("tower with a phase")
-        return V("big", sym, s=sign, L=V("fin", v.sym, re, iv.mpf(0), 0), prov=("exp", v))
+        xlin = {a: c for a, c in v.lin.items() if a != "ipi"} if k else dict(v.lin)
+        L = V("fin", key_of(xlin), re, iv.mpf(0), 0, lin=xlin)
+        L.off, L.off_bound = v.off, v.off_bound
+        return V("big", sym, s=sign, L=L, prov=("exp", v))
     if re.b < -LIMIT:
         if sign is None:
             raise Undecided("tiny value with a phase")
-        return V("small", sym, s=sign, L=V("fin", f"-({v.sym})", -re, iv.mpf(0), 0), prov=("exp", v))
+        xlin = {a: -c for a, c in v.lin.items() if a != "ipi"} if k else {a: -c for a, c in v.lin.items()}
+        L = V("fin", key_of(xlin), -re, iv.mpf(0), 0, lin=xlin)
+        L.off, L.off_bound = neg_off(v.off), v.off_bound
+        return V("small", sym, s=sign, L=L, prov=("exp", v))
     m = iv.exp(re)
     if sign is not None:
         return V("fin", sym, m * sign, iv.mpf(0), 0, prov=("exp", v))
@@ -224,52 +229,51 @@ def clog_raw(v):
     if v.kind == "huge":
         raise Undecided("log of a huge value")
     if v.kind == "bigk":
-        # ln(s*exp(L) + k*pi*i) = L + ln(s + k*pi*i*e^-L): the real part moves by less than
-        # 1e-1000, and Arg sits within 1e-1000 of 0 (s = +1) or of +-pi (s = -1) on the side of k.
-        t = iv.mpf([0, 1e-1000])
-        if v.s > 0:
-            theta = iv.mpf(0) if v.k == 0 else (t if v.k > 0 else -t)
-        else:
-            theta = -iv.pi if v.k == 0 else (iv.pi - t if v.k > 0 else -iv.pi + t)
-        L = v.L
-        if L.kind == "fin":
-            return V("fin", sym, L.re + iv.mpf([-1e-1000, 1e-1000]), theta, None)
-        return huge(sym, tower_lm(L.L) if L.L is not None and L.L.kind == "fin" else None)
+        raise Undecided("log of a tower with a phase")
     if v.prov and v.prov[0] == "exp" and real(v.prov[1]) and v.off is None:
         return v.prov[1]  # ln(exp x) = x for a real x
     atom = single_atom(v)
     if atom in EXP_ARG and real(EXP_ARG[atom]):
         return EXP_ARG[atom]  # ln(exp x) = x for a real x
     if v.kind == "fin" and v.prov and v.prov[0] == "nudge" and v.prov[1] in (1, -1) and v.k == 0:
-        # ln(c + delta) with c = +-1: real part delta/c (signed infinitesimal), Arg 0 or -pi exactly
+        # ln(c + delta) with c = +-1: |ln(1 +- delta)| <= 2*|delta| for |delta| <= 1/2.
+        b = v.off_bound
+        if b is None or b > mpf("0.25"):
+            raise Undecided("log of unbounded nudge")
         c, sgn = v.prov[1], v.prov[2]
         k = 0 if c > 0 else -1
         off = sgn * (1 if c > 0 else -1)
-        d = iv.mpf([-1e-1000, 1e-1000])
+        rad = (2 * iv.mpf(b)).b
+        d = iv.mpf([-rad, rad])
         out = V("fin", tag(f"ln({c})", off), d, iv.pi * k, k, prov=("nudge", mpf(0), off), lin=({"ipi": k} if k else {}))
         out.off = off
+        out.off_bound = rad
         return out
-    if v.kind == "fin" and v.k == 0 and len(v.lin) == 1 and v.off in (1, -1):
+    if v.kind == "fin" and v.k == 0 and len(v.lin) == 1 and v.off in (1, -1) and v.off_bound is not None:
         (atom, c), = v.lin.items()
         X = EXP_ARG.get(atom)
-        if X is not None and X.kind == "fin" and X.k == 0 and c in (1, -1) and X.off is None:
-            # ln(c*exp(X) + delta) = X + ln(1 + c*delta*e^-X) (- i*pi when c = -1):
-            # the real part moves by a tiny amount of sign c*sign(delta).
-            off = c * v.off
-            d = iv.mpf([-1e-1000, 1e-1000])
-            lin = dict(X.lin)
-            if c == -1:
-                lin["ipi"] = lin.get("ipi", 0) - 1
-            out = V("fin", tag(key_of(lin), off), X.re + d, iv.mpf(0) if c == 1 else -iv.pi, 0 if c == 1 else -1, lin=lin)
-            out.off = off
-            return out
+        if X is not None and X.kind == "fin" and X.k == 0 and c in (1, -1) and X.off is None and X.re.a > -LIMIT:
+            # ln(c*exp(X) + delta) = X + ln(1 + c*delta*e^-X) (- i*pi when c = -1).
+            # Verify |delta|*e^-X <= 1/4 so the sign and branch cut cannot flip.
+            rel = (iv.mpf(v.off_bound) * iv.exp(-iv.mpf(X.re.a))).b
+            if rel <= mpf("0.25"):
+                off = c * v.off
+                rad = (2 * iv.mpf(rel)).b
+                d = iv.mpf([-rad, rad])
+                lin = dict(X.lin)
+                if c == -1:
+                    lin["ipi"] = lin.get("ipi", 0) - 1
+                out = V("fin", tag(key_of(lin), off), X.re + d, iv.mpf(0) if c == 1 else -iv.pi, 0 if c == 1 else -1, lin=lin)
+                out.off = off
+                out.off_bound = rad
+                return out
     if v.off is not None and v.prov and v.prov[0] == "exp":
         pass  # the provenance rewrite below would drop the offset
-    if v.kind == "fin" and v.lin == {"1": 1}:
+    if v.kind == "fin" and v.lin == {"1": 1} and v.off is None:
         return zero()
     if v.kind == "nan":
         return v
-    if v.sym == "1":
+    if v.sym == "1" and v.off is None:
         return zero()
     if is_zero(v):
         return V("inf", sym, im=iv.mpf(0), k=0, s=-1, prov=("ln", v))
@@ -297,6 +301,7 @@ def clog_raw(v):
             lin["ipi"] = lin.get("ipi", 0) - 1
             out = V("fin", sym, L.re, -iv.pi, -1, prov=("ln", v), lin=lin)
             out.off = L.off
+            out.off_bound = L.off_bound
             return out
         return V("bigk", sym, s=L.s, L=L, k=-1)  # L - i*pi with L a tower
     if v.kind == "small":
@@ -333,16 +338,15 @@ def tower_lm(L):
 
 
 def magnitude_log(v):
-    """An upper bound on ln|v| for a fin value (None if v may be 0)."""
-    m = max(abs(v.re.a), abs(v.re.b)) + max(abs(v.im.a), abs(v.im.b))
-    return iv.log(iv.mpf(m) + 1).b
+    """An upper bound on ln|v| for a fin value computed in outward iv arithmetic."""
+    return iv.log(abs(v.re) + abs(v.im) + 1).b
 
 
 def widen(L, rel):
-    """L + [-rel, rel] for a real V L (rel an mpf)."""
+    """L + [-rel, rel] for a real V L (rel an mpf). Never silently drop perturbations on big towers."""
     if L.kind == "fin":
         return V("fin", L.sym + "~", L.re + iv.mpf([-rel, rel]), iv.mpf(0), 0)
-    return L  # a tower of towers is not moved by a relative change this small
+    raise Undecided("perturbation of a tower of towers")
 
 
 def sub_raw(a, b):
@@ -357,9 +361,8 @@ def sub_raw(a, b):
             lin[atom] = lin.get(atom, 0) - c
             if lin[atom] == 0:
                 del lin[atom]
-        # Offsets only add information: when their net sign is unknown the interval
-        # below (which already includes +-1e-1000) decides, or nothing does.
         oa, ob = eff_off(a), eff_off(b)
+        obound = add_bounds(eff_off_bound(a), eff_off_bound(b))
         net = None
         if "mixed" not in (oa, ob):
             if oa is not None and ob is None:
@@ -374,12 +377,15 @@ def sub_raw(a, b):
             kpi = lin.get("ipi", 0)
             if net is None and not unknown_offset:
                 return V("fin", key_of(lin), iv.mpf(c), iv.pi * kpi, kpi, lin=lin)  # exact c + k*pi*i
-            if net is None:
-                d = iv.mpf([-1e-1000, 1e-1000])
-                return V("fin", key_of(lin) + "~", iv.mpf(c) + d, iv.pi * kpi, kpi)  # within 1e-1000, sign unknown
-            d = iv.mpf([-1e-1000, 1e-1000])
-            out = V("fin", key_of(lin) + "~", iv.mpf(c) + d, iv.pi * kpi, kpi, prov=("nudge", mpf(c), net))
-            return out  # exact form plus a nonzero infinitesimal of known sign
+            if obound is not None:
+                d = iv.mpf([-obound, obound])
+                if net is None:
+                    out = V("fin", key_of(lin) + "~", iv.mpf(c) + d, iv.pi * kpi, kpi)
+                    out.off_bound = obound
+                    return out
+                out = V("fin", key_of(lin) + "~", iv.mpf(c) + d, iv.pi * kpi, kpi, prov=("nudge", mpf(c), net))
+                out.off_bound = obound
+                return out
         sym = key_of(lin)
     else:
         lin = None
@@ -388,73 +394,82 @@ def sub_raw(a, b):
         h, f = (a, b) if a.kind == "huge" else (b, a)
         if f.kind != "fin":
             raise Undecided("huge value beside a non-finite one")
-        if h.lm is None or h.lm - magnitude_log(f) >= 100:
-            return huge(sym, h.lm)
+        if h.lm is None:
+            return huge(sym, None)
+        if (iv.mpf(h.lm) - iv.mpf(magnitude_log(f))).a >= 100:
+            return huge(sym, (iv.mpf(h.lm) - 1).a)
         raise Undecided("huge value beside a comparable one")
     if a.kind == "big" and b.kind == "fin" and b.k is None:
         lm = tower_lm(a.L)
-        if lm is None or lm - magnitude_log(b) >= 100:
-            return huge(sym, lm)
+        if lm is None:
+            return huge(sym, None)
+        if (iv.mpf(lm) - iv.mpf(magnitude_log(b))).a >= 100:
+            return huge(sym, (iv.mpf(lm) - 1).a)
         raise Undecided("tower beside a comparable value")
     if b.kind == "big" and a.kind == "fin" and a.k is None:
         lm = tower_lm(b.L)
-        if lm is None or lm - magnitude_log(a) >= 100:
-            return huge(sym, lm)
+        if lm is None:
+            return huge(sym, None)
+        if (iv.mpf(lm) - iv.mpf(magnitude_log(a))).a >= 100:
+            return huge(sym, (iv.mpf(lm) - 1).a)
         raise Undecided("tower beside a comparable value")
     if a.kind == "bigk" or b.kind == "bigk":
-        # a tower with an exact phase k*pi, minus or from a finite value: still a tower
-        if a.kind == "bigk" and b.kind == "fin" and b.k is not None:
-            return V("bigk", sym, s=a.s, L=a.L, k=a.k - b.k)
-        if b.kind == "bigk" and a.kind == "fin" and a.k is not None:
-            return V("bigk", sym, s=-b.s, L=b.L, k=a.k - b.k)
         raise Undecided("tower with a phase in a sum")
     if a.kind == "big" and b.kind == "fin" and b.k not in (0, None):
-        gap = a.L.re.a - magnitude_log(b) if a.L.kind == "fin" else LIMIT
+        gap = (iv.mpf(a.L.re.a) - iv.mpf(magnitude_log(b))).a if a.L.kind == "fin" else LIMIT
         if gap < 100:
             raise Undecided("tower beside a comparable value")
-        return V("bigk", sym, s=a.s, L=a.L, k=-b.k)  # exp(L) - (c + k*pi*i): a tower with phase -k*pi
+        return V("bigk", sym, s=a.s, L=a.L, k=-b.k)  # exp(L) - (c + k*pi*i): excluded, never reused
     if a.kind in ("big", "small") or b.kind in ("big", "small"):
         if a.kind == "big" and b.kind in ("fin", "small"):
             if b.kind == "fin" and b.k not in (0,):
                 raise Undecided("tower minus a complex value")
             bound = 0 if b.kind == "small" else magnitude_log(b)
-            gap = a.L.re.a - bound if a.L.kind == "fin" else LIMIT
+            gap = (iv.mpf(a.L.re.a) - iv.mpf(bound)).a if a.L.kind == "fin" else LIMIT
             if gap < 100:
                 raise Undecided("tower beside a comparable value")
-            L2 = widen(a.L, 2 * iv.exp(-iv.mpf(gap)).b)
+            rel = (2 * iv.exp(-iv.mpf(gap))).b
+            L2 = widen(a.L, rel)
             # s*exp(L) - c = s*exp(L + ln(1 - c*s*e^-L)): delta has the sign of -c*s.
             csign = (1 if b.re.a > 0 else -1 if b.re.b < 0 else 0) if b.kind == "fin" else b.s
             if L2.kind == "fin" and csign != 0:
                 L2.lin = dict(a.L.lin)
                 d = -csign * a.s
                 L2.off = d if a.L.off in (None, d) else "mixed"
+                L2.off_bound = add_bounds(a.L.off_bound, rel)
             return V("big", sym, s=a.s, L=L2)
         if b.kind == "big" and a.kind in ("fin", "small"):
             if a.kind == "fin" and a.k not in (0,):
                 raise Undecided("complex value minus a tower")
             bound = 0 if a.kind == "small" else magnitude_log(a)
-            gap = b.L.re.a - bound if b.L.kind == "fin" else LIMIT
+            gap = (iv.mpf(b.L.re.a) - iv.mpf(bound)).a if b.L.kind == "fin" else LIMIT
             if gap < 100:
                 raise Undecided("tower beside a comparable value")
-            L2 = widen(b.L, 2 * iv.exp(-iv.mpf(gap)).b)
+            rel = (2 * iv.exp(-iv.mpf(gap))).b
+            L2 = widen(b.L, rel)
             # c - s*exp(L) = -s*exp(L + ln(1 - c*s*e^-L)): delta has the sign of -c*s.
             csign = (1 if a.re.a > 0 else -1 if a.re.b < 0 else 0) if a.kind == "fin" else a.s
             if L2.kind == "fin" and csign != 0:
                 L2.lin = dict(b.L.lin)
                 d = -csign * b.s
                 L2.off = d if b.L.off in (None, d) else "mixed"
+                L2.off_bound = add_bounds(b.L.off_bound, rel)
             return V("big", sym, s=-b.s, L=L2)
         if a.kind == "small" and b.kind == "fin":
-            # s*tiny - b with 0 < tiny < exp(-10^6): within 1e-1000 of -b, and never
-            # equal to an exact -b, because exp of a finite value is never 0.
-            d = iv.mpf([-1e-1000, 1e-1000])
+            rad = iv.exp(-iv.mpf(LIMIT)).b
+            d = iv.mpf([-rad, rad])
             k = None if b.k is None else -b.k
             nudge = ("nudge", -b.re.a, a.s) if b.k == 0 and b.re.a == b.re.b else None
-            return V("fin", sym, -b.re + d, -b.im, k, prov=nudge)
+            out = V("fin", sym, -b.re + d, -b.im, k, prov=nudge)
+            out.off_bound = add_bounds(rad, b.off_bound)
+            return out
         if b.kind == "small" and a.kind == "fin":
-            d = iv.mpf([-1e-1000, 1e-1000])
+            rad = iv.exp(-iv.mpf(LIMIT)).b
+            d = iv.mpf([-rad, rad])
             nudge = ("nudge", a.re.a, -b.s) if a.k == 0 and a.re.a == a.re.b else None
-            return V("fin", sym, a.re + d, a.im, a.k, prov=nudge)
+            out = V("fin", sym, a.re + d, a.im, a.k, prov=nudge)
+            out.off_bound = add_bounds(a.off_bound, rad)
+            return out
         if a.kind in ("big", "small") and b.kind == "inf":
             return V("inf", sym, im=-b.im, k=(-b.k if b.k is not None else None), s=-b.s)
         if b.kind in ("big", "small") and a.kind == "inf":
@@ -493,15 +508,13 @@ def sub(a, b):
                 del lin[atom]
         out.lin = lin
         out.off = combine_off(eff_off(a), neg_off(eff_off(b)))
+        out.off_bound = add_bounds(eff_off_bound(a), eff_off_bound(b))
         out.sym = tag(key_of(lin), out.off)
     return out
 
 
 def eml(x, y):
     return sub(cexp(x), clog(y))
-
-
-ONE = None
 
 
 def evaluate(word):
@@ -559,20 +572,27 @@ def programs(n):
 
 def uses_ln0(word):
     """Whether some gate takes ln of an exact 0."""
-    st = []
-    for ch in word:
-        if ch == "1":
-            st.append(V("fin", "1", iv.mpf(1), iv.mpf(0), 0))
-        else:
-            y = st.pop()
-            x = st.pop()
-            if is_zero(y):
-                return True
-            try:
-                st.append(eml(x, y))
-            except Undecided:
-                return None  # unknown: counts against a "needs ln 0" claim
-    return False
+    saved = iv.prec
+    iv.prec = 128
+    EXP_ARG.clear()
+    LN_ARG.clear()
+    try:
+        st = []
+        for ch in word:
+            if ch == "1":
+                st.append(V("fin", "1", iv.mpf(1), iv.mpf(0), 0))
+            else:
+                y = st.pop()
+                x = st.pop()
+                if is_zero(y):
+                    return True
+                try:
+                    st.append(eml(x, y))
+                except Undecided:
+                    return None  # unknown: counts against a "needs ln 0" claim
+        return False
+    finally:
+        iv.prec = saved
 
 
 def decide(word, tre, tk=0):
@@ -696,7 +716,8 @@ def self_test():
 def main():
     if not self_test():
         sys.exit(2)
-    if len(sys.argv) > 1 and sys.argv[1] == "--open":
+    args = sys.argv[1:]
+    if "--open" in args:
         # +i*pi on this cut at K 21 (K 23 without ln 0), and -2 at K 25 (K 27 without ln 0).
         global QUIET
         t0 = time.time()
@@ -706,7 +727,7 @@ def main():
             ok = only_ln0("+i*pi", 0, 1, 21) and ok
             ok = prove("-2", -2, 0, 23) and ok
             return only_ln0("-2", -2, 0, 25) and ok
-        if "--deep" in sys.argv:
+        if "--deep" in args:
             QUIET = True
             claims()
             print(f"first pass: {time.time() - t0:.0f} s", flush=True)
@@ -715,13 +736,17 @@ def main():
         ok = claims()
         print(f"decided by towers.py: {STATS['towers']}, by deep.py: {STATS['deep']}  ({time.time() - t0:.0f} s)")
         sys.exit(0 if ok else 1)
-    max_k = int(sys.argv[1]) if len(sys.argv) > 1 else 17
+    pos = [a for a in args if not a.startswith("--")]
+    max_k = int(pos[0]) if pos else 17
     words = []
     for n in range(1, (max_k + 1) // 2 + 1):
         words += programs(n)
     print(f"{len(words)} programs with K <= {max_k}")
     ok = True
     for label, tre, upto in CLAIMS:
+        if upto > max_k:
+            print(f"{label}: skipped (needs K <= {upto}, ran max_k={max_k})")
+            continue
         undecided, equal, checked = [], [], 0
         for w in words:
             if len(w) > upto:
@@ -739,14 +764,15 @@ def main():
             print(f"   not excluded: {w}")
         for w, r in undecided[:12]:
             print(f"   undecided: {w}  ({r})")
-    k15 = [w for w in words if len(w) == 15]
-    hits = [(w,) + decide(w, -1) for w in k15]
-    hits = [h for h in hits if h[1] is not True]
-    strict = [h for h in hits if not uses_ln0(h[0])]
-    print(f"-1 at K 15: {len(hits)} programs not excluded, {len(strict)} of them without ln 0 (claim: only ln 0 words)")
-    for h in hits[:10]:
-        print(f"   {h[0]}  ln0={uses_ln0(h[0])}  {'undecided: ' + h[2] if h[1] is None else 'not excluded'}")
-    ok = ok and not strict
+    if max_k >= 15:
+        k15 = [w for w in words if len(w) == 15]
+        hits = [(w,) + decide(w, -1) for w in k15]
+        hits = [h for h in hits if h[1] is not True]
+        strict = [h for h in hits if uses_ln0(h[0]) is not True]
+        print(f"-1 at K 15: {len(hits)} programs not excluded, {len(strict)} of them without ln 0 (claim: only ln 0 words)")
+        for h in hits[:10]:
+            print(f"   {h[0]}  ln0={uses_ln0(h[0])}  {'undecided: ' + h[2] if h[1] is None else 'not excluded'}")
+        ok = ok and not strict
     sys.exit(0 if ok else 1)
 
 

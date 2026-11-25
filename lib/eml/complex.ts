@@ -238,7 +238,8 @@ export function cdiv(a: C, b: C): C {
   if (isZero(b)) {
     if (isZero(a)) return { re: NaN, im: NaN };
     if (a.re === 0 && finitePart(a.im) && a.im !== 0) {
-      return { re: 0, im: a.im > 0 ? Infinity : -Infinity };
+      const sign = (a.im < 0 ? -1 : 1) * (Object.is(b.re, -0) ? -1 : 1);
+      return { re: 0, im: sign > 0 ? Infinity : -Infinity };
     }
     return { re: NaN, im: NaN };
   }
@@ -263,9 +264,11 @@ export function cdiv(a: C, b: C): C {
   return { re: (mul(a.re, t) + mul(a.im, 1)) / den, im: (mul(a.im, t) - mul(a.re, 1)) / den };
 }
 
-/** Principal power. 0 raised to a positive real power is 0, and z^0 is 1. */
+/** Principal power. 0 raised to a positive real power is 0, and finite z^0 is 1. */
 export function cpow(a: C, b: C): C {
-  if (isZero(b) && !Number.isNaN(a.re) && !Number.isNaN(a.im)) return { re: 1, im: 0 };
+  if (isZero(b)) {
+    return Number.isFinite(a.re) && Number.isFinite(a.im) ? { re: 1, im: 0 } : { re: NaN, im: NaN };
+  }
   if (imagIsZero(a) && imagIsZero(b) && !Number.isNaN(a.re) && !Number.isNaN(b.re)) {
     if ((a.re === 1 || a.re === -1) && !Number.isFinite(b.re)) return { re: 1, im: 0 };
     if (a.re === 0 || Object.is(a.re, -0)) {

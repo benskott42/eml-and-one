@@ -36,9 +36,10 @@ export function encodePresses(tokens: readonly string[]): string | null {
 
 /** At most `limit` characters, then an ellipsis. The press count is the full length. */
 export function previewPresses(full: string, presses = BigInt(full.length), limit = PRESS_LIMIT): PressPreview {
-  const cap = BigInt(limit);
+  const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : PRESS_LIMIT;
+  const cap = BigInt(safeLimit);
   const truncated = presses > cap || BigInt(full.length) > cap;
-  const body = full.length > limit ? full.slice(0, limit) : full;
+  const body = full.length > safeLimit ? full.slice(0, safeLimit) : full;
   return {
     full,
     preview: truncated ? `${body}…` : body,
@@ -116,7 +117,7 @@ export function pressPreviewForNode(node: Node, limit = PRESS_LIMIT): PressPrevi
     if (prefix === null) return null;
     const shown = previewPresses(prefix, length, limit);
     // The prefix can end before the first x or y. The leaves say whether the string has one.
-    return { ...shown, usesVariables: kind === "variables", copyable: false };
+    return { ...shown, usesVariables: kind === "variables", copyable: BigInt(prefix.length) === length };
   }
   const tokens = rpnTokens(node, Number(length));
   if (!tokens) return null;

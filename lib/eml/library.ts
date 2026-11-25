@@ -37,7 +37,7 @@ import {
   installIntegerBuilder,
   markExactInt,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesShortcut, markUnverified, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { E, EmlError, ONE, evaluateReport, isExactUnsure, isolateCircuit, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, onCircuitIsolate, seriesShortcutNoteFrom, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
 
 /**
@@ -255,29 +255,13 @@ const SERIES_REL = -480;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
 const SMALL_NOTE = "series shortcut: the leading term z, for a small |z|";
-const seriesNotes = new WeakMap<Node, string>();
-
 function markSeries(node: Node, note: string): Node {
-  seriesNotes.set(node, note);
-  return markSeriesShortcut(node);
+  return markSeriesShortcut(node, note);
 }
 
 /** The note for a result whose circuit used a series shortcut. Null when it did not. */
 export function seriesShortcutNote(root: Node): string | null {
-  const seen = new Set<Node>();
-  const stack: Node[] = [root];
-  while (stack.length) {
-    const node = stack.pop();
-    if (!node || seen.has(node)) continue;
-    seen.add(node);
-    const note = seriesNotes.get(node);
-    if (note) return note;
-    if (node.type === "eml") {
-      if (node.a) stack.push(node.a);
-      if (node.b) stack.push(node.b);
-    }
-  }
-  return null;
+  return seriesShortcutNoteFrom(root);
 }
 
 /** Decade of a real known to sit in one power of ten, or null when it might not. */
@@ -979,9 +963,14 @@ export function tSinh(t: Node): Node {
   if (zero) return zero;
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
-  // The dropped cubic is not exact, so z is marked as a series shortcut: a later
-  // sinh(z) − z is a series zero and is not certified.
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
+  // The dropped cubic is not exact, so z is marked as a series shortcut with its cubic error
+  // scale: any cancellation exposing the dropped z³/6 term is refused rather than certified.
+  const mag = known ? Math.hypot(known.re, known.im) : Number.NaN;
+  if (mag < 1e-6) {
+    const out = markSeries(t, SMALL_NOTE);
+    if (mag > 0) markSeriesError(out, Math.ceil(3 * Math.log10(mag)));
+    return out;
+  }
   // exp(t)/2 · (1 − exp(−2t)). Subtracting the real 1 keeps exp(t) out of the exponent.
   const em2 = tExp(tNeg(tAdd(t, t)));
   return tHalfOf(tMul(tExp(t), tSub(ONE, em2)));
@@ -1268,12 +1257,23 @@ function sqrtOnePlus(t: Node): Node {
   return tSqrt(naiveSub(t, tMinusOne()));
 }
 
-/** z + z³/6 + 3z⁵/40. */
-function arcsinSeries(t: Node): Node {
+/**
+ * Factored Horner series for arcsin(z) = z * (1 + z²*(1/6)*(1 + z²*(9/20)*(...))).
+ * Picks enough terms for the omitted tail to lie past 124 digits at |z| <= box,
+ * keeping float64 accuracy for |z| < 1e-4 without losing exact-mode digits.
+ */
+function arcsinSeries(t: Node, box: number): Node {
   const z2 = tSqr(t);
-  const z3 = tMul(z2, t);
-  const z5 = tMul(z3, z2);
-  return tAdd(t, tAdd(tDiv(z3, integerNode(6)), tDiv(tMul(tThree(), z5), integerNode(40))));
+  const logBox = box > 0 ? -Math.log10(box) : 60;
+  const terms = Math.max(2, Math.min(16, Math.ceil(62 / Math.max(4, logBox))));
+  let acc: Node = ONE;
+  for (let k = terms; k >= 1; k -= 1) {
+    const num = (2 * k - 1) * (2 * k - 1);
+    const den = 2 * k * (2 * k + 1);
+    const factor = tDiv(integerNode(num), integerNode(den));
+    acc = tAdd(ONE, tMul(z2, tMul(factor, acc)));
+  }
+  return tMul(t, acc);
 }
 
 /**
@@ -1298,14 +1298,21 @@ export function tArcsin(t: Node): Node {
   }
   if (rangeOf(t).int === BigInt(0)) return tZero();
   const box = asinhBox(t);
-  // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
-  if (box !== null && box < 1e-4) return box < 1e-60 ? markUnverified(arcsinSeries(t)) : arcsinSeries(t);
+  // Below 10^(−4), the adaptive factored Horner series avoids float64 cancellation
+  // while keeping the truncation tail past 124 digits. Below 10^(−60) the x³/6
+  // term is not kept beside x: not certified.
+  if (box !== null && box < 1e-4) {
+    return box < 1e-60 ? markUnverified(arcsinSeries(t, box)) : markSeries(arcsinSeries(t, box), SMALL_NOTE);
+  }
   const re = realBounds(t);
   const side = provenImagSign(t);
   const lower = side === 1 || (side === 0 && !!re && re.hi < 0);
-  if (side !== null && minMagnitude(t) > 1e10) {
-    if (lower) return tMul(tI(), tAdd(tLn(tTwo()), tLn(tMul(tNeg(tI()), t))));
-    return tMul(tNeg(tI()), tAdd(tLn(tTwo()), tLn(tMul(tI(), t))));
+  // Asymptotic ±i(ln 2 + ln(∓iz)) drops O(1/z²); only switch once 1/z² is past 120 digits (|z| > 10^65).
+  if (side !== null && minMagnitude(t) > 1e65) {
+    const asym = lower
+      ? tMul(tI(), tAdd(tLn(tTwo()), tLn(tMul(tNeg(tI()), t))))
+      : tMul(tNeg(tI()), tAdd(tLn(tTwo()), tLn(tMul(tI(), t))));
+    return markSeries(asym, "series shortcut: large-argument asymptotic");
   }
   const rad = tMul(sqrtOneMinus(t), sqrtOnePlus(t));
   const it = tMul(tI(), t);
@@ -1358,11 +1365,11 @@ export function tArctan(t: Node): Node {
   if (range.re && range.im && Math.abs(range.re.lo) < 1e-6 && Math.abs(range.re.hi) < 1e-6 && (range.im.lo > 1 || range.im.hi < -1)) {
     return tMul(tI(), tArtanh(tMul(tNeg(tI()), t)));
   }
-  // arctan z = −i·artanh(iz), which holds on both cuts because tArtanh is
-  // mpmath's atanh. (1/2i)·Log((1+iz)/(1−iz)) put iy with y < −1 on the +π/2
-  // bank whenever the range table above could not see that z was imaginary:
-  // atan(−2i·asinh 9) was certified as +π/2 − 0.1746i (mpmath: −π/2 − 0.1746i).
-  return tMul(tNeg(tI()), tArtanh(tMul(tI(), t)));
+  // arctan z = −i·artanh(iz), which holds on both cuts because tArtanhClosed is
+  // mpmath's atanh. Bypass tArtanh's < 1e-6 linear shortcut here: tArctan already
+  // handled tiny arguments via tinyRealArgument / oddSeries above, so 1e-20 < |z| < 1e-6
+  // stays on the exact closed form instead of dropping z³/3.
+  return tMul(tNeg(tI()), tArtanhClosed(tMul(tI(), t)));
 }
 
 function asinhBox(t: Node): number | null {
@@ -1418,12 +1425,8 @@ function artanhAboveOne(t: Node): Node {
   return tSub(tHalfOf(tLn(tAbs(ratio))), tMul(tI(), tHalfOf(tPi())));
 }
 
-export function tArtanh(t: Node): Node {
-  const zero = oddAtZero(t);
-  if (zero) return zero;
+function tArtanhClosed(t: Node): Node {
   const known = tightValue(t);
-  // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
-  if (known && Math.hypot(known.re, known.im) < 1e-6) return markSeries(t, SMALL_NOTE);
   // artanh(±1) is ±∞, kept as ln 0 so it has a direction. The quotient of square
   // roots divides by a 0 and gives an infinity with none, which i·artanh(1) turned
   // into a real ∞.
@@ -1438,6 +1441,20 @@ export function tArtanh(t: Node): Node {
   // the other bank (+iπ/2) whenever the range table had no point for it, so
   // atanh(1.694^3) was +iπ/2 while atanh(4.861) was −iπ/2, both certified.
   return tLn(tDiv(tSqrt(tAdd(ONE, t)), tSqrt(tSub(ONE, t))));
+}
+
+export function tArtanh(t: Node): Node {
+  const zero = oddAtZero(t);
+  if (zero) return zero;
+  const known = tightValue(t);
+  // artanh z = z + z³/3: the dropped cubic is not exact, as in tSinh.
+  const mag = known ? Math.hypot(known.re, known.im) : Number.NaN;
+  if (mag < 1e-6) {
+    const out = markSeries(t, SMALL_NOTE);
+    if (mag > 0) markSeriesError(out, Math.ceil(3 * Math.log10(mag)));
+    return out;
+  }
+  return tArtanhClosed(t);
 }
 
 export function tLogBase(base: Node, value: Node): Node {
@@ -1564,7 +1581,7 @@ function literalNodeBuild(text: string): Node {
     const magnitude =
       expAdj >= 0 ? tMul(digitsToInteger(1, digits), pow10(expAdj)) : tDiv(digitsToInteger(1, digits), pow10(-expAdj));
     const signed = sign < 0 ? tNeg(magnitude) : magnitude;
-    noteDecade(signed, expAdj);
+    if (digits !== "0") noteDecade(signed, expAdj + digits.length - 1);
     if (Math.abs(expAdj) <= DECIMAL_SCALE_MAX) {
       const n = BigInt(sign) * BigInt(digits) * (expAdj > 0 ? BigInt(10) ** BigInt(expAdj) : BigInt(1));
       noteExactDecimal(signed, { n, s: expAdj < 0 ? -expAdj : 0 });

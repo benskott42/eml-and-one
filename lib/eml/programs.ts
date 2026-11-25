@@ -13,7 +13,7 @@ import { EmlError, onCircuitIsolate, type Node, nodeFromRpn, substitute } from "
  * minus, sub, add, sqrt, and pow are the short words, not the full
  * operations. Their domains are the notes in best-known.json.
  */
-export const SHORT_PROGRAMS: Record<string, string> = table.programs;
+export const SHORT_PROGRAMS: Readonly<Record<string, string>> = Object.freeze({ ...table.programs });
 
 const cache = new Map<string, Node>();
 onCircuitIsolate(() => cache.clear());
@@ -32,6 +32,7 @@ export function nodeFromCompact(rpn: string): Node {
 }
 
 export function programNode(id: string): Node {
+  if (!Object.hasOwn(SHORT_PROGRAMS, id)) throw new EmlError(`Unknown program ${id}.`);
   const rpn = SHORT_PROGRAMS[id];
   if (!rpn) throw new EmlError(`Unknown program ${id}.`);
   const hit = cache.get(id);
@@ -46,6 +47,7 @@ export function applyProgram(id: string, bindings: Record<string, Node> = {}): N
 }
 
 export function programK(id: string): number {
+  if (!Object.hasOwn(SHORT_PROGRAMS, id)) throw new EmlError(`Unknown program ${id}.`);
   const rpn = SHORT_PROGRAMS[id];
   if (!rpn) throw new EmlError(`Unknown program ${id}.`);
   return rpn.length;

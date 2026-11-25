@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { branchChecks, runPropertyChecks } from "./check-properties";
 import path from "node:path";
-import { c, casinh, cdiv, cexp, close, clog, cmul, csin, ctan, eml } from "./complex";
+import { c, casinh, cdiv, cexp, close, clog, cmul, cpow, csin, ctan, eml } from "./complex";
 import { applyModeSwitch, commitHistory, drainQueue, exactScreen, finiteLossMessage, modeRequest, underflowDisclosure, undoHistory } from "./history";
 import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
@@ -30,7 +30,7 @@ import {
   tTwo,
   unaryNode,
 } from "./library";
-import { domainAdd, domainSub, knownValue, naiveSub, rangeOf, rotSubCircuit } from "./lowering";
+import { decadeOf, domainAdd, domainSub, knownValue, naiveSub, rangeOf, rotSubCircuit } from "./lowering";
 import {
   type Node,
   E,
@@ -4125,7 +4125,7 @@ if (shardTurn(53)) {
 // Release refusals: a large trig argument below the root, a part cancelled to 0
 // beside a nonzero part after a value below the precision, a finite overflow
 // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
-const releaseRefused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "(exp(exp(-300))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(10^400-(2-2*i))^-1", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
+const releaseRefused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(800)+1)-exp(800)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(10^400-(2-2*i))^-1", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
 function releaseRefusal(source: string): void {
   const node = compileExpression(source, {});
   const packed = packCircuit(node);
@@ -4607,10 +4607,14 @@ if (shardTurn(85)) {
     ["(0.1+0.2-0.3)*7", "0"],
     ["0-10^(-500)", "−1×10^−500"],
     ["10^400/7", "1.428571428571×10^399"],
+    ["(exp(exp(-300))-1)+i/2", "5.148200222412×10^−131 + 0.5i"],
+    ["hypot(2e-160,1)", "1"],
+    ["(1+1e-200)^1e200", "2.718281828459"],
+    ["(atan(1e-7)-1e-7)+1e-100", "−3.333333333333×10^−22"],
   ];
   // Still refused: a term absorbed into a huge value and cancelled with it, a part
-  // past the cap, a collapsed logarithm, a series zero, and the two hypot words whose
-  // circuits pass through a 0 that only the gates' snap makes exact (known-limitations).
+  // past the cap, a collapsed logarithm, a series zero, and hypot(1e160,-1) whose
+  // circuit passes through a 0 that only the gates' snap makes exact (known-limitations).
   const refused = [
     "((1+10^(-500))-1)+i/2",
     "(exp(800)+1)-exp(800)",
@@ -4619,8 +4623,8 @@ if (shardTurn(85)) {
     "ln(1+exp(-1000))",
     "ln(1-exp(-1000))",
     "pi+sqrt(exp(800))-sqrt(exp(800))-pi",
-    "hypot(2e-160,1)",
     "hypot(1e160,-1)",
+    "(1+1e-450)^1e450",
     "sinh(1e-7)-1e-7",
   ];
   const read = (report: ReturnType<typeof exactReport>) => (report.unverified ? "unverified" : formatExact(report.value).replace(/\u200b/g, ""));
@@ -4689,6 +4693,90 @@ if (shardTurn(95)) {
       failed += 1;
       console.log("FAIL pole direction", source, got, "want", want);
     }
+  }
+}
+
+if (shardTurn(96)) {
+  // Audit regressions: absorbed real terms & serial cancellations (the 6 v1.0.3 fuzz bugs),
+  // unbounded series/asymptotic shortcuts, exactUnsure propagation, wire series-shortcut notes,
+  // parser/complex/float-bound edge cases, and directed-rounding ball soundness.
+  const show = (source: string): string => {
+    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
+    return report.unverified ? "unverified" : formatExact(report.value).replace(/\u200b/g, "");
+  };
+  const auditRows: [string, string][] = [
+    ["1e-400 + exp(-800)", "3.667874584178×10^−348"],
+    ["(1e200 + 0.5) - (1e200 - 0.5)", "1"],
+    ["((exp(-300) + 0.1/10^-130) - 0.1/10^-130) - exp(-300)", "unverified"],
+    ["sqrt(sqrt(1e-40 + exp(-800)) - 1e-20)", "1.354229408959×10^−164"],
+    ["hypot((1e-5)^2, -1e-200) - (1e-5)^2", "unverified"],
+    ["ln((1e-20 + 0.5^i) - 0.5^i - 1e-20)", "unverified"],
+    ["(sinh(5e-7) - 5e-7) + 1e-19", "unverified"],
+    ["(artanh(5e-7) - 5e-7) + 1e-19", "unverified"],
+    ["(arcsin(1e-5) - 1e-5 - (1e-15)/6) * 1e25", "0.075000000004"],
+    ["tanh(1000) - tanh(1000)", "unverified"],
+    ["(1 + tanh(1000)) - (1 + tanh(1000))", "unverified"],
+  ];
+  for (const [source, want] of auditRows) {
+    const got = show(source);
+    if (got !== want) {
+      failed += 1;
+      console.log("FAIL audit row", source, got, "want", want);
+    }
+  }
+  const asym = show("(arcsin(1e11) + i*ln(2e11)) * 1e23");
+  if (!asym.startsWith("1.570796326795×10^23 + 2.5")) {
+    failed += 1;
+    console.log("FAIL arcsin asymptotic", asym);
+  }
+  if (decadeOf(literalNode("1.0000001e-240")) !== -240) {
+    failed += 1;
+    console.log("FAIL literalNode decade", decadeOf(literalNode("1.0000001e-240")));
+  }
+  // Parser: 2exp(1) asks for *, and referenceExpression reads inf.
+  try {
+    compileExpression("2exp(1)", {});
+    failed += 1;
+    console.log("FAIL 2exp(1) compiled");
+  } catch (err) {
+    const msg = err instanceof EmlError ? err.message : String(err);
+    if (msg !== "Put * between “2” and “exp”.") {
+      failed += 1;
+      console.log("FAIL 2exp(1) message", msg);
+    }
+  }
+  const refInf = referenceExpression("inf", {});
+  if (!refInf || refInf.re !== Infinity || refInf.im !== 0) {
+    failed += 1;
+    console.log("FAIL referenceExpression inf", refInf);
+  }
+  // Complex: infinite base to 0 is NaN (not 1), and i / (-0) is -Infinity*i.
+  const infPow0 = cpow(c(-Infinity), c(0));
+  if (!Number.isNaN(infPow0.re) || !Number.isNaN(infPow0.im)) {
+    failed += 1;
+    console.log("FAIL cpow(-Inf, 0)", infPow0);
+  }
+  if (agreementNote("ln(0)^0", c(NaN, NaN), {}, "undefined") !== null) {
+    failed += 1;
+    console.log("FAIL agreementNote ln(0)^0", agreementNote("ln(0)^0", c(NaN, NaN), {}, "undefined"));
+  }
+  const divNeg0 = cdiv(c(0, 1), c(-0, 0));
+  if (divNeg0.re !== 0 || divNeg0.im !== -Infinity) {
+    failed += 1;
+    console.log("FAIL cdiv(i, -0)", divNeg0);
+  }
+  // Long-integer boundary right below 1e12 that formatReal rounds up to 1000000000000.
+  if (!beyondFloatBound(c(999999999999.9), c(999999999999))) {
+    failed += 1;
+    console.log("FAIL beyondFloatBound 999999999999.9 vs 999999999999");
+  }
+  // Wire serialization preserves seriesShortcutNote across fresh unpack (isolateCircuit clears cons).
+  const seriesSrc = compileExpression("tan(1e-5000)", {});
+  const packedSeries = packCircuit(seriesSrc);
+  const unpackedSeries = isolateCircuit(() => unpackCircuit(packedSeries.tokens, packedSeries.root));
+  if (seriesShortcutNote(unpackedSeries) !== seriesShortcutNote(seriesSrc)) {
+    failed += 1;
+    console.log("FAIL wire seriesShortcutNote", seriesShortcutNote(unpackedSeries), "want", seriesShortcutNote(seriesSrc));
   }
 }
 

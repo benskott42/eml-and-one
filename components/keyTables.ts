@@ -81,20 +81,24 @@ export function* keyCostEntries(stack: readonly { node: Node }[], xText: string,
   for (const key of CONSTANT_KEYS) yield [key.id, caption(() => constantNode(key.id))];
   let xNode = integerNode(2);
   let yNode = integerNode(3);
-  try {
-    if (stack.length >= 2) {
-      xNode = stack[stack.length - 2]?.node ?? xNode;
-      yNode = stack[stack.length - 1]?.node ?? yNode;
-    } else if (stack.length === 1) {
-      xNode = stack[0]?.node ?? xNode;
+  if (stack.length >= 2) {
+    xNode = stack[stack.length - 2]?.node ?? xNode;
+    yNode = stack[stack.length - 1]?.node ?? yNode;
+  } else {
+    try {
       yNode = readScalar(yText, "y");
-    } else {
-      xNode = readScalar(xText, "x");
-      yNode = readScalar(yText, "y");
+    } catch {
+      yNode = integerNode(3);
     }
-  } catch {
-    xNode = integerNode(2);
-    yNode = integerNode(3);
+    if (stack.length === 1) {
+      xNode = stack[0]?.node ?? xNode;
+    } else {
+      try {
+        xNode = readScalar(xText, "x");
+      } catch {
+        xNode = integerNode(2);
+      }
+    }
   }
   const arg = stack[stack.length - 1]?.node ?? xNode;
   for (const key of UNARY_KEYS) yield [key.id, caption(() => applyUnaryNode(key.id, arg))];

@@ -1,5 +1,5 @@
 // Small pieces of the calculator screen that keep their own state.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { GolfHit } from "@/lib/eml/golf";
 import { ln0Dependence } from "@/lib/eml/golf-label";
 import { type Node } from "@/lib/eml/node";
@@ -12,7 +12,7 @@ export function CopyNumber({ text }: { text: string }) {
       type="button"
       className="ti-lcd-btn"
       title={text}
-      aria-label={`Copy ${text}`}
+      aria-label="Copy program number"
       onClick={() => {
         const clip = navigator.clipboard;
         if (!clip) return;
@@ -26,8 +26,8 @@ export function CopyNumber({ text }: { text: string }) {
 
 export function PressLine({ node }: { node: Node | null }) {
   const [copied, setCopied] = useState(false);
+  const view = useMemo(() => (node ? pressPreviewForNode(node) : null), [node]);
   if (!node) return null;
-  const view = pressPreviewForNode(node);
   if (!view) {
     return <p className="ti-press">Binary applies only to programs of the 1 and EML keys.</p>;
   }
@@ -43,6 +43,7 @@ export function PressLine({ node }: { node: Node | null }) {
           <button
             type="button"
             className="ti-lcd-btn"
+            aria-label="Copy press string"
             onClick={() => {
               // No clipboard outside a secure context; that must not throw.
               const clip = navigator.clipboard;
@@ -84,6 +85,8 @@ export function KeyButton({
   onReveal?: (text: string) => void;
 }) {
   const revealed = useRef(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cleanupRef.current?.(), []);
   return (
     <div className="ti-key">
       {secondary ? (
@@ -104,25 +107,40 @@ export function KeyButton({
           if (disabled) return;
           onClick();
         }}
-        onPointerDown={() => {
+        onPointerDown={(event) => {
           if (!title || !onReveal) return;
+          // Ignore secondary mouse buttons (e.g. right-click) and non-primary touches.
+          if (event.isPrimary === false || (event.button !== undefined && event.button !== 0)) return;
+          cleanupRef.current?.();
           revealed.current = false;
           const timer = window.setTimeout(() => {
             revealed.current = true;
             onReveal(title);
           }, 450);
-          const end = () => {
+          let resetTimer = 0;
+          const detach = () => {
             window.clearTimeout(timer);
+            window.clearTimeout(resetTimer);
+            window.removeEventListener("pointerup", end);
+            window.removeEventListener("pointercancel", end);
+            cleanupRef.current = null;
+          };
+          const end = () => {
+            detach();
             if (!revealed.current) return;
             // pointerup outside the button does not deliver a click, so the
             // flag would swallow the next key. Drop it on the next turn if
             // this click does not consume it first.
-            window.setTimeout(() => {
+            resetTimer = window.setTimeout(() => {
               revealed.current = false;
             }, 0);
           };
-          window.addEventListener("pointerup", end, { once: true });
-          window.addEventListener("pointercancel", end, { once: true });
+          cleanupRef.current = detach;
+          window.addEventListener("pointerup", end);
+          window.addEventListener("pointercancel", end);
+        }}
+        onPointerLeave={() => {
+          if (!revealed.current) cleanupRef.current?.();
         }}
         className={disabled ? `ti-btn ti-btn-${tone} is-quiet` : `ti-btn ti-btn-${tone}`}
       >
@@ -143,18 +161,29 @@ export function GolfPanel() {
     workerRef.current = null;
   }, []);
 
-  function stop() {
+  function stop(cancelled = false) {
     requestRef.current += 1;
     // The search loop does not yield, so a stop message never arrives. Ending the worker is the cancel.
     workerRef.current?.terminate();
     workerRef.current = null;
     setBusy(false);
+    if (cancelled) setLine("Search cancelled.");
   }
 
   function start(allowLn0: boolean) {
-    stop();
+    stop(false);
+    if (typeof Worker === "undefined") {
+      setLine("Web Workers are not available in this browser.");
+      return;
+    }
     const request = requestRef.current;
-    const worker = new Worker(new URL("../../lib/eml/golf.worker.ts", import.meta.url));
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("../../lib/eml/golf.worker.ts", import.meta.url));
+    } catch {
+      setLine("The search worker could not be started.");
+      return;
+    }
     workerRef.current = worker;
     setBusy(true);
     setLine("Searching…");
@@ -192,9 +221,9 @@ export function GolfPanel() {
   }
 
   return (
-    <details className="ti-fold">
+    <details className="ti-fold ti-golf">
       <summary>Circuit golf</summary>
-      <p>{line}</p>
+      <p aria-live="polite">{line}</p>
       <div className="ti-manual-actions">
         <button type="button" onClick={() => start(true)} disabled={busy} className="ti-text-btn ti-text-btn-strong">
           Search with ln 0
@@ -202,7 +231,7 @@ export function GolfPanel() {
         <button type="button" onClick={() => start(false)} disabled={busy} className="ti-text-btn">
           Search without ln 0
         </button>
-        <button type="button" onClick={stop} disabled={!busy} className="ti-text-btn">
+        <button type="button" onClick={() => stop(true)} disabled={!busy} className="ti-text-btn">
           Cancel
         </button>
       </div>

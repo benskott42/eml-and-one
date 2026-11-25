@@ -37,15 +37,16 @@ import {
   tPi,
   tPow,
   tSqrt,
+  tZero,
   literalNode,
   userAdd,
   userSub,
   userNeg,
   unaryBuilders,
 } from "./library";
-import { mayBeInfinite } from "./lowering";
+import { mayBeInfinite, naiveSub } from "./lowering";
 import { formatC, isUsable } from "./format";
-import { EmlError, input, isExactUnsure, isUnverified, isolateCircuit, markExactUnsure, markUnverified, precisionNoteOf, type Node } from "./node";
+import { E, ONE, EmlError, input, isExactUnsure, isUnverified, isolateCircuit, markExactUnsure, markUnverified, precisionNoteOf, type Node } from "./node";
 
 /** Short names for the same unary program. log is unary ln, and binary log below. */
 const UNARY_ALIAS: Record<string, string> = {
@@ -82,6 +83,7 @@ const BINARY_CALL: Record<string, (a: Node, b: Node) => Node> = Object.fromEntri
 /** π is its own token: πi is pi i, and 2πi says to put * after 2, as 2 pi i does. */
 function preprocess(source: string): string {
   return source
+    .replace(/\u200b/g, "")
     .replace(/π/g, " pi ")
     .replace(/×/g, "*")
     .replace(/÷/g, "/")
@@ -110,7 +112,7 @@ function tokenize(source: string): Tok[] {
       }
       i += 1;
       while (i < s.length && /[0-9.]/.test(s[i])) i += 1;
-      if (s[i] === "e" || s[i] === "E") {
+      if ((s[i] === "e" || s[i] === "E") && !/[A-Za-z]/.test(s[i + 1] ?? "")) {
         i += 1;
         if (s[i] === "+" || s[i] === "-") i += 1;
         const expStart = i;
@@ -378,11 +380,19 @@ let taintCount = 0;
  */
 function refuseFrom(args: Node[], out: Node): Node {
   // An infinite operand is the library's own refusal path: (1 + ∞) − ∞ stays ∞ − ∞.
-  const refused = args.filter((arg) => isUnverified(arg) && !mayBeInfinite(arg));
+  const unverifiedArgs = args.filter((arg) => isUnverified(arg) && !mayBeInfinite(arg));
+  const exactUnsureArgs = args.filter((arg) => isExactUnsure(arg) && !mayBeInfinite(arg));
+  const refused = [...unverifiedArgs, ...exactUnsureArgs];
   if (!refused.length || isUnverified(out) || isExactUnsure(out)) return out;
   if (refused.some((arg) => builtOn(out, arg))) return markExactUnsure(out);
-  taintCount += 1;
-  return markUnverified(input({ re: Number.NaN, im: Number.NaN }, `unverified-from:${taintCount}`));
+  if (unverifiedArgs.length > 0) {
+    taintCount += 1;
+    return markUnverified(input({ re: Number.NaN, im: Number.NaN }, `unverified-from:${taintCount}`));
+  }
+  // Only exactUnsure operands were folded away: keep float's value, refuse exact mode
+  // without mutating shared constant nodes like ONE or tZero().
+  const fresh = out.type === "one" ? E(naiveSub(ONE, ONE), ONE) : out === tZero() ? naiveSub(ONE, ONE) : out;
+  return markExactUnsure(fresh);
 }
 
 function builtOn(root: Node, part: Node): boolean {
@@ -540,6 +550,7 @@ function applyRef(name: string, args: C[]): C {
 }
 
 function refNumber(text: string): C {
+  if (text === "inf") return c(Infinity);
   const value = Number(text);
   if (Number.isNaN(value)) throw new EmlError(`Cannot read the number ${text}.`);
   return c(value);

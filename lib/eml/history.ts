@@ -7,21 +7,30 @@
 export type History<T> = { past: T[]; current: T };
 
 export function commitHistory<T>(history: History<T>, next: T, limit = 80): History<T> {
+  if (limit <= 0) return { past: [], current: next };
   const past = history.past.length >= limit ? history.past.slice(history.past.length - limit + 1) : history.past.slice();
   past.push(history.current);
   return { past, current: next };
 }
 
 export function undoHistory<T>(history: History<T>): History<T> {
-  const previous = history.past[history.past.length - 1];
-  if (previous === undefined) return history;
+  if (history.past.length === 0) return history;
+  const previous = history.past[history.past.length - 1] as T;
   return { past: history.past.slice(0, -1), current: previous };
 }
 
 /** Run queued actions. An action may queue more; those wait for the next drain. */
 export function drainQueue(queue: Array<() => void>): void {
   const runs = queue.splice(0);
-  for (const run of runs) run();
+  for (let i = 0; i < runs.length; i += 1) {
+    try {
+      runs[i]?.();
+    } catch (err) {
+      // Preserve any unrun actions from this batch before rethrowing.
+      if (i + 1 < runs.length) queue.unshift(...runs.slice(i + 1));
+      throw err;
+    }
+  }
 }
 
 /**
@@ -31,7 +40,6 @@ export function drainQueue(queue: Array<() => void>): void {
  */
 export function modeRequest<T extends string>(current: T, next: T, busy: boolean): { current: T; queue: boolean } {
   if (busy) return { current, queue: true };
-  if (next === current) return { current, queue: false };
   return { current: next, queue: false };
 }
 
@@ -57,13 +65,14 @@ export function exactScreen(phase: "computing" | "cancelled" | "ready", readyTex
  */
 export function finiteLossMessage(input: {
   usable: boolean;
+  unverified?: boolean;
   notice: string | null | undefined;
   singular: string | null;
   mode: string;
   text: string;
 }): string | null {
   if (input.usable) return null;
-  if (input.notice === "couldn't verify") return null;
+  if (input.unverified || input.notice?.split(" · ").includes("couldn't verify")) return null;
   if (input.singular) return null;
   if (input.mode === "exact" && input.text && !input.text.includes("∞") && input.text !== "undefined") return null;
   return "That left the finite numbers.";
@@ -84,6 +93,6 @@ export function applyModeSwitch<T>(input: {
 }): { stack: T[]; error: string | null } {
   if (!input.error) return { stack: input.recomputed, error: null };
   const message = input.error;
-  const stack = input.previous.map((item, index) => input.recomputed[index] ?? input.fail(item, message));
+  const stack = input.previous.map((item, index) => (index < input.recomputed.length ? (input.recomputed[index] as T) : input.fail(item, message)));
   return { stack, error: message };
 }
