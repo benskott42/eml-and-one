@@ -69,24 +69,6 @@ export function input(value: C, label: string): Node {
   return Object.freeze({ type: "input", value, label, id: nextId++ });
 }
 
-const provenBig = new WeakMap<Node, bigint>();
-
-/**
- * The integer a node was built as. This chooses later circuits.
- * Evaluation never reads it: the number on screen is the gate result.
- */
-export function noteProvenInt(node: Node, value: bigint): void {
-  provenBig.set(node, value);
-}
-
-export function clearProvenInt(node: Node): void {
-  provenBig.delete(node);
-}
-
-export function provenInteger(node: Node): bigint | undefined {
-  return provenBig.get(node);
-}
-
 /**
  * Float64 rotSub leaves the exact strip outside (−71π, 71π).
  * The top end underflows: [71π, 73π) is barely subnormal and [73π, 75π)

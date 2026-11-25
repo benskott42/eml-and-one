@@ -1,6 +1,6 @@
 import { packFacts, unpackFacts } from "./facts";
-import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isTwoScaled, knownValue, markExactInt, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
-import { E, ONE, V, input, isExactUnsure, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, notePrecision, noteProvenInt, precisionNoteOf, provenInteger, seriesErrorExp, seriesShortcutText, type Node } from "./node";
+import { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isTwoScaled, knownValue, markTwoScaled, noteDecade, noteLiftedCombine, noteLostTiny, noteScaledShell, tagValue } from "./lowering";
+import { E, ONE, V, input, isExactUnsure, isUnverified, markExactUnsure, markSeriesError, markSeriesShortcut, markUnverified, notePrecision, precisionNoteOf, seriesErrorExp, seriesShortcutText, type Node } from "./node";
 
 /** A circuit sent to the exact worker. PostMessage keeps signed zeros. */
 export type Wire =
@@ -43,12 +43,6 @@ export type Wire =
       inf?: 1;
     };
 
-function exactIntDigits(node: Node): string | undefined {
-  if (!isMarkedExactInt(node)) return undefined;
-  const big = provenInteger(node);
-  return big === undefined ? undefined : big.toString();
-}
-
 /** True when a known component is below the 120-digit floor and must travel with the circuit. */
 function tinyPoint(re: number, im: number): boolean {
   const take = (part: number) => Number.isFinite(part) && part !== 0 && Math.floor(Math.log10(Math.abs(part))) <= -90;
@@ -84,8 +78,6 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
         else if (re === -Infinity) token.nfr = -1;
         if (im === Infinity) token.nfi = 1;
         else if (im === -Infinity) token.nfi = -1;
-        const digits = exactIntDigits(frame.n);
-        if (digits !== undefined) token.int = digits;
         if (isUnverified(frame.n)) token.unver = 1;
         if (isExactUnsure(frame.n)) token.xu = 1;
         const leadNote = seriesShortcutText(frame.n);
@@ -135,15 +127,9 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
       token.kr = known.re;
       token.ki = known.im;
     }
-    const digits = exactIntDigits(frame.n);
-    if (digits !== undefined) token.int = digits;
-    else if (frame.n === root) {
-      const built = provenInteger(frame.n);
-      if (built !== undefined) token.pint = built.toString();
-    }
     if (isUnverified(frame.n)) token.unver = 1;
     if (isExactUnsure(frame.n)) token.xu = 1;
-    packFacts(frame.n, token);
+    packFacts(frame.n, token, frame.n === root);
     tokens.push(token);
   }
   return { tokens, root: idOf.get(root) ?? 0 };
@@ -165,7 +151,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       unpackFacts(node, tok);
-      nodes[tok.i] = tok.int !== undefined ? markExactInt(node, BigInt(tok.int)) : node;
+      nodes[tok.i] = node;
     }
     else {
       const a = nodes[tok.a];
@@ -187,11 +173,9 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.cap) noteLostTiny(node);
       if (tok.dec !== undefined) noteDecade(node, tok.dec);
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
-      if (tok.int !== undefined) markExactInt(node, BigInt(tok.int));
-      else if (tok.pint !== undefined && tok.i === root) noteProvenInt(node, BigInt(tok.pint));
       if (tok.unver) markUnverified(node);
       if (tok.xu) markExactUnsure(node);
-      unpackFacts(node, tok);
+      unpackFacts(node, tok, tok.i === root);
     }
   }
   const node = nodes[root];
