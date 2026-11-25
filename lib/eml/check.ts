@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { branchChecks, runPropertyChecks } from "./check-properties";
 import path from "node:path";
 import { c, casinh, cdiv, cexp, close, clog, cmul, cpow, csin, ctan, eml } from "./complex";
@@ -8,7 +9,6 @@ import type { Decimal } from "decimal.js";
 import { beyondFloatBound, exactClose, exactEvaluate, exactParts, exactReport, exactToFloat, exactUnderflowsFloat, exactValueAt, formatExact } from "./exact";
 import { captionName, formatC, recognize } from "./format";
 import { ballVerdict, enclose } from "./enclose";
-import { factsOf, learn } from "./facts";
 import { acceptsConstantProgram, acceptsConstantValue, functionFingerprint, ln0Dependence, searchConstants, searchConstantsMerged } from "./golf";
 import {
   applyBinaryNode,
@@ -17,7 +17,6 @@ import {
   constantNode,
   integerNode,
   literalNode,
-  recognizedNote,
   seriesShortcutNote,
   X,
   Y,
@@ -100,8 +99,11 @@ const shardMatch = /^(\d+)\/(\d+)$/.exec(process.env.EML_SHARD ?? "");
 const shardIndex = shardMatch ? Number(shardMatch[1]) : 0;
 const shardCount = shardMatch ? Math.max(1, Number(shardMatch[2])) : 1;
 const shardOf = assignShards(shardCount);
-const onlyBlocks = process.env.EML_ONLY_BLOCK ? new Set(process.env.EML_ONLY_BLOCK.split(",").map(Number)) : null;
+const onlyBlockTokens = process.env.EML_ONLY_BLOCK ? new Set(process.env.EML_ONLY_BLOCK.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+const onlyBlocks = onlyBlockTokens ? new Set([...onlyBlockTokens].map(Number).filter((n) => !Number.isNaN(n))) : null;
 const blockTimes = process.env.EML_BLOCK_TIMES === "1";
+const writeTimingsPath = process.env.EML_WRITE_TIMINGS || "";
+const recordedTimings: Record<string, number> = {};
 let openBlock = -1;
 let openedAt = 0;
 
@@ -121,18 +123,28 @@ function assignShards(count: number): Map<number, number> {
 }
 
 function closeBlockTimer(): void {
-  if (blockTimes && openBlock >= 0) console.log(`block ${openBlock} ${Math.round(performance.now() - openedAt)} ms`);
+  if (openBlock >= 0) {
+    const ms = Math.round(performance.now() - openedAt);
+    recordedTimings[String(openBlock)] = ms;
+    if (blockTimes) console.log(`block ${openBlock} ${ms} ms`);
+  }
   openBlock = -1;
 }
 
 function shardTurn(id: number): boolean {
   closeBlockTimer();
-  const mine = onlyBlocks ? onlyBlocks.has(id) : shardCount <= 1 || (shardOf.get(id) ?? id % shardCount) === shardIndex;
+  const mine = onlyBlockTokens ? (onlyBlocks?.has(id) ?? false) : shardCount <= 1 || (shardOf.get(id) ?? id % shardCount) === shardIndex;
   if (mine) {
     openBlock = id;
     openedAt = performance.now();
   }
   return mine;
+}
+
+function hashName(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h;
 }
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
@@ -4922,110 +4934,56 @@ if (shardTurn(97)) {
   }
 }
 
-if (shardTurn(99)) {
-  // v1.0.4 follow-ups: refused float-0 operands stay refused on keypad builders (exactZero/signedZero/arsinh),
-  // (-i)^n and (±1*i)^n resolve via facts.ts, exp(pi/i) resolves, and learn() ignores shared input leaves.
-  const bad = compileExpression("(((0.2 + exp(300)) + exp(800)) + 1e310)", {});
-  const keypadRefused: [string, Node][] = [
-    ["mul", applyBinaryNode("mul", bad, integerNode(5))],
-    ["pow", applyBinaryNode("pow", integerNode(5), bad)],
-    ["arsinh", applyUnaryNode("arsinh", bad)],
-  ];
-  for (const [label, node] of keypadRefused) {
-    const report = exactReport(node, {}, { maxNodes: 80_000 });
-    if (!report.unverified) {
-      failed += 1;
-      console.log("FAIL keypad refused zero", label, formatExact(report.value));
+closeBlockTimer();
+
+// Auto-discover standalone check modules under lib/eml/checks/*.ts (ignoring _*.ts helpers).
+// Adding a check is adding one file there; no edits to check.ts or check-shards.json needed.
+async function finishChecks(): Promise<void> {
+  const checksDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "checks");
+  if (existsSync(checksDir)) {
+    const files = readdirSync(checksDir)
+      .filter((name) => name.endsWith(".ts") && !name.startsWith("_"))
+      .sort();
+    const ctx = {
+      fail(message: string, ...details: unknown[]) {
+        failed += 1;
+        console.log(message, ...details);
+      },
+    };
+    for (const file of files) {
+      const base = file.slice(0, -3);
+      const mod = (await import(pathToFileURL(path.join(checksDir, file)).href)) as {
+        default?: { id?: number | string; run: (c: typeof ctx) => void | Promise<void> };
+      };
+      const checkMod = mod.default;
+      if (!checkMod || typeof checkMod.run !== "function") continue;
+      const id = checkMod.id;
+      const mine = onlyBlockTokens
+        ? onlyBlockTokens.has(base) || (id !== undefined && onlyBlockTokens.has(String(id)))
+        : shardCount <= 1 ||
+          (typeof id === "number" ? (shardOf.get(id) ?? id % shardCount) : hashName(base) % shardCount) === shardIndex;
+      if (!mine) continue;
+      const t0 = performance.now();
+      await checkMod.run(ctx);
+      const ms = Math.round(performance.now() - t0);
+      const key = id !== undefined ? String(id) : base;
+      recordedTimings[key] = ms;
+      if (blockTimes) console.log(`check ${base} ${ms} ms`);
     }
   }
-  const rows99: [string, string][] = [
-    ["(-i)^2 + 1", "0"],
-    ["(-i)^3", "i"],
-    ["(-i)^-1", "i"],
-    ["(1*i)^2 + 1", "0"],
-    ["((-1)*i)^2 + 1", "0"],
-    ["exp(pi/i) + 1", "0"],
-    ["exp(pi/(-i)) + 1", "0"],
-    ["1/10 + 2/10 - 3/10", "0"],
-    ["0.1*3 - 0.3", "0"],
-    ["0.5^2 - 0.25", "0"],
-    ["cos(0.5*pi)", "0"],
-    ["cos((1/2)*pi)", "0"],
-    ["sin(0.5*pi)", "1"],
-    ["tan(0.25*pi)", "1"],
-    ["exp(0.5*pi*i)", "i"],
-  ];
-  for (const [source, want] of rows99) {
-    const report = exactReport(compileExpression(source, {}), {}, { maxNodes: 80_000 });
-    const got = report.unverified ? "unverified" : formatExact(report.value);
-    if (got !== want) {
-      failed += 1;
-      console.log("FAIL v1.0.4 followup", source, got, "want", want);
-    }
+
+  if (writeTimingsPath) {
+    writeFileSync(writeTimingsPath, `${JSON.stringify(recordedTimings, null, 2)}\n`, "utf8");
   }
-  const leaf = input(c(0, 0), "0");
-  learn(leaf, { imaginaryUnit: 1 });
-  if (factsOf(leaf).imaginaryUnit !== undefined) {
-    failed += 1;
-    console.log("FAIL learn on input leaf");
+
+  if (failed) {
+    console.log(`\n${failed} failed`);
+    process.exit(1);
   }
-  // Architecture plan step 3: every exact recognition shows "recognized exactly", and
-  // ordinary literals/circuits do not leak the flag from ONE or interned -0.
-  const recognizedCases = [
-    "2^0",
-    "0^0",
-    "0^(-0)",
-    "i^0",
-    "i^1",
-    "i^2",
-    "i^3",
-    "(-i)^3",
-    "exp(i*pi)",
-    "exp(i*pi/2)",
-    "sin(0)",
-    "sin(-0)",
-    "tan(0)",
-    "sinh(0)",
-    "tanh(0)",
-    "arcsin(0)",
-    "arctan(0)",
-    "arsinh(0)",
-    "artanh(0)",
-    "sin(pi/6)",
-    "sin(pi/2)",
-    "sin(pi)",
-    "cos(pi/3)",
-    "cos(pi/2)",
-    "cos(pi)",
-    "tan(pi)",
-    "tan(pi/4)",
-    "tan(3*pi/4)",
-    "arcsin(1)",
-    "arcsin(-1)",
-    "arccos(1)",
-    "arccos(-1)",
-    "arsinh(i)",
-    "arsinh(-i)",
-  ];
-  for (const source of recognizedCases) {
-    const note = recognizedNote(compileExpression(source, {}));
-    if (note !== "recognized exactly") {
-      failed += 1;
-      console.log("FAIL recognizedNote missing", source, note);
-    }
-  }
-  const nonRecognizedCases = ["0", "1", "-1", "-0", "1/2", "i", "1+1", "sin(1)", "cos(0)", "2^3", "exp(1)", "ln(-1)"];
-  for (const source of nonRecognizedCases) {
-    const note = recognizedNote(compileExpression(source, {}));
-    if (note !== null) {
-      failed += 1;
-      console.log("FAIL recognizedNote leaked", source, note);
-    }
-  }
+  console.log("all passed");
 }
 
-if (failed) {
-  console.log(`\n${failed} failed`);
+finishChecks().catch((err) => {
+  console.error(err);
   process.exit(1);
-}
-console.log("all passed");
+});

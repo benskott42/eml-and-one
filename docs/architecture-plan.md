@@ -126,9 +126,9 @@ Small, independent, and each its own pull request:
 | 1f scale facts | done | #95 |
 | 1g structure memos | open | |
 | 2 enclosure as certifier | open | |
-| 3 shortcut policy | done | |
-| 4 split check.ts | open | |
-| 5 site check script | open | |
+| 3 shortcut policy | done | #97 |
+| 4 split check.ts | done | |
+| 5 site check script | done | #96 |
 | 6 calculator reducer | open | |
 | 7 limitations list | open | |
 | 8 housekeeping (fuzz tool, bumps, old branches) | open; 1.0.4 released | |
