@@ -92,6 +92,39 @@ async function main() {
     console.error("data-ready must be absent from the static HTML and set once mounted");
     failed = true;
   }
+  // A closed fold carries no text once the page is live (the static HTML above has it),
+  // and keeps it after it is opened: the browser would otherwise shape about 3,000
+  // characters per closed fold when something reads the page.
+  const foldNames = ["Branch, subtraction, and infinity", "Known float limits", "How ln is only 1 and EML"];
+  const folds = ([...view.document.querySelectorAll("details.ti-fold")] as HTMLDetailsElement[]).filter((fold) =>
+    foldNames.includes(fold.querySelector("summary")?.textContent ?? ""),
+  );
+  if (folds.length !== 3 || folds.some((fold) => fold.querySelector("p, ul"))) {
+    console.error("closed folds still hold their text after mount", folds.map((fold) => fold.querySelectorAll("p, ul").length));
+    failed = true;
+  }
+  const limits = folds.find((fold) => fold.querySelector("summary")?.textContent === "Known float limits");
+  if (limits) {
+    await act(async () => {
+      limits.open = true;
+      limits.dispatchEvent(new view.Event("toggle"));
+    });
+    if (!limits.textContent?.includes("pressing the circuit runs the same gates")) {
+      console.error("an opened fold did not show its text");
+      failed = true;
+    }
+    await act(async () => {
+      limits.open = false;
+      limits.dispatchEvent(new view.Event("toggle"));
+    });
+    if (!limits.textContent?.includes("pressing the circuit runs the same gates")) {
+      console.error("a closed fold dropped the text it showed when it was opened");
+      failed = true;
+    }
+  } else {
+    console.error("missing the Known float limits fold");
+    failed = true;
+  }
   const click = async (selector: string) => {
     const button = view.document.querySelector(selector);
     if (!(button instanceof view.HTMLButtonElement)) {
