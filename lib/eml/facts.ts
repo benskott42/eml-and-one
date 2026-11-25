@@ -86,6 +86,8 @@ export type Facts = {
   refused?: RefusedFact;
   /** Scale, decade, lift, and series-shortcut facts. */
   scale?: ScaleFact;
+  /** True when an exact recognition returned a short program in place of the full circuit. */
+  recognized?: boolean;
 };
 
 export type WireFacts = {
@@ -173,10 +175,39 @@ export function learn(node: Node, facts: Facts): Node {
       ...(mergedErr !== undefined ? { seriesErrorExp: mergedErr } : {}),
     };
   }
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused || next.scale) {
+  if (facts.recognized) {
+    next.recognized = true;
+  }
+  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined || next.integer || next.refused || next.scale || next.recognized) {
     table.set(node, next);
   }
   return node;
+}
+
+/** Mark a node as produced by an exact recognition shortcut (see docs/shortcuts.md). */
+export function markRecognized(node: Node): Node {
+  return learn(node, { recognized: true });
+}
+
+export function isRecognized(node: Node): boolean {
+  return factsOf(node).recognized === true;
+}
+
+/** "recognized exactly" when the circuit uses an exact recognition shortcut, or null. */
+export function recognizedNoteFrom(root: Node): string | null {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    if (factsOf(node).recognized) return "recognized exactly";
+    if (node.type === "eml") {
+      if (node.a) stack.push(node.a);
+      if (node.b) stack.push(node.b);
+    }
+  }
+  return null;
 }
 
 export function markSeriesShortcut(node: Node, note = "series shortcut"): Node {

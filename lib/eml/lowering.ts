@@ -428,7 +428,7 @@ export function naiveSub(a: Node, b: Node): Node {
  * so eml(H, exp b) is the same value and eight tokens shorter.
  */
 function subOfExp(a: Node, b: Node): Node {
-  if (a.type === "eml" && a.a && a.b === ONE) {
+  if (a.type === "eml" && a.a && a.b.type === "one") {
     const { range, int } = subRange(a, b);
     return setRange(E(a.a, E(b, ONE)), range, int);
   }

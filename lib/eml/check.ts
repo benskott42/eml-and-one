@@ -17,6 +17,7 @@ import {
   constantNode,
   integerNode,
   literalNode,
+  recognizedNote,
   seriesShortcutNote,
   X,
   Y,
@@ -4967,6 +4968,59 @@ if (shardTurn(99)) {
   if (factsOf(leaf).imaginaryUnit !== undefined) {
     failed += 1;
     console.log("FAIL learn on input leaf");
+  }
+  // Architecture plan step 3: every exact recognition shows "recognized exactly", and
+  // ordinary literals/circuits do not leak the flag from ONE or interned -0.
+  const recognizedCases = [
+    "2^0",
+    "0^0",
+    "0^(-0)",
+    "i^0",
+    "i^1",
+    "i^2",
+    "i^3",
+    "(-i)^3",
+    "exp(i*pi)",
+    "exp(i*pi/2)",
+    "sin(0)",
+    "sin(-0)",
+    "tan(0)",
+    "sinh(0)",
+    "tanh(0)",
+    "arcsin(0)",
+    "arctan(0)",
+    "arsinh(0)",
+    "artanh(0)",
+    "sin(pi/6)",
+    "sin(pi/2)",
+    "sin(pi)",
+    "cos(pi/3)",
+    "cos(pi/2)",
+    "cos(pi)",
+    "tan(pi)",
+    "tan(pi/4)",
+    "tan(3*pi/4)",
+    "arcsin(1)",
+    "arcsin(-1)",
+    "arccos(1)",
+    "arccos(-1)",
+    "arsinh(i)",
+    "arsinh(-i)",
+  ];
+  for (const source of recognizedCases) {
+    const note = recognizedNote(compileExpression(source, {}));
+    if (note !== "recognized exactly") {
+      failed += 1;
+      console.log("FAIL recognizedNote missing", source, note);
+    }
+  }
+  const nonRecognizedCases = ["0", "1", "-1", "-0", "1/2", "i", "1+1", "sin(1)", "cos(0)", "2^3", "exp(1)", "ln(-1)"];
+  for (const source of nonRecognizedCases) {
+    const note = recognizedNote(compileExpression(source, {}));
+    if (note !== null) {
+      failed += 1;
+      console.log("FAIL recognizedNote leaked", source, note);
+    }
   }
 }
 

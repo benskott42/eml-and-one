@@ -1,7 +1,7 @@
 // What one stack row holds, how it is computed, and the note under the screen.
 import { type C } from "@/lib/eml/complex";
 import { formatC, isUsable } from "@/lib/eml/format";
-import { seriesShortcutNote } from "@/lib/eml/library";
+import { recognizedNote, seriesShortcutNote } from "@/lib/eml/library";
 import {
   EmlError,
   EmlLimitError,
@@ -257,6 +257,7 @@ export function noteFor(item: Entry): string | null {
     underflowDisclosure(item.value, item.underflowed === true),
     item.nearCut ? "on or very near the branch cut" : null,
     seriesShortcutNote(item.node),
+    recognizedNote(item.node),
     facts.pure ? "pure" : null,
     !item.pendingExact && !item.cancelled && !unverified && !item.skipAgreement
       ? agreementText(item.caption, item.value, item.bound ?? {}, item.text)
