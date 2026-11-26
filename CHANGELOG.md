@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.12 — 2026-11-26
 
 - Expanded `formal/lean/` to 13 modules and 87 audited theorems: added `Eml.InverseTrig` (genuine `eml`-word `artanh`, `arctan`, `arsinh`, `arcosh`, `arcsin`, `arccos` + `artanh(x > 1)`, `arctan(−2i)`, and `arccos(2)` branch-cut proofs), `Eml.CycleLemma` (Raney's Cycle Lemma and Catalan enumeration `catalan n`), `Eml.MinimalityZero` (unconditional machine-checked minimality of `0` at K = 7 over `ℂ` and `EmlExt`), and 5 more `ln 0`-free `best-known.json` records (`1/2-strict`, `−1/2-strict`, `1/2-alt`, `1/3-strict`, `√2` K 61).
 - Wired Lean 4 proofs into the calculator UI: `Copy Lean 4` in `CircuitInspector` now copies a ready-to-compile Lean 4 + Mathlib snippet (`nodeToLean4Snippet`), and inspecting any of the 26 Lean-verified constant records displays a direct link badge to its machine-checked theorem (`leanTheoremForRpn`).
