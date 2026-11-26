@@ -20,6 +20,7 @@ type WorkerPayload =
       im: number;
       singular: string | null;
       touchedLn0: boolean;
+      nearCut?: boolean;
       underflowedExact?: boolean;
       overflowedExact?: boolean;
       exactInfRe?: -1 | 0 | 1;
@@ -110,6 +111,7 @@ export function useExactJobs({
         text: payload.text,
         singular: payload.singular,
         touchedLn0: payload.touchedLn0,
+        nearCut: payload.nearCut === true,
         exactInfRe: payload.exactInfRe,
         exactInfIm: payload.exactInfIm,
       });
@@ -165,6 +167,7 @@ export function useExactJobs({
           im: exact.im,
           singular: report.singular,
           touchedLn0: report.touchedLn0,
+          nearCut: report.nearCut === true,
           underflowedExact: exactUnderflowsFloat(report.value),
           overflowedExact: exactOverflowsFloat(report.value),
           exactInfRe,
@@ -201,6 +204,7 @@ export function useExactJobs({
       im?: number;
       singular?: string | null;
       touchedLn0?: boolean;
+      nearCut?: boolean;
       underflowedExact?: boolean;
       overflowedExact?: boolean;
       exactInfRe?: -1 | 0 | 1;
@@ -222,6 +226,7 @@ export function useExactJobs({
         im: data.im ?? Number.NaN,
         singular: data.singular ?? null,
         touchedLn0: data.touchedLn0 === true,
+        nearCut: data.nearCut === true,
         underflowedExact: data.underflowedExact === true,
         overflowedExact: data.overflowedExact === true,
         exactInfRe: data.exactInfRe,

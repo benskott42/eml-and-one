@@ -25,6 +25,7 @@ self.onmessage = (event: MessageEvent<Request>) => {
       im: floated.im,
       singular: report.singular,
       touchedLn0: report.touchedLn0,
+      nearCut: report.nearCut === true,
       underflowedExact: exactUnderflowsFloat(report.value),
       overflowedExact: exactOverflowsFloat(report.value),
       exactInfRe,
