@@ -1,5 +1,6 @@
 import { exactReport, formatExact } from "../exact";
 import { nodeToLatex, nodeToLean4 } from "../export";
+import { clearProvenInt, isUnverified, learn, markUnverified, provenInteger } from "../facts";
 import { E, ONE, nodeFromRpn } from "../node";
 import { compileExpression } from "../parse";
 import { deriveProof } from "../proof";
@@ -51,6 +52,29 @@ const checkModule: CheckModule = {
     const posInf = E(ONE, zero);
     const indet = E(posInf, E(posInf, ONE)); // exp(+∞) - ln(exp(+∞)) -> +∞ - +∞
     assert("deriveProof rejects +∞ − +∞", deriveProof(indet) === null, `got ${deriveProof(indet)?.resultText}`);
+
+    // 4. Huge scientific literals (1e-999999, 1e999999) must compile instantly (no O(n^2) BigInt hang)
+    const t0 = performance.now();
+    const tinyNode = compileExpression("1e-999999", {});
+    const hugeNode = compileExpression("1e999999", {});
+    const compileMs = performance.now() - t0;
+    const tinyRep = exactReport(tinyNode);
+    const hugeRep = exactReport(hugeNode);
+    assert(
+      "1e-999999 & 1e999999 compile fast and evaluate accurately",
+      compileMs < 5000 && formatExact(tinyRep.value) === "1×10^−999999" && formatExact(hugeRep.value) === "1×10^999999",
+      `compileMs=${Math.round(compileMs)}ms tiny=${formatExact(tinyRep.value)} huge=${formatExact(hugeRep.value)}`,
+    );
+
+    // 5. clearProvenInt preserves non-integer facts such as unverified
+    const probe = E(ONE, E(ONE, ONE));
+    learn(probe, { integer: { value: BigInt(42) } });
+    markUnverified(probe);
+    clearProvenInt(probe);
+    assert(
+      "clearProvenInt clears integer while preserving unverified",
+      provenInteger(probe) === undefined && isUnverified(probe) === true,
+    );
   },
 };
 

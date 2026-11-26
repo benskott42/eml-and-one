@@ -148,18 +148,28 @@ export function factsOf(node: Node): Facts {
   return table.get(node) ?? NONE;
 }
 
+/** Fast O(n) check for whether |v| has more than `maxDigits` base-10 digits without O(n^2) toString(10). */
+function exceedsDigits(v: bigint, maxDigits: number): boolean {
+  const abs = v < BigInt(0) ? -v : v;
+  const hexLen = abs.toString(16).length;
+  if ((hexLen - 1) * 1204 > maxDigits * 1000) return true;
+  if (hexLen * 1205 <= maxDigits * 1000) return false;
+  return abs.toString().length > maxDigits;
+}
+
 function normalizeDecimal(value: ExactDecimal): ExactDecimal | null {
   let { n, s } = value;
   if (s < 0) return null;
   if (n === BigInt(0)) return { n: BigInt(0), s: 0 };
+  if (s > DECIMAL_SCALE_MAX) return null;
+  if (exceedsDigits(n, DECIMAL_SCALE_MAX + 20 + s)) return null;
   while (s > 0 && n % BigInt(10) === BigInt(0)) {
     n /= BigInt(10);
     s -= 1;
   }
   if (s > DECIMAL_SCALE_MAX) return null;
   // Cap mantissa width so repeated products/powers cannot build huge BigInts.
-  const digits = (n < BigInt(0) ? -n : n).toString().length;
-  if (digits > DECIMAL_SCALE_MAX + 20) return null;
+  if (exceedsDigits(n, DECIMAL_SCALE_MAX + 20)) return null;
   return { n, s };
 }
 
@@ -169,11 +179,13 @@ function sameDecimal(a: ExactDecimal, b: ExactDecimal): boolean {
 }
 
 function normalizeRational(value: Rational): Rational | null {
+  if (value.d === BigInt(0)) return null;
+  if (exceedsDigits(value.n, RATIONAL_DIGITS_MAX * 2) || exceedsDigits(value.d, RATIONAL_DIGITS_MAX * 2)) {
+    return null;
+  }
   const q = rational(value.n, value.d);
   if (!q) return null;
-  const nDigits = (q.n < BigInt(0) ? -q.n : q.n).toString().length;
-  const dDigits = q.d.toString().length;
-  if (nDigits > RATIONAL_DIGITS_MAX || dDigits > RATIONAL_DIGITS_MAX) return null;
+  if (exceedsDigits(q.n, RATIONAL_DIGITS_MAX) || exceedsDigits(q.d, RATIONAL_DIGITS_MAX)) return null;
   return q;
 }
 
@@ -456,7 +468,7 @@ export function clearProvenInt(node: Node): void {
   if (!prev || prev.integer === undefined) return;
   const next: Facts = { ...prev };
   delete next.integer;
-  if (next.angle || next.imaginaryUnit || next.infinity || next.decimal !== undefined) table.set(node, next);
+  if (Object.keys(next).length > 0) table.set(node, next);
   else table.delete(node);
 }
 
@@ -476,7 +488,8 @@ export function exactDecimalOf(node: Node): ExactDecimal | null {
   if (known !== undefined) return known;
   if (isUnverified(node) || isExactUnsure(node)) return null;
   const int = provenInteger(node);
-  return int === undefined ? null : { n: int, s: 0 };
+  if (int === undefined || exceedsDigits(int, DECIMAL_SCALE_MAX + 20)) return null;
+  return { n: int, s: 0 };
 }
 
 /** Record an exact decimal on `node`, poisoning if a conflicting value was already recorded. */
@@ -706,6 +719,7 @@ function unitOf(op: Op, a: Node, b: Node | undefined): 1 | -1 | undefined {
 
 function decimalDiv(a: ExactDecimal, b: ExactDecimal): ExactDecimal | null {
   if (b.n === BigInt(0)) return null;
+  if (exceedsDigits(a.n, DECIMAL_SCALE_MAX + 20) || exceedsDigits(b.n, DECIMAL_SCALE_MAX + 20)) return null;
   // (a.n * 10^(-a.s)) / (b.n * 10^(-b.s)) = (a.n / b.n) * 10^(b.s - a.s).
   let num = a.n;
   let den = b.n;
@@ -726,13 +740,16 @@ function decimalDiv(a: ExactDecimal, b: ExactDecimal): ExactDecimal | null {
   // Terminating decimal iff reduced denominator is 2^twos * 5^fives.
   let twos = 0;
   let fives = 0;
+  const factorCap = DECIMAL_SCALE_MAX + Math.max(0, b.s - a.s) + 1;
   while (den % BigInt(2) === BigInt(0)) {
     den /= BigInt(2);
     twos += 1;
+    if (twos > factorCap) return null;
   }
   while (den % BigInt(5) === BigInt(0)) {
     den /= BigInt(5);
     fives += 1;
+    if (fives > factorCap) return null;
   }
   if (den !== BigInt(1)) return null;
   const extra = Math.max(twos, fives);
@@ -849,6 +866,8 @@ export function derivePow(out: Node, a: Node, b: Node): Node {
   return pow ? learn(out, { rational: pow }) : out;
 }
 
+const PROVEN_INT_DIGITS_MAX = 12_000;
+
 function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
   const ia = provenInteger(a);
   if (ia === undefined) return undefined;
@@ -856,9 +875,20 @@ function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
   if (!b || op === "div") return undefined;
   const ib = provenInteger(b);
   if (ib === undefined) return undefined;
-  if (op === "add") return ia + ib;
-  if (op === "sub") return ia - ib;
-  return ia * ib;
+  if (op === "add") {
+    const out = ia + ib;
+    return exceedsDigits(out, PROVEN_INT_DIGITS_MAX) ? undefined : out;
+  }
+  if (op === "sub") {
+    const out = ia - ib;
+    return exceedsDigits(out, PROVEN_INT_DIGITS_MAX) ? undefined : out;
+  }
+  // Fast upper bound on product digit count before multiplying huge BigInts.
+  const ha = (ia < BigInt(0) ? -ia : ia).toString(16).length;
+  const hb = (ib < BigInt(0) ? -ib : ib).toString(16).length;
+  if ((ha + hb - 2) * 1204 > PROVEN_INT_DIGITS_MAX * 1000) return undefined;
+  const out = ia * ib;
+  return exceedsDigits(out, PROVEN_INT_DIGITS_MAX) ? undefined : out;
 }
 
 function imagRationalOf(op: Op, a: Node, b: Node | undefined): Rational | undefined {
