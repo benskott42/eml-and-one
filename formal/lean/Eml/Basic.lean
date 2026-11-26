@@ -56,7 +56,7 @@ def cZero : α := eml M.one (eml (eml M.one M.one) M.one)
 
 theorem cZero_eq_zero : cZero (α := α) = M.zero := by
   unfold cZero eml
-  rw [M.ln_one, M.sub_zero, M.ln_one, M.sub_zero]
+  rw [M.ln_one, M.sub_zero, M.sub_zero]
   rw [M.ln_exp (M.exp M.one) M.inStrip_exp_one]
   exact M.sub_self (M.exp M.one)
 

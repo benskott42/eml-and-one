@@ -60,7 +60,7 @@ theorem valid_append_0xc (p : List Bool) (hp : IsValidProgram p) :
 
 /-- Appending any valid program `q` followed by `EML` (`false`) to a valid
     program `p` produces a valid program `eml(p, q)`. -/
-theorem runDepth_shift (xs : List Bool) (d k : Nat) :
+theorem runDepth_shift (xs : List Bool) (d k r : Nat) :
     runDepth xs d = some r → runDepth xs (d + k) = some (r + k) := by
   induction xs generalizing d with
   | nil =>
@@ -89,8 +89,10 @@ theorem runDepth_shift (xs : List Bool) (d k : Nat) :
 theorem valid_eml_combine (p q : List Bool) (hp : IsValidProgram p) (hq : IsValidProgram q) :
     IsValidProgram (p ++ q ++ [false]) := by
   unfold IsValidProgram at hp hq ⊢
-  rw [List.append_assoc, runDepth_append, hp, runDepth_append]
-  have hq' : runDepth q (0 + 1) = some (1 + 1) := runDepth_shift q 0 1 hq
+  rw [List.append_assoc, runDepth_append, hp]
+  dsimp only
+  rw [runDepth_append]
+  have hq' : runDepth q (0 + 1) = some (1 + 1) := runDepth_shift q 0 1 1 hq
   simp only [Nat.zero_add] at hq'
   rw [hq']
   rfl
