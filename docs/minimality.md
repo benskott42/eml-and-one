@@ -73,3 +73,74 @@ decide.py follows towers only in a few fixed shapes. The programs it left open n
 - A tower can carry its phase apart from W, and a tower value its exact imaginary part, both summed atom by atom in the exact layer or, with `--deep`, taken from deep.py.
 
 A program is excluded when value − target is a nonempty combination whose enclosure is ±exp(W), or a rectangle, or an imaginary part summed atom by atom, or a real part without the purely imaginary atoms, that misses 0. On each of the 6918 programs with K ≤ 19 and each of the targets 0, −1, 2, −2 and +iπ, no program that one of towers.py and decide.py finds equal to the target is excluded by the other. towers.py excludes a few more, such as −1 + exp(e − exp(exp(e − 1))), which decide.py leaves open. Each of the 4138 finite values that plain 300-bit evaluation reaches away from the cut lies in towers.py's enclosure.
+
+## Analysis of the two remaining K 25 programs for −2 without ln 0
+
+The unconditional status of −2 without ln 0 at K 27 remains **shortest known (not proved minimal)**. Excluding the two remaining K 25 programs is the sole gap: all 82500 programs with K ≤ 23 are excluded unconditionally (with `--deep`); of the 208012 K 25 programs, 6 take ln 0 and 208004 are excluded unconditionally (including 16 via `deep.py`), leaving only the two words below; and `1111111EEE1EE11EEE1EE11E1EE` is a verified K 27 word for −2 without ln 0 (`towers.decide` returns exact equality).
+
+Let T1 = e, T2 = e^e ≈ 15.15426, T3 = exp(T2) ≈ 3814279.10, T4 = exp(T3) ≈ 10^1656520.37, and T5 = exp(T4). Since e − T2 < 0, on the lower cut (Arg in [−π, π)) we have ln(e − T2) = L − iπ where L = ln(T2 − e) ≈ 2.52059, so
+
+    z = e − ln(e − T2) = e − L + iπ   (Re z ≈ 0.19769 > 0, Im z = π > 0).
+
+Using exp(x − ln y) = exp(x)/y (exact for any branch), the two undecided K 25 words are:
+
+- **w1** = `11E1E1111E1E1EEEE1E1E1E1E` = exp(exp(exp(W))) = exp(exp(V1)), with W = T4/z and V1 = exp(W).
+- **w2** = `11E1E1E1111E1E1EEEE1E1E1E` = exp(exp(V2)), with V2 = T5/z.
+
+### Exact algebraic reduction and sign/magnitude structure
+
+For either j ∈ {1, 2}, the equality wj = exp(exp(Vj)) = −2 forces
+
+    exp(Vj) = ln 2 + (2k + 1)iπ   for some k ∈ Z,
+
+equivalently
+
+    e^(Re Vj) cos(Im Vj) = ln 2   and   e^(Re Vj) sin(Im Vj) = (2k + 1)π,
+
+or Vj = ln(ln 2 + (2k + 1)iπ) + 2πim for some k, m ∈ Z.
+
+In neither word does a sign or magnitude bound exclude this identity:
+
+- For **w1**, `deep.py`'s 5.5-million-bit enclosure of θ = Im W mod 2π gives θ = −5.39531064387935195139… (congruent to +0.8878746633… mod 2π), so cos θ = +0.63106214288953973449… > 0 and sin θ = +0.77573228101688673680… > 0. Thus Re V1 = e^(Re W) cos θ > 0 and Im V1 = e^(Re W) sin θ > 0 (both ≈ exp(4.65 × 10^1656518)). Had cos θ been negative, Re V1 would have been huge and negative, forcing |exp(V1)| < ln 2 and excluding w1 immediately; because cos θ > 0, e^(Re V1) ≫ ln 2 and cos(Im V1) = ln 2 · e^(−Re V1) ∈ (0, 1) is not ruled out by magnitude alone.
+- For **w2**, Re z / |z|² ≈ 0.019951 > 0 and Im(1/z) = −π / |z|² ≈ −0.317054 < 0, so Re V2 = T5 · Re z / |z|² > 0 and Im V2 = −T5 · π / |z|² < 0. Again, had Re z been negative, |exp(V2)| < ln 2 would have excluded w2 immediately; because Re z > 0, e^(Re V2) ≫ ln 2 and no sign or magnitude obstruction arises.
+
+### Why direct numerical enclosure is infeasible
+
+Excluding wj = −2 via the phase condition |cos(Im Vj)| > ln 2 · e^(−Re Vj) requires enclosing Im Vj mod 2π to better than 1 radian, which needs working precision strictly greater than log2 |Im Vj| bits:
+
+- For **w1**: log10(Re W) = log10(T4) + log10(Re z / |z|²) ≈ 1656518.67, so
+  log2 |Im V1| = log2(e^(Re W) sin θ) ≈ Re W / ln 2 ≈ 6.71 × 10^1656518 ≈ 10^1656518.83 bits.
+- For **w2**: log10(T4) ≈ 1656520.37, so
+  log2 |Im V2| = log2(T5 · π / |z|²) ≈ T4 / ln 2 ≈ 3.36 × 10^1656520 ≈ 10^1656520.53 bits.
+
+Checking the modulus condition e^(Re Vj)/π ≈ |2k + 1| (mod 2) is worse by a further exponential (≈ e^(Re Vj) / ln 2 bits). Both bit counts have over 1.65 million decimal digits — far beyond physical computation — so no numerical enclosure can decide either word.
+
+### Why known unconditional transcendence theorems do not apply
+
+Standard unconditional transcendence results do not refute exp(Vj) = ln 2 + (2k + 1)iπ:
+
+- **Hermite–Lindemann / Lindemann–Weierstrass** require algebraic exponents; neither V1 nor V2 is known to be algebraic (even the irrationality of T2 = e^e is open), and even if Vj were algebraic and nonzero, Hermite–Lindemann would only yield transcendence of exp(Vj), which does not contradict exp(Vj) = ln 2 + (2k + 1)iπ (itself transcendental, since exp(ln 2 + (2k + 1)iπ) = −2 ∈ Q).
+- **Gelfond–Schneider** applies to α^β with algebraic α ∉ {0, 1} and algebraic irrational β; neither identity reduces to that form.
+- **Baker's theorem** applies to linear forms in logarithms of algebraic numbers; here ln(ln 2 + (2k + 1)iπ) is the logarithm of a transcendental number, and T4, T5, L = ln(T2 − e) are not algebraic.
+
+Deciding w1 ≠ −2 or w2 ≠ −2 unconditionally is an instance of the constant problem for exponential-logarithmic (EL) numbers, which remains open without Schanuel's conjecture.
+
+### Conditional exclusion assuming Schanuel's conjecture
+
+> **Conditional result (not used for project claims).** Per project policy, no minimality claim in this repository depends on Schanuel's conjecture. The proof below is recorded only as a conditional result; unconditionally, −2 without ln 0 at K 27 remains shortest known.
+
+**Proposition (assuming Schanuel's conjecture).** *Neither w1 nor w2 equals −2. Consequently, assuming Schanuel's conjecture, −2 without ln 0 is minimal at K 27.*
+
+*Proof.* Recall Schanuel's conjecture (SC): if α1, …, αn ∈ C are Q-linearly independent, then tr.deg_Q Q(α1, …, αn, e^(α1), …, e^(αn)) ≥ n.
+
+1. **Algebraic independence of T1, T2, T3, T4, T5, L, iπ, ln 2.**
+   - By induction on m ∈ {1, …, 5}: T1 = e is transcendental; if T1, …, Tm are algebraically independent over Q, then {1, T1, …, Tm} is Q-linearly independent, so SC gives tr.deg_Q Q(T1, …, T_(m+1)) ≥ m + 1, hence T1, …, T_(m+1) are algebraically independent. In particular T1, T2, T3, T4, T5 are algebraically independent over Q.
+   - Next, L = ln(T2 − T1) is Q-linearly independent of {1, T1, T2, T3, T4}: if L = q0 + q1 T1 + q2 T2 + q3 T3 + q4 T4 with qj ∈ Q and common denominator D ≥ 1 (aj = D qj ∈ Z), exponentiating D L yields (T2 − T1)^D = T1^a0 T2^a1 T3^a2 T4^a3 T5^a4. By algebraic independence of T1, …, T5, this must hold in Q(X1, …, X5), which is impossible since the irreducible polynomial X2 − X1 does not divide any Xj. Applying SC to {1, T1, T2, T3, T4, L} (with e^L = T2 − T1 ∈ Q(T1, T2)) shows T1, …, T5, L are algebraically independent over Q.
+   - Since 1, T1, T2, T3, T4, L ∈ R while iπ ∈ iR \ {0}, {1, T1, T2, T3, T4, L, iπ} is Q-linearly independent. With e^(iπ) = −1 ∈ Q, SC shows T1, …, T5, L, iπ are algebraically independent over Q.
+   - Finally, ln 2 is Q-linearly independent of {1, T1, T2, T3, T4, L, iπ}: taking imaginary parts forces the iπ coefficient to be 0, and exponentiating D ln 2 = a0 + a1 T1 + a2 T2 + a3 T3 + a4 T4 + a5 L (D ≥ 1, aj ∈ Z) gives 2^D = T1^a0 T2^a1 T3^a2 T4^a3 T5^a4 (T2 − T1)^a5. Unique factorization in Q[X1, …, X5] forces a0 = … = a5 = 0, contradicting 2^D > 1. With e^(ln 2) = 2 ∈ Q, SC yields that the 8 numbers T1, T2, T3, T4, T5, L, iπ, ln 2 are algebraically independent over Q.
+
+2. **Exclusion of w2 = −2.**
+   Suppose w2 = −2, so exp(T5/z) = ln 2 + (2k + 1)iπ for some k ∈ Z. Let F8 = Q(T1, T2, T3, T4, T5, L, iπ, ln 2) (tr.deg_Q F8 = 8). The 9 numbers {1, T1, T2, T3, T4, L, iπ, ln 2, T5/z} are Q-linearly independent: the first 8 are Q-linearly independent and do not involve T5, whereas T5/z = T5/(T1 − L + iπ) has T5 linearly in the numerator with z ≠ 0, so any relation involving T5/z would place T5 in Q(T1, T2, T3, T4, L, iπ, ln 2), contradicting tr.deg_Q F8 = 8. By SC, the field generated by these 9 numbers and their exponentials has transcendence degree ≥ 9. Yet T5/z ∈ F8 and exp(T5/z) = ln 2 + (2k + 1)iπ ∈ F8, so this field is F8 itself, of transcendence degree 8 — contradiction.
+
+3. **Exclusion of w1 = −2.**
+   Suppose w1 = −2, so exp(V1) = ln 2 + (2k + 1)iπ for some k ∈ Z, where V1 = exp(T4/z). Let F7 = Q(T1, T2, T3, T4, L, iπ, ln 2) (tr.deg_Q F7 = 7 by step 1). The 8 numbers {1, T1, T2, T3, L, iπ, ln 2, T4/z} are Q-linearly independent, because the first 7 are Q-linearly independent and do not involve T4 while T4/z = T4/(T1 − L + iπ) involves T4 linearly with z ≠ 0. Applying SC to these 8 numbers gives tr.deg_Q F7(V1) ≥ 8, so V1 is transcendental over F7 and tr.deg_Q F7(V1) = 8. Consequently the 9 numbers {1, T1, T2, T3, L, iπ, ln 2, T4/z, V1} are Q-linearly independent, so SC gives tr.deg_Q F7(V1, exp(V1)) ≥ 9. Yet exp(V1) = ln 2 + (2k + 1)iπ ∈ F7, so F7(V1, exp(V1)) = F7(V1) has transcendence degree 8 — contradiction. □
