@@ -18,7 +18,7 @@ permissions:
 jobs:
   lean-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,6 +27,18 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
-      - name: Build and verify Lean 4 proofs
+      - name: Fetch Mathlib cache
+        working-directory: formal/lean
+        run: lake exe cache get
+      - name: Build Lean 4 proofs
         working-directory: formal/lean
         run: lake build
+      - name: Audit axioms (no sorryAx or custom axioms)
+        working-directory: formal/lean
+        run: |
+          out=$(lake env lean AxiomCheck.lean)
+          printf '%s\n' "$out"
+          if printf '%s\n' "$out" | grep -vE "^'[^']+' depends on axioms: \[(propext|Classical\.choice|Quot\.sound)(, (propext|Classical\.choice|Quot\.sound))*\]$"; then
+            echo "Unexpected axiom detected!" >&2
+            exit 1
+          fi

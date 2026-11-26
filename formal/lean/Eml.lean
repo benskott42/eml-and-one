@@ -3,6 +3,7 @@ import Eml.Arithmetic
 import Eml.Binary
 import Eml.TreeBijection
 import Eml.RpnSoundness
-import Eml.Extended
+import Eml.Records
 import Eml.RotSub
+import Eml.Extended
 import Eml.Transcendental
