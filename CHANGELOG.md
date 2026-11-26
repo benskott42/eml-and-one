@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Next.js 16.4.6. The Lean workflow pins its checkout action by SHA. Check shard weights are rebalanced.
+- Lean files added after 1.0.10: `RpnSoundness`, `Transcendental`, `TreeBijection`, and `Extended`. See the next release for a correction to these. `Extended`'s axioms are inconsistent: they force 1 = 0. `Transcendental` restates its own axioms.
+
+## 1.0.10 — 2026-11-25
+
+- Exact mode no longer certifies a result that depends on a series shortcut's dropped term after that term is cancelled or amplified. The dropped-term bound (`seriesErrorExp`) now survives `userSum` cancellation (a − (a + c) → −c), products, quotients, `exp`, powers, `ln`, and `arcsin`. `sinh(1e-7) − (1e-7 + 1e-25)`, `(sinh(1e-7) − (1e-7 + 1e-25))·1e20`, `exp(sinh(1e-7)·1e20)`, `2^(sinh(1e-7)·1e20)`, `(1 + sinh(1e-7))^(1e20)`, and `asin(1e-65) − (1e-65 + 1e-198)` are refused. They used to be certified. A series-shortcut result no longer carries an exact decimal or exact rational fact.
+
+## 1.0.9 — 2026-11-25
+
+- Complex-plane map of every distinct finite constant circuit up to K 13. Click a point to load it. An in-browser minimality certifier runs over Catalan trees.
+- `atan(±i)` is recognized as a pole however i is built: `sqrt(−1)`, `2i − i`, `exp(iπ/2)`. `1 + exp(−atan(sqrt(−1)))` was certified 1.
+- `1e-999999` and `1e999999` compile at once. A quadratic BigInt step hung the main thread. `clearProvenInt` no longer wipes a node's other facts, such as unverified.
+- Lean and LaTeX exports print an ASCII minus. The proof view rejects ∞ − ∞. The target finder accepts fractions.
+
+## 1.0.8 — 2026-11-25
+
+- Circuit inspector: a step player for the 2-button RPN stack, a binary tree, a Dyck-path chart, and a deductive proof view (`lib/eml/proof.ts`). It exports to `eml(x, y)`, LaTeX, and Lean 4 term syntax. Target finder: the 5 closest circuits with K ≤ 19 to a typed value.
+- Directed-rounding minimality certificates (`lib/eml/certificate.ts`). Ball-enclosure soundness hardening.
+- First Lean 4 files: `Basic`, `Binary`, `RotSub`, and `Arithmetic` in 1.0.9. The abstract-model theorems prove less than the README claimed. See Unreleased.
+
 ## 1.0.7 — 2026-11-25
 
 - Added a complete binary program representation module (`lib/eml/binary.ts`) and reference ([docs/binary.md](docs/binary.md)): `isValidBinaryProgram`, $O(K)$ `nextBinaryProgram`, `binaryToRank` / `rankToBinary` bijection, `cycleOrbit`, `binaryTreeMetrics`, `dyckProfile`, and `binaryToFormula`. `parseProgramInput` now accepts `0x...` hex and `0b...` binary strings (with Cycle Lemma rotation), `PressLine` displays `Binary value: 0x… · max stack …` with a `Copy hex` button, and `GolfPanel` shows each record's hex encoding.
