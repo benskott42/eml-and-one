@@ -169,6 +169,10 @@ export function tExp(t: Node): Node {
 /** exp as its gate, with no value recognized. The tan pole is built from these gates. */
 function expGates(t: Node): Node {
   const node = noteExp(E(t, ONE), t);
+  // A crude series-shortcut error of magnitude >= 10^(-14) in the exponent
+  // multiplies exp(t) by exp(±10^err), contaminating its 12 displayed digits.
+  const argErr = maxSeriesErrorExp(t);
+  if (argErr !== undefined && argErr >= -14) return markUnverified(node);
   noteBuiltFrom(node, { expArg: t });
   const lnArg = factsOf(t).builtFrom?.lnArg;
   if (lnArg && !isUnverified(t) && !isExactUnsure(t)) {
@@ -746,7 +750,7 @@ export function tMul(a: Node, b: Node): Node {
   if (turned(a, quarterB) || turned(b, quarterA)) {
     return markUnverified(markInfiniteSource(rawMul(a, b)));
   }
-  const product = derive("mul", carryTinyScale(rawMul(a, b), a, b, "mul"), a, b);
+  const product = propagateMulSeriesError(derive("mul", carryTinyScale(rawMul(a, b), a, b, "mul"), a, b), a, b);
   // The product word keeps only the cosine of the right-hand factor when the
   // left one is −∞, so ln(0)*2 comes out +∞. Negating makes the sign the
   // product of the two signs. An infinity on the right already has that sign.
@@ -757,6 +761,39 @@ export function tMul(a: Node, b: Node): Node {
 
 function naiveIndeterminate(pole: Node): Node {
   return naiveSub(pole, pole);
+}
+
+function magnitudeExp(node: Node): number | null {
+  const dec = decadeOf(node);
+  if (dec !== undefined) return dec + 1;
+  const v = knownValue(node) ?? floatOf(node);
+  if (!v) return null;
+  const m = Math.hypot(v.re, v.im);
+  if (!Number.isFinite(m) || m === 0) return null;
+  return Math.ceil(Math.log10(m));
+}
+
+function propagateMulSeriesError(out: Node, a: Node, b: Node): Node {
+  const errA = maxSeriesErrorExp(a);
+  const errB = maxSeriesErrorExp(b);
+  if (errA !== undefined) {
+    const expB = magnitudeExp(b);
+    if (expB !== null && expB > 0) markSeriesError(out, errA + expB);
+  }
+  if (errB !== undefined) {
+    const expA = magnitudeExp(a);
+    if (expA !== null && expA > 0) markSeriesError(out, errB + expA);
+  }
+  return out;
+}
+
+function propagateDivSeriesError(out: Node, a: Node, b: Node): Node {
+  const errA = maxSeriesErrorExp(a);
+  if (errA !== undefined) {
+    const expB = magnitudeExp(b);
+    if (expB !== null && expB < 0) markSeriesError(out, errA - expB);
+  }
+  return out;
 }
 
 function expArgument(node: Node): Node | null {
@@ -784,8 +821,8 @@ export function tDiv(a: Node, b: Node): Node {
   const v = expArgument(b);
   if (u && v && moderateExponent(u) && moderateExponent(v)) return tExp(tSub(u, v));
   const quotient = integerQuotient(a, b);
-  if (quotient) return quotient;
-  return derive("div", carryTinyScale(rawDiv(a, b), a, b, "div"), a, b);
+  if (quotient) return propagateDivSeriesError(quotient, a, b);
+  return propagateDivSeriesError(derive("div", carryTinyScale(rawDiv(a, b), a, b, "div"), a, b), a, b);
 }
 
 /** A proven integer exponent, including negatives. A float that is not integral is not one. */

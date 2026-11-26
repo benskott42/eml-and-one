@@ -76,12 +76,15 @@ const checkModule: CheckModule = {
       provenInteger(probe) === undefined && isUnverified(probe) === true,
     );
 
-    // 6. Series-shortcut error bounds survive algebraic cancellation in userSum (a − (a + c) → −c)
+    // 6. Series-shortcut error bounds survive algebraic cancellation AND scale amplification (*, /, exp)
     for (const expr of [
       "sinh(1e-7) - (1e-7 + 1e-25)",
       "atanh(1e-7) - (1e-7 + 1e-25)",
       "(sinh(1e-7) + 1e-25) - 1e-7",
       "(atanh(1e-7) + 1e-25) - 1e-7",
+      "(sinh(1e-7) - (1e-7 + 1e-25)) * 1e20",
+      "(sinh(1e-7) * 1e20) - (1e13 + 1e-5)",
+      "exp(sinh(1e-7) * 1e20)",
     ]) {
       const rep = exactReport(compileExpression(expr, {}));
       assert(`${expr} must be refused (contaminated by dropped z^3 term)`, rep.unverified === true, `got ${formatExact(rep.value)}`);
