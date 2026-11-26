@@ -18,7 +18,7 @@
     - `extEmlCos_eq`:   `Complex.cos x`
     - `extEmlSin_eq`:   `Complex.sin x`
     - `extEmlTan_eq`:   `Complex.tan x` (for `cos x ≠ 0`)
-    - `extEmlPow_eq`:   `x ^ y` (for all `x ≠ 0`, `y : ℂ`, lifting the `y ≠ e^e` restriction)
+    - `extEmlPow_eq`:   `x ^ y` (for all `x ≠ 0`, `y ≠ 0`, lifting the `y ≠ e^e` and `log x ≠ 0` restrictions)
     - `extEmlLogBase_eq`: `log x / log b` (for all `x ≠ 0`, `b ≠ 0`, `log b ≠ 0`)
 
   Zero `sorry`, zero custom axioms.
@@ -212,8 +212,8 @@ theorem extEmlTan_eq {x : ℂ} (h : Complex.cos x ≠ 0) :
   unfold extEmlTan
   rw [extEmlSin_eq, extEmlCos_eq, extEmlDiv_eq _ h, Complex.tan_eq_sin_div_cos]
 
-/-- Extended complex power `x ^ y` on `EmlExt` (works for ALL `x ≠ 0` and ALL `y : ℂ`,
-    including `y = 0`, `x = 1`, and `y = e^e`!). -/
+/-- Extended complex power `x ^ y` on `EmlExt` (works for ALL `x ≠ 0` and ALL `y ≠ 0`,
+    including `x = 1` and `y = e^e`). -/
 noncomputable def extEmlPow (x y : EmlExt) : EmlExt :=
   extEmlExp (extEmlMul y (extEmlLn x))
 

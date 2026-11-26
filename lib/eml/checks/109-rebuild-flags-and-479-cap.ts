@@ -115,6 +115,9 @@ const checkModule: CheckModule = {
       "sqrt(1+3.5e-479)-1-3.5e-479/2",
       "exp(3.5*10^(-479))-1",
       "exp(1e-433)-1",
+      "exp((exp(3.5e-479)-1)*exp(2205)-3.5e-479*exp(2205))",
+      "exp((ln(1+3.5e-479))*exp(2205)-3.5e-479*exp(2205))",
+      "exp((exp(3.5e-479)-1)/exp(-2205)-3.5e-479/exp(-2205))",
     ];
     for (const src of refused479) {
       const node = compileExpression(src, {});

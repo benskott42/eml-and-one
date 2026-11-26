@@ -522,7 +522,7 @@ function sameInfinity(left: Decimal, right: Decimal): boolean {
   return !left.isNaN() && !right.isNaN() && !left.isFinite() && !right.isFinite() && left.isNeg() === right.isNeg();
 }
 
-function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false, leftCutIm = false): Z {
+function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false, leftCutIm = false, rightCutIm = false): Z {
   gateCutIm = false;
   if (x.re.isNaN() || x.im.isNaN() || y.re.isNaN() || y.im.isNaN()) return { re: NAN, im: NAN };
   const a = expZ(x);
@@ -536,7 +536,9 @@ function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false, leftCutIm =
   noteAbsorbRe(a.re, b.re, re, leftNoise, bNoisy);
   noteAbsorb(a.im, b.im, im);
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
-  const lnOnCut = y.im.isZero() && y.re.isNeg();
+  const lnOnCut =
+    y.re.isNeg() &&
+    (y.im.isZero() || (rightCutIm && y.re.isFinite() && y.im.isFinite() && y.im.abs().lte(y.re.abs().mul(new D(10).pow(-(D.precision - 12))))));
   if (im.isFinite() && !im.isZero()) {
     gateCutIm = lnOnCut || (leftCutIm && a.im.isFinite() && !a.im.isZero());
   }
@@ -1181,8 +1183,9 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits)) return true;
   }
   // A finite exp that underflowed minE to 0 (e.g. exp(−T4) or exp(−10^20)) cannot certify
-  // a vanished 0, nor an exact-looking deep tower program.
-  if (out.underflowLost && (vanished(v) || (isPure(root) && firstBig > 308))) {
+  // a non-finite result (such as ln(exp(−1e20)) -> −∞ or 1/exp(−1e20) -> ∞), a vanished 0,
+  // nor an exact-looking deep tower program.
+  if (out.underflowLost && (!zFinite(v) || vanished(v) || (isPure(root) && firstBig > 308))) {
     if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits)) return true;
   }
   // An imaginary term absorbed past the 480-digit cap can hide a component or flip a branch cut.
@@ -1274,6 +1277,10 @@ function looksExactDecimal(d: Decimal): boolean {
   if (abs.lt("1e16") && abs.gte("1e-6")) {
     const trimmed = abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
     const places = (trimmed.split(".")[1] ?? "").length;
+    if (places <= 9) return true;
+  } else if (abs.lt("1e-6")) {
+    const sig = abs.toExponential(11).split("e")[0].replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    const places = (sig.split(".")[1] ?? "").length;
     if (places <= 9) return true;
   }
   return false;
@@ -2077,7 +2084,11 @@ function exactReportOnce(
         if (hidden.gap > absorb2) absorb2 = hidden.gap;
       }
     }
-    const value = lifted(angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b, aNoisy, bNoisy, cutImOf.get(n.a) === true), a, b);
+    const value = lifted(
+      angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b, aNoisy, bNoisy, cutImOf.get(n.a) === true, cutImOf.get(n.b) === true),
+      a,
+      b,
+    );
     const subCutIm = !angleInfinite && gateCutIm;
     cutImOf.set(n, subCutIm);
     const subRangeLost = rangeLost || rangeLostOf.get(n.a) === true || rangeLostOf.get(n.b) === true;

@@ -2,11 +2,15 @@
   Machine-checked Lean 4 + Mathlib proofs of concrete `ln 0`-free constant
   records over `ℂ` (`lib/eml/best-known.json`, `docs/binary.md`,
   `tools/minimality/decide.py`):
-    - `11111EEE1EE11E1EE`            (K = 17)           → `-1`  (proved minimal without `ln 0`)
-    - `111111EEE1EE11EE1EE`          (K = 19, `0x7e264`) → `2`  (proved minimal)
-    - `111111E1E1EEE1EE11E1EEE`      (K = 23)           → `+iπ` (lower cut, proved minimal without `ln 0`)
-    - `11111111EEE1EE11EE1EEE1EE`    (K = 25, `0x1fe2644`) → `ln 2`
-    - `11111111EEE1EE11EEE1EE11EE1EE` (K = 29, `0x1fe26264`) → `3`
+    - `11111EEE1EE11E1EE`                      (K = 17)           → `-1`  (proved minimal without `ln 0`)
+    - `111111EEE1EE11EE1EE`                    (K = 19, `0x7e264`) → `2`  (proved minimal)
+    - `111111E1E1EEE1EE11E1EEE`                (K = 23)           → `+iπ` (lower cut, proved minimal without `ln 0`)
+    - `11111111EEE1EE11EE1EEE1EE`              (K = 25, `0x1fe2644`) → `ln 2`
+    - `11111111EEE1EE11EEE1EE11EE1EE`          (K = 29, `0x1fe26264`) → `3`
+    - `11111111EEE1EE11EE1EEE11E1E1EEE11EE`    (K = 35)           → `-3`
+    - `1111111111EEE1EE11EEE1EE11EEE1EE11EE1EE` (K = 39)          → `4`
+    - `111E1111111EEE1EE11EE1EEE11E1E1EE1EEE1E` (K = 39)          → `2/3`
+    - `111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE` (K = 41)        → `-1/3`
 
   Every proof evaluates `evalRpn (1 : ℂ) eml` directly on the exact bitstring.
   Zero `sorry`, zero custom axioms.

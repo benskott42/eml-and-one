@@ -199,7 +199,7 @@ export function tLn(t: Node): Node {
   // ln(1+x) = x − x²/2 + … . Keep the leading term once the next term is past 478 digits (decade ≤ −479).
   const plusScale = plus ? tinyScale(plus, SERIES_REL) : null;
   if (plus && plusScale !== null) {
-    return markSeriesError(markSeries(plus, "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * plusScale + 2);
+    return markSeriesError(markSeries(noteDecade(rawMul(ONE, plus), plusScale), "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * plusScale + 2);
   }
   const minusScale = minus ? tinyScale(minus, SERIES_REL) : null;
   if (minus && minusScale !== null) {
@@ -386,7 +386,7 @@ function expMinusOne(a: Node, b: Node): Node | null {
   if (expA && isOneNode(b)) {
     const scale = tinyScale(expA, SERIES_REL);
     if (scale !== null) {
-      return markSeriesError(markSeries(expA, "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * scale + 2);
+      return markSeriesError(markSeries(noteDecade(rawMul(ONE, expA), scale), "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * scale + 2);
     }
   }
   const expB = factsOf(b).builtFrom?.expArg;
@@ -803,11 +803,19 @@ function propagateMulSeriesError(out: Node, a: Node, b: Node): Node {
   const errB = maxSeriesErrorExp(b);
   if (errA !== undefined) {
     const expB = magnitudeExp(b);
-    if (expB !== null && expB > 0) markSeriesError(out, errA + expB);
+    if (expB === null) {
+      if (!exactZero(b)) markUnverified(out);
+    } else if (expB > 0) {
+      markSeriesError(out, errA + expB);
+    }
   }
   if (errB !== undefined) {
     const expA = magnitudeExp(a);
-    if (expA !== null && expA > 0) markSeriesError(out, errB + expA);
+    if (expA === null) {
+      if (!exactZero(a)) markUnverified(out);
+    } else if (expA > 0) {
+      markSeriesError(out, errB + expA);
+    }
   }
   return out;
 }
@@ -816,7 +824,8 @@ function propagateDivSeriesError(out: Node, a: Node, b: Node): Node {
   const errA = maxSeriesErrorExp(a);
   if (errA !== undefined) {
     const expB = magnitudeExp(b);
-    if (expB !== null && expB < 0) markSeriesError(out, errA - expB);
+    if (expB === null) markUnverified(out);
+    else if (expB < 0) markSeriesError(out, errA - expB);
   }
   return out;
 }
@@ -903,7 +912,7 @@ export function tPow(a: Node, b: Node): Node {
   if (errA !== undefined) {
     const expA = magnitudeExp(a);
     const expB = magnitudeExp(b);
-    if (expA !== null && expB !== null && errA + expB - expA >= -14) return markUnverified(node);
+    if (expA === null || expB === null || errA + expB - expA >= -14) return markUnverified(node);
   }
   const ia = provenInteger(a);
   const ib = provenInteger(b);

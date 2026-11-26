@@ -38,7 +38,7 @@ jobs:
         run: |
           out=$(lake env lean AxiomCheck.lean)
           printf '%s\n' "$out"
-          if printf '%s\n' "$out" | grep -vE "^'[^']+' depends on axioms: \[(propext|Classical\.choice|Quot\.sound)(, (propext|Classical\.choice|Quot\.sound))*\]$"; then
+          if printf '%s\n' "$out" | grep -vE "^'[^']+' (depends on axioms: \[(propext|Classical\.choice|Quot\.sound)(, (propext|Classical\.choice|Quot\.sound))*\]|does not depend on any axioms)$"; then
             echo "Unexpected axiom detected!" >&2
             exit 1
           fi

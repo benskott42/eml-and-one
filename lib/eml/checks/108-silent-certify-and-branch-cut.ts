@@ -1,5 +1,6 @@
 import { noteFor, type Entry } from "../../../components/calculator/entry";
 import { exactReport, exactToFloat, formatExact } from "../exact";
+import { tMul } from "../library";
 import { compileExpression } from "../parse";
 import { nodeFromCompact } from "../programs";
 import { packCircuit, unpackCircuit } from "../wire";
@@ -69,6 +70,18 @@ const checkModule: CheckModule = {
         `got ${rep.unverified ? "unverified" : formatExact(rep.value)}`,
       );
     }
+
+    // A3. Underflow-lost non-finite results and scaled pure tower impostors below 1e-6 stay refused
+    for (const expr of ["ln(exp(-1e20))", "1 / exp(-1e20)", "exp(-1e20)^(-1)", "ln(1 / exp(-1e20))"]) {
+      const rep = exactReport(compileExpression(expr, {}), {}, { maxNodes: 80_000 });
+      assert(`underflow-lost ${expr} refused`, rep.unverified === true, `certified ${formatExact(rep.value)}`);
+    }
+    const scaledTowerRep = exactReport(tMul(nodeFromCompact("111E1E1E1EE11EE"), compileExpression("1e-7", {})), {}, { maxNodes: 80_000 });
+    assert(
+      "scaled pure tower impostor below 1e-6 refused",
+      scaledTowerRep.unverified === true,
+      `certified ${formatExact(scaledTowerRep.value)}`,
+    );
 
     // B1. Words on the negative real axis carry nearCut in exact mode and noteFor
     const cutWords: [string, ReturnType<typeof nodeFromCompact>][] = [

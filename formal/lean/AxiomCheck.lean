@@ -28,8 +28,9 @@ import Eml
 -- Rotated subtraction (`Eml.RotSub`, `Eml.Extended`, `Eml.DirectedInf`)
 #print axioms Eml.RotSub.rotSub_eq_sub
 #print axioms Eml.Extended.extRotSub_eq_sub
+#print axioms Eml.DirectedInf.extEmlSqr_zero
 #print axioms Eml.DirectedInf.extEmlSqrt_zero
-#print axioms Eml.DirectedInf.extScaledSub_zero
+#print axioms Eml.DirectedInf.extScaledSubRot_zero
 #print axioms Eml.DirectedInf.extScaledSubRot_eq_sub
 #print axioms Eml.DirectedInf.dirEmlSqrt_zero
 #print axioms Eml.DirectedInf.dirScaledSub_eq_sub
@@ -54,6 +55,7 @@ import Eml
 #print axioms Eml.Extended.evalRpn_negHalf
 #print axioms Eml.Extended.evalRpn_third
 #print axioms Eml.Extended.evalRpn_i
+#print axioms Eml.Extended.evalRpn_pi
 #print axioms Eml.Extended.extCPi_eq_pi
 
 -- Binary encoding, full bijection, and RPN soundness (`Eml.Binary`, `Eml.TreeBijection`, `Eml.RpnSoundness`)

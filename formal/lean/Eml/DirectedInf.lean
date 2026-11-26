@@ -7,22 +7,24 @@
 
   Proved theorems (zero `sorry`, zero custom axioms):
   1. In the phase-free extended model `EmlExt`:
-     - `extScaledSub_eq_sub`: for all `a, b : ℂ` with `b ≠ 0` and any nonzero
-       purely imaginary `c`, `extScaledSub (.finite c) (.finite a) (.finite b) = .finite (a - b)`.
-     - `extEmlSqrt_zero` and `extScaledSub_zero`: in `EmlExt`, `√0 = nan` and
-       `extScaledSub (.finite c) (.finite a) (.finite 0) = nan`, proving the
+     - `extScaledSubRot_eq_sub`: for all `a, b : ℂ` with `b ≠ 0` and any nonzero
+       purely imaginary `c`, `extScaledSubRot (.finite c) (.finite a) (.finite b) = .finite (a - b)`.
+     - `extEmlSqr_zero`: `extEmlSqr (.finite 0) = .finite 0` (matching `docs/rotsub.md`: "At b = 0 the square is 0").
+     - `extEmlSqrt_zero` and `extScaledSubRot_zero`: in `EmlExt`, `√0 = nan` and
+       `extScaledSubRot (.finite c) (.finite a) (.finite 0) = nan`, proving the
        claim in `README.md` and `docs/rotsub.md` that phase-free infinities
        cannot evaluate scaled subtraction at `b = 0`.
   2. In the directed-infinity + signed-zero model `EmlDir` (`docs/rotsub.md`
      "Zero on the scaled path"):
      - `exp(-∞ ± iπ) = -0`
-     - `exp(+∞ ± iπ) = -∞`
-     - `ln(-∞) = +∞ - iπ` and `ln(-0) = -∞ - iπ`
+     - `exp(+∞ + iθ) = ∞·e^{iθ}` (real rays `±∞` when `sin θ = 0`)
+     - `ln(-∞) = +∞ - iπ` (lower cut) and `ln(-0) = -∞ - iπ`
      we prove:
      - `dirEmlSqrt_zero`: `dirEmlSqrt (.finite 0) = .finite 0`
      - `dirScaledSub_eq_sub`: for ALL `a, b : ℂ` (INCLUDING `b = 0`) and any
        nonzero purely imaginary `c`,
        `dirScaledSub (.finite c) (.finite a) (.finite b) = .finite (a - b)`.
+     Every internal constant (`2`, `-1`) is constructed purely from `extEml`/`dirEml` and `.finite 1`.
 -/
 import Mathlib.Analysis.SpecialFunctions.Pow.Complex
 import Mathlib.Analysis.Complex.ExponentialBounds
@@ -42,42 +44,24 @@ open Eml.Extended
 noncomputable def extEmlSqr (b : EmlExt) : EmlExt :=
   extEmlMul b b
 
-/-- Extended square root word `exp(ln x / 2)`. -/
+/-- Extended square root word `exp(ln x / extCTwo)` built purely from `extEml` and `.finite 1`. -/
 noncomputable def extEmlSqrt (x : EmlExt) : EmlExt :=
-  extEmlExp (extEmlDiv (extEmlLn x) (.finite 2))
+  extEmlExp (extEmlDiv (extEmlLn x) extCTwo)
 
 /-- Extended addition word `1111y1EEE1EEx1EE1EE` on `EmlExt`. -/
 noncomputable def extEmlAdd (a b : EmlExt) : EmlExt :=
   extEml (.finite 1) (extEmlExp (extEml (extEmlLn (extEml (.finite 1) (extEmlExp b))) (extEmlExp a)))
 
-/-- Scale factor `k = 1 + √(b²)` from `docs/rotsub.md`. -/
-noncomputable def extScale (b : EmlExt) : EmlExt :=
-  extEmlAdd (.finite 1) (extEmlSqrt (extEmlSqr b))
-
-/-- Scaled rotated subtraction `k · rotSub c (a / k) (b / k)` on `EmlExt`. -/
-noncomputable def extScaledSub (c a b : EmlExt) : EmlExt :=
-  let k := extScale b
-  extEmlMul k (extRotSub c (extEmlDiv a k) (extEmlDiv b k))
+/-- In `EmlExt` (with `+∞ - (-∞) = +∞`), `0² = 0` cleanly (matching `docs/rotsub.md`). -/
+theorem extEmlSqr_zero : extEmlSqr (.finite 0) = .finite 0 := by
+  simp [extEmlSqr, extEmlMul, extEmlExp_eq, extEmlLn, extEml, extExp, extLowerLog, extSub,
+    lowerLog_one]
 
 /-- In phase-free `EmlExt`, `√0 = nan` because `ln(-∞) = nan` inside `div(-∞, 2)`. -/
 theorem extEmlSqrt_zero : extEmlSqrt (.finite 0) = .nan := by
   unfold extEmlSqrt
-  rw [extEmlLn_zero]
+  rw [extEmlLn_zero, extCTwo_eq_two]
   simp [extEmlDiv, extEmlExp_eq, extEml, extExp, extLowerLog, extSub]
-
-/-- In phase-free `EmlExt`, `extEmlSqr 0 = 0` would still yield `nan` in `extEmlSqrt`,
-    and in fact `extEmlSqr (.finite 0) = .nan` directly because `extSub .posInf .negInf = .nan`
-    (or `extEmlLn 0 = .negInf`). Either way, scaled subtraction at `b = 0` is `nan`. -/
-theorem extScaledSub_zero (c a : ℂ) :
-    extScaledSub (.finite c) (.finite a) (.finite 0) = .nan := by
-  have hsqr : extEmlSqr (.finite 0) = .nan := by
-    simp [extEmlSqr, extEmlMul, extEmlExp_eq, extEmlLn, extEml, extExp, extLowerLog, extSub,
-      lowerLog_one]
-  have hk : extScale (.finite 0) = .nan := by
-    simp [extScale, hsqr, extEmlSqrt, extEmlAdd, extEmlDiv, extEmlLn, extEmlExp_eq,
-      extEml, extExp, extLowerLog, extSub]
-  simp [extScaledSub, hk, extEmlMul, extEmlDiv, extRotSub, extRawSub, extEmlLn, extEmlExp_eq,
-    extEml, extExp, extLowerLog, extSub]
 
 /-- Helper: the principal square root `(z ^ 2) ^ (1/2)` has nonnegative real part,
     so `1 + (z ^ 2) ^ (1/2)` has real part `≥ 1` and imaginary part in `(-π, π]` (in fact
@@ -105,7 +89,7 @@ theorem one_add_cpow_half_ne_zero (w : ℂ) : (1 : ℂ) + w ^ ((1 : ℂ) / 2) �
 theorem extEmlSqrt_finite {w : ℂ} (hw : w ≠ 0) :
     extEmlSqrt (.finite w) = .finite (w ^ ((1 : ℂ) / 2)) := by
   unfold extEmlSqrt
-  rw [extEmlLn_finite_ne_zero hw, extEmlDiv_eq _ two_ne_zero, extEmlExp_eq]
+  rw [extEmlLn_finite_ne_zero hw, extCTwo_eq_two, extEmlDiv_eq _ two_ne_zero, extEmlExp_eq]
   simp only [extExp]
   congr 1
   rw [Complex.cpow_def_of_ne_zero hw]
@@ -160,16 +144,27 @@ theorem extEmlAdd_eq {a b : ℂ} (h1 : -Real.pi < (a + b).im) (h2 : (a + b).im �
     have := Eml.Arithmetic.emlAdd_eq (a := a) (b := b) (by simpa [emlExp_eq] using hbe) h1 h2
     simpa [Eml.Arithmetic.emlAdd, emlExp_eq, emlLn_eq_log] using this
 
-/-- Full scaled rotated subtraction in `EmlExt` for any `b ≠ 0` whose scale `k = 1 + √(b²)`
-    has `Im k ∈ (-π, π]` (or using `extRotSub` for the `+ 1` addition in `k`, which works
-    for all `b ≠ 0` unconditionally!). Here we state the version with `extScale` using `extRotSub`
-    for `1 + √(b²)` so there is NO imaginary-part restriction on `b` at all! -/
+/-- Full scaled rotated subtraction in `EmlExt` built purely from `extEml` and `.finite 1`:
+    `k = extRotSub c (√(b²)) extCNegOne = 1 + √(b²)`. -/
 noncomputable def extScaleRot (c b : EmlExt) : EmlExt :=
-  extRotSub c (extEmlSqrt (extEmlSqr b)) (.finite (-1))
+  extRotSub c (extEmlSqrt (extEmlSqr b)) extCNegOne
 
 noncomputable def extScaledSubRot (c a b : EmlExt) : EmlExt :=
   let k := extScaleRot c b
   extEmlMul k (extRotSub c (extEmlDiv a k) (extEmlDiv b k))
+
+/-- Negative result in phase-free `EmlExt`: even though `0² = 0`, `√0 = nan`,
+    so `extScaledSubRot (.finite c) (.finite a) (.finite 0) = .nan`
+    (matching `README.md` and `docs/rotsub.md`). -/
+theorem extScaledSubRot_zero (c a : ℂ) :
+    extScaledSubRot (.finite c) (.finite a) (.finite 0) = .nan := by
+  have hk : extScaleRot (.finite c) (.finite 0) = .nan := by
+    unfold extScaleRot
+    rw [extEmlSqr_zero, extEmlSqrt_zero]
+    simp [extRotSub, extEmlDiv, extRawSub, extEmlMul, extEmlLn, extEmlExp_eq,
+      extEml, extExp, extLowerLog, extSub]
+  simp [extScaledSubRot, hk, extEmlMul, extEmlDiv, extRotSub, extRawSub, extEmlLn, extEmlExp_eq,
+    extEml, extExp, extLowerLog, extSub]
 
 theorem extScaledSubRot_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0)
     (a : ℂ) {b : ℂ} (hb : b ≠ 0) :
@@ -178,7 +173,7 @@ theorem extScaledSubRot_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0)
   have hk_val : extScaleRot (.finite c) (.finite b) =
       .finite (1 + (b * b) ^ ((1 : ℂ) / 2)) := by
     unfold extScaleRot extEmlSqr
-    rw [extEmlMul_eq hb b, extEmlSqrt_finite hb2, extRotSub_eq_sub hc_re hc_ne]
+    rw [extEmlMul_eq hb b, extEmlSqrt_finite hb2, extCNegOne_eq_negOne, extRotSub_eq_sub hc_re hc_ne]
     congr 1
     ring
   have hk_ne : (1 : ℂ) + (b * b) ^ ((1 : ℂ) / 2) ≠ 0 := one_add_cpow_half_ne_zero (b * b)
@@ -208,7 +203,8 @@ inductive EmlDir where
 /-- Directed exponential on `EmlDir` (`docs/rotsub.md` lines 34 & 105–109):
     - `exp(+∞ + i·θ) = ∞·e^{iθ}` (`dirInf θ`, ALWAYS an infinity, never `nan`, even at `θ = ±π/2`)
     - `exp(-∞ + i·θ) = -0` when `cos θ < 0`, `+0` (`finite 0`) when `cos θ ≥ 0`
-    - `exp(∞·e^{iθ}) = 0` when `cos θ < 0` (e.g. `exp(-∞) = 0`), `dirInf 0` when `cos θ > 0`, `nan` otherwise
+    - `exp(∞·e^{iθ}) = 0` on the negative real ray (`cos θ < 0 ∧ sin θ = 0`),
+      `dirInf 0` on the positive real ray (`cos θ > 0 ∧ sin θ = 0`), `nan` off the real axis
     - `exp(-0) = 1`. -/
 noncomputable def dirExp : EmlDir → EmlDir
   | .finite z  => .finite (Complex.exp z)
@@ -219,24 +215,27 @@ noncomputable def dirExp : EmlDir → EmlDir
       if Real.cos im < 0 then .negZero else .finite 0
   | .dirInf θ  =>
       open Classical in
-      if Real.cos θ > 0 then .dirInf 0
-      else if Real.cos θ < 0 then .finite 0
+      if Real.cos θ > 0 ∧ Real.sin θ = 0 then .dirInf 0
+      else if Real.cos θ < 0 ∧ Real.sin θ = 0 then .finite 0
       else .nan
   | .nan       => .nan
 
-/-- Directed lower-cut logarithm on `EmlDir`:
+/-- Directed lower-cut logarithm on `EmlDir` (minimal real-ray / half-plane directed model
+    for `docs/rotsub.md`):
     - `ln(+0) = -∞`, `ln(-0) = -∞ - iπ`
-    - `ln(+∞ + i·im) = +∞`, `ln(-∞ + i·im) = +∞ - iπ`
-    - `ln(∞·e^{iθ}) = +∞ + i·θ'` where `θ' = -π` when `cos θ < 0` (negative real infinity) and `0` otherwise. -/
+    - `ln(+∞ + i·im) = +∞`, `ln(-∞ + i·im) = +∞ - iπ` (for `im ≤ 0`, lower cut) or `+∞ + iπ` (`im > 0`)
+    - `ln(∞·e^{iθ}) = +∞ + i·(-π)` on the negative half-plane (`cos θ < 0`) and `+∞ + i·0` otherwise
+      (for `θ = ±π/2`, `cos θ = 0` gives `+∞ + 0i`, sufficient for the `mul(c, 0)` real-part trace). -/
 noncomputable def dirLowerLog : EmlDir → EmlDir
   | .finite z  => open Classical in if z = 0 then .negInf 0 else .finite (lowerLog z)
   | .negZero   => .negInf (-Real.pi)
   | .posInf _  => .posInf 0
-  | .negInf _  => .posInf (-Real.pi)
+  | .negInf im => open Classical in if im > 0 then .posInf Real.pi else .posInf (-Real.pi)
   | .dirInf θ  => open Classical in if Real.cos θ < 0 then .posInf (-Real.pi) else .posInf 0
   | .nan       => .nan
 
 /-- Directed subtraction on `EmlDir` (`+∞ - (-∞) = +∞`, `-∞ - (+∞) = -∞`,
+    real-ray `dirInf` subtraction consistent with `posInf 0` / `negInf 0`,
     indeterminate `(+∞) - (+∞)` and `(-∞) - (-∞)` map to `nan`). -/
 noncomputable def dirSub : EmlDir → EmlDir → EmlDir
   | .finite a,  .finite b  => .finite (a - b)
@@ -245,6 +244,11 @@ noncomputable def dirSub : EmlDir → EmlDir → EmlDir
   | .negZero,   .negZero   => .finite 0
   | .finite a,  .posInf im => .negInf (a.im - im)
   | .finite a,  .negInf im => .posInf (a.im - im)
+  | .finite a,  .dirInf θ  =>
+      open Classical in
+      if Real.cos θ > 0 ∧ Real.sin θ = 0 then .negInf a.im
+      else if Real.cos θ < 0 ∧ Real.sin θ = 0 then .posInf a.im
+      else .nan
   | .negZero,   .posInf im => .negInf (-im)
   | .negZero,   .negInf im => .posInf (-im)
   | .posInf im, .finite b  => .posInf (im - b.im)
@@ -255,7 +259,7 @@ noncomputable def dirSub : EmlDir → EmlDir → EmlDir
   | .negInf i1, .posInf i2 => .negInf (i1 - i2)
   | .dirInf θ,  .finite _  => .dirInf θ
   | .dirInf θ,  .negZero   => .dirInf θ
-  | .dirInf θ,  .negInf _  => open Classical in if Real.cos θ > 0 then .posInf 0 else .nan
+  | .dirInf θ,  .negInf _  => open Classical in if Real.cos θ > 0 ∧ Real.sin θ = 0 then .posInf 0 else .nan
   | _,          _          => .nan
 
 private theorem one_not_lt_zero : ¬ ((1 : ℝ) < 0) := by norm_num
@@ -507,11 +511,63 @@ theorem dirEmlDiv_eq (a : ℂ) {b : ℂ} (hb : b ≠ 0) (hre : 0 ≤ b.re) :
     dirEmlDiv (.finite a) (.finite b) = .finite (a / b) :=
   dirEmlDiv_eq_of_cos_nonneg a hb (cos_eml_one_im_nonneg_of_re_nonneg hb hre)
 
+/-- `dirCTwo` (K 19) and `dirCNegOne` (K 15) built purely from `dirEml` and `.finite 1`. -/
+noncomputable def dirCTwo : EmlDir :=
+  dirEml (.finite 1)
+    (dirEml (dirEml (dirEmlLn (dirEml (.finite 1) (dirEml (.finite 1) (.finite 1))))
+      (dirEml (.finite 1) (.finite 1))) (.finite 1))
+
+theorem dirCTwo_eq_two : dirCTwo = .finite 2 := by
+  have h1 : dirEml (.finite 1) (dirEml (.finite 1) (.finite 1)) = .finite (Complex.exp 1 - 1) := by
+    rw [dirEml_finite one_ne_zero, dirEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+    congr 1; exact append0xc_eq 1
+  have hpos : (0 : ℝ) < Real.exp 1 - 1 := by linarith [Real.exp_one_gt_d9]
+  have hne : Complex.exp 1 - 1 ≠ 0 := by
+    have hcast : Complex.exp (1 : ℂ) - 1 = ((Real.exp 1 - 1 : ℝ) : ℂ) := by
+      rw [← Complex.ofReal_one, ← Complex.ofReal_exp]; push_cast; rfl
+    rw [hcast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt hpos)
+  unfold dirCTwo
+  rw [h1, dirEmlLn_finite_ne_zero hne]
+  have he : dirEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [dirEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  rw [he, dirEml_finite (Complex.exp_ne_zero _)]
+  have hmid : eml (Complex.log (Complex.exp 1 - 1)) (Complex.exp 1) = Complex.exp 1 - 2 := by
+    unfold eml; rw [Complex.exp_log hne, lowerLog_exp_of_im_zero (by simp)]; ring
+  rw [hmid, dirEml_finite one_ne_zero]
+  have hexp_ne : eml (Complex.exp 1 - 2) 1 ≠ 0 := by
+    rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _
+  rw [dirEml_finite hexp_ne]
+  congr 1
+  unfold eml
+  rw [lowerLog_one, sub_zero, lowerLog_exp_of_im_zero (by simp [Complex.exp_im])]
+  ring
+
+noncomputable def dirCNegOne : EmlDir :=
+  dirEml
+    (dirEml (.finite 1) (dirEml (.finite 1)
+      (dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)))))
+    (dirEml (.finite 1) (.finite 1))
+
+theorem dirCNegOne_eq_negOne : dirCNegOne = .finite (-1) := by
+  have h0 : dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) = .finite 0 := by
+    rw [dirEml_finite one_ne_zero, dirEml_finite one_ne_zero,
+      dirEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+    congr 1; exact cZero_eq_zero
+  have he : dirEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [dirEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  have he1_im : (Complex.exp (1 : ℂ)).im = 0 := by rw [Complex.exp_im]; simp
+  unfold dirCNegOne
+  rw [h0, he]
+  have hnegInf : dirEml (.finite 1) (dirEml (.finite 1) (.finite 0)) = .negInf 0 := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, he1_im]
+  rw [hnegInf]
+  simp [dirEml, dirExp_negInf_zero, dirLowerLog, dirSub, Complex.exp_ne_zero, lowerLog_exp_of_im_zero]
+
 noncomputable def dirEmlSqr (b : EmlDir) : EmlDir :=
   dirEmlMul b b
 
 noncomputable def dirEmlSqrt (x : EmlDir) : EmlDir :=
-  dirEmlExp (dirEmlDiv (dirEmlLn x) (.finite 2))
+  dirEmlExp (dirEmlDiv (dirEmlLn x) dirCTwo)
 
 /-- The key theorem of `docs/rotsub.md` ("Zero on the scaled path"):
     in `EmlDir` with directed infinities and `-0`, `√0 = 0` via the chain:
@@ -537,7 +593,7 @@ theorem dirEmlSqrt_zero : dirEmlSqrt (.finite 0) = .finite 0 := by
     rw [show (2 : ℂ) = ((2 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_pos (by norm_num)]
     rw [Complex.sub_im, he1_im, Complex.ofReal_im, sub_zero]
   unfold dirEmlSqrt
-  rw [dirEmlLn_zero]
+  rw [dirEmlLn_zero, dirCTwo_eq_two]
   unfold dirEmlDiv
   rw [dirEml_finite h2_ne, dirEmlLn_finite_ne_zero h12_ne]
   have hstep1 : dirEml (.finite 1) (.negInf 0) = .negInf Real.pi := by
@@ -557,7 +613,7 @@ theorem dirEmlSqrt_zero : dirEmlSqrt (.finite 0) = .finite 0 := by
 theorem dirEmlSqrt_finite {w : ℂ} (hw : w ≠ 0) :
     dirEmlSqrt (.finite w) = .finite (w ^ ((1 : ℂ) / 2)) := by
   unfold dirEmlSqrt
-  rw [dirEmlLn_finite_ne_zero hw, dirEmlDiv_eq _ two_ne_zero (by norm_num), dirEmlExp_eq]
+  rw [dirEmlLn_finite_ne_zero hw, dirCTwo_eq_two, dirEmlDiv_eq _ two_ne_zero (by norm_num), dirEmlExp_eq]
   simp only [dirExp]
   congr 1
   rw [Complex.cpow_def_of_ne_zero hw]
@@ -582,13 +638,13 @@ theorem dirRotSub_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0) (a b : �
   rw [hcancel, dirEmlDiv_eq _ hc_ne (by linarith), mul_div_cancel_left₀ _ hc_ne]
 
 noncomputable def dirScale (c b : EmlDir) : EmlDir :=
-  dirRotSub c (dirEmlSqrt (dirEmlSqr b)) (.finite (-1))
+  dirRotSub c (dirEmlSqrt (dirEmlSqr b)) dirCNegOne
 
 noncomputable def dirScaledSub (c a b : EmlDir) : EmlDir :=
   let k := dirScale c b
   dirEmlMul k (dirRotSub c (dirEmlDiv a k) (dirEmlDiv b k))
 
-/-- Full scaled rotated subtraction in `EmlDir`:
+/-- Full scaled rotated subtraction in `EmlDir` (built purely from `dirEml` and `.finite 1`):
     for ANY nonzero purely imaginary `c` and ALL `a, b : ℂ` — INCLUDING `b = 0` —
     `dirScaledSub (.finite c) (.finite a) (.finite b) = .finite (a - b)`. -/
 theorem dirScaledSub_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0) (a b : ℂ) :
@@ -597,7 +653,7 @@ theorem dirScaledSub_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0) (a b 
   · subst hb
     have hk : dirScale (.finite c) (.finite 0) = .finite 1 := by
       unfold dirScale dirEmlSqr
-      rw [dirEmlMul_zero_zero, dirEmlSqrt_zero, dirRotSub_eq_sub hc_re hc_ne]
+      rw [dirEmlMul_zero_zero, dirEmlSqrt_zero, dirCNegOne_eq_negOne, dirRotSub_eq_sub hc_re hc_ne]
       norm_num
     unfold dirScaledSub
     dsimp only
@@ -608,7 +664,8 @@ theorem dirScaledSub_eq_sub {c : ℂ} (hc_re : c.re = 0) (hc_ne : c ≠ 0) (a b 
   · have hb2 : b * b ≠ 0 := mul_ne_zero hb hb
     have hk : dirScale (.finite c) (.finite b) = .finite (1 + (b * b) ^ ((1 : ℂ) / 2)) := by
       unfold dirScale dirEmlSqr
-      rw [dirEmlMul_eq_of_ne_zero hb hb, dirEmlSqrt_finite hb2, dirRotSub_eq_sub hc_re hc_ne]
+      rw [dirEmlMul_eq_of_ne_zero hb hb, dirEmlSqrt_finite hb2, dirCNegOne_eq_negOne,
+        dirRotSub_eq_sub hc_re hc_ne]
       congr 1
       ring
     have hk_ne : (1 : ℂ) + (b * b) ^ ((1 : ℂ) / 2) ≠ 0 := one_add_cpow_half_ne_zero (b * b)

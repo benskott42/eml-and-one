@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` and zero custom axioms. All 60 main theorems across all 10 modules are audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. All 62 main theorems across all 10 modules are audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -13,7 +13,7 @@ The operator is defined concretely over `ℂ` as `eml x y := Complex.exp x - low
 - `lowerLog_eq_log_of_not_isNegReal`, `lowerLog_eq_log_sub_of_isNegReal`, `lowerLog_im_mem` (`-π ≤ (lowerLog z).im < π`), `exp_lowerLog` (`z ≠ 0`), `lowerLog_exp` (`-π ≤ z.im < π`).
 - `lowerLog_exp_eq_sub_unwind` — `lowerLog (Complex.exp z) = z - 2πi · κ_L(z)` for all `z : ℂ`, where `κ_L(z) = ⌊(z.im + π) / (2π)⌋` (Corless–Jeffrey unwinding number on the lower cut).
 - `log_exp_eq_sub_principalUnwind` — `Complex.log (Complex.exp z) = z - 2πi · κ(z)` for all `z : ℂ`, where `κ(z) = ⌈(z.im - π) / (2π)⌉`.
-- `cE_eq_exp_one` (`eml 1 1 = exp 1`), `cZero_eq_zero` (K = 7 word `0x74`), `emlExp_eq` (`eml x 1 = exp x`), `emlLn_eq_log` (K = 7 `emlLn x = Complex.log x`, unconditionally the principal logarithm for all `x ≠ 0`), `append0xc_eq` (`eml x (eml 1 1) = exp x - 1`), `rawSub_eq_sub_add_unwind`, `rawSub_eq`, and `eml_zero_exp`.
+- `cE_eq_exp_one` (`eml 1 1 = exp 1`), `cZero_eq_zero` (K = 7 word `0x74`), `emlExp_eq` (`eml x 1 = exp x`), `emlLn_eq_log` (K = 7 `emlLn x = Complex.log x`, unconditionally the principal logarithm for all `x ≠ 0`; at `x = 0` it agrees with Mathlib's junk value `Complex.log 0 = 0`, whereas `Eml.Extended.extEmlLn_zero` models `ln 0 = -∞`), `append0xc_eq` (`eml x (eml 1 1) = exp x - 1`), `rawSub_eq_sub_add_unwind`, `rawSub_eq`, and `eml_zero_exp`.
 
 ### Arithmetic words over `ℂ` ([`Eml/Arithmetic.lean`](Eml/Arithmetic.lean))
 
@@ -25,11 +25,11 @@ Every operation is defined as its actual `eml` word from `docs/rotsub.md` and `l
 
 ### Rotated subtraction & directed infinities ([`Eml/RotSub.lean`](Eml/RotSub.lean), [`Eml/Extended.lean`](Eml/Extended.lean), [`Eml/DirectedInf.lean`](Eml/DirectedInf.lean))
 
-- `Eml/RotSub.lean` (pure `ℂ`, no `ln 0`): proves `rawSub_self_eq_unwind` (`rawSub b b = 2πi · κ_L(b)`), `mul_unwind_im_zero` (`(c · 2πi · k).im = 0` for `c.re = 0`), and `rotSub_eq_sub` for any nonzero purely imaginary `c` and `a, b : ℂ` avoiding `0`.
-- `Eml/Extended.lean` (phase-free `EmlExt`): proves `extRotSub_eq_sub` for **all** `a, b : ℂ` (covering `κ_L(b) = 0`, `a = 0`, `a = b`, `r1 = 0`, `b = 0`, `x = e^e`).
-- `Eml/DirectedInf.lean` (scaled subtraction `k = 1 + √(b²)`, `k · rotSub c (a/k) (b/k)` from `docs/rotsub.md`):
-  - In phase-free `EmlExt`: proves `extScaledSubRot_eq_sub` for all `a, b : ℂ` with `b ≠ 0` (including `Re(1 + √(b²)) ≥ 1` so `k ≠ 0`), AND proves the **negative result** `extEmlSqrt_zero : extEmlSqrt (.finite 0) = .nan` and `extScaledSub_zero : extScaledSub (.finite c) (.finite a) (.finite 0) = .nan`, confirming why phase-free infinities cannot handle `b = 0` on the scaled path.
-  - In `EmlDir` (concrete inductive type with directed infinities `posInf im | negInf im | dirInf θ` and signed zero `negZero`, implementing `exp(-∞ ± iπ) = -0`, `exp(+∞ + iθ) = ∞·e^{iθ}`, `ln(-∞) = +∞ - iπ`, `ln(-0) = -∞ - iπ`): proves `dirEmlSqrt_zero : dirEmlSqrt (.finite 0) = .finite 0` and `dirScaledSub_eq_sub` for **all** `a, b : ℂ`, **including `b = 0`**.
+- `Eml/RotSub.lean` (pure `ℂ`, no `ln 0`): proves `rawSub_self_eq_unwind` (`rawSub b b = 2πi · κ_L(b)`), `mul_unwind_im_zero` (`(c · 2πi · k).im = 0` for `c.re = 0`), and `rotSub_eq_sub` for any nonzero purely imaginary `c` (`c.re = 0`, `c ≠ 0`) and `a, b : ℂ` with `a ≠ 0`, `b ≠ 0`, `a ≠ b`, `κ_L(b) ≠ 0`, and `a - b + 2πi · κ_L(b) ≠ 0`.
+- `Eml/Extended.lean` (phase-free `EmlExt`): proves `extRotSub_eq_sub` for any nonzero purely imaginary `c` (`c.re = 0`, `c ≠ 0`) and **all** `a, b : ℂ` (covering `κ_L(b) = 0`, `a = 0`, `a = b`, `r1 = 0`, `b = 0`, `x = e^e`).
+- `Eml/DirectedInf.lean` (scaled subtraction `k = 1 + √(b²)`, `k · rotSub c (a/k) (b/k)` from `docs/rotsub.md`, built purely from `extEml`/`dirEml` and `.finite 1` with zero smuggled constants):
+  - In phase-free `EmlExt`: proves `extScaledSubRot_eq_sub` for any nonzero purely imaginary `c` (`c.re = 0`, `c ≠ 0`) and all `a, b : ℂ` with `b ≠ 0` (including `Re(1 + √(b²)) ≥ 1` so `k ≠ 0`), `extEmlSqr_zero : extEmlSqr (.finite 0) = .finite 0`, AND the **negative result** `extEmlSqrt_zero : extEmlSqrt (.finite 0) = .nan` and `extScaledSubRot_zero : extScaledSubRot (.finite c) (.finite a) (.finite 0) = .nan`, confirming why phase-free infinities cannot handle `b = 0` on the scaled path.
+  - In `EmlDir` (concrete inductive type with directed infinities `posInf im | negInf im | dirInf θ` and signed zero `negZero`, implementing `exp(-∞ ± iπ) = -0`, `exp(+∞ + iθ) = ∞·e^{iθ}`, `ln(-∞) = +∞ - iπ`, `ln(-0) = -∞ - iπ`): proves `dirEmlSqrt_zero : dirEmlSqrt (.finite 0) = .finite 0` and `dirScaledSub_eq_sub` for any nonzero purely imaginary `c` (`c.re = 0`, `c ≠ 0`) and **all** `a, b : ℂ`, **including `b = 0`**.
 
 ### Concrete `ln 0`-free constant records over `ℂ` ([`Eml/Records.lean`](Eml/Records.lean))
 
@@ -57,7 +57,7 @@ Direct RPN stack evaluations `evalRpn (EmlExt.finite 1) extEml bits [] = some [v
 - `evalRpn_negHalf` (K = 29) → `EmlExt.finite (-1 / 2)`.
 - `evalRpn_third` (K = 35) → `EmlExt.finite (1 / 3)`.
 - `evalRpn_i` (K = 57) → `EmlExt.finite Complex.I`.
-- `extCPi_eq_pi` (`extEmlDiv (.finite (π * I)) extCI = .finite π`).
+- `evalRpn_pi` (K = 93) → `EmlExt.finite Real.pi` (and `extCPi_eq_pi` via `extEmlDiv extCIpi extCI`).
 
 ### Genuine `eml`-word transcendental, circular, hyperbolic & logistic functions ([`Eml/Transcendental.lean`](Eml/Transcendental.lean))
 
