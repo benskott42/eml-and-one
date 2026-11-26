@@ -23,6 +23,13 @@ This directory contains zero-`sorry` Lean 4 proofs of core **EML and One** theor
   - `evalRpn_append_0xc`: formal RPN stack semantics bridge proving `p ++ 0xc` evaluates to `op v (op one one)`
 - [`Eml/RotSub.lean`](Eml/RotSub.lean) — Formal proof of rotated subtraction (`docs/rotsub.md`):
   - `rotSub_cancels_unwinding`: `rotSub(a, b) = a − b` for any unwinding offset `unwind b`
+- [`Eml/RpnSoundness.lean`](Eml/RpnSoundness.lean) — End-to-end soundness bridge between binary Dyck-prefix programs and RPN evaluation:
+  - `evalRpn_some_of_runDepth`: `runDepth xs st.length = some r` implies `evalRpn` succeeds with stack length `r`
+  - `valid_program_evals_singleton`: every valid binary EML program never underflows and returns a singleton `[v]`
+  - `evalRpn_0x1`, `evalRpn_0x6`, `evalRpn_0x74`: concrete RPN stack proofs for `1`, `e`, and `0`
+  - `evalRpn_append_0xc_value`: appending `0xc` (`1100₂`) to any program evaluating to `v` evaluates to `exp(v) − 1`
+- [`Eml/Transcendental.lean`](Eml/Transcendental.lean) — Transcendental constructions from `eml` and `1`:
+  - `emlCos_eq`, `emlSin_eq`, `emlCosh_eq`, `emlSinh_eq`, `emlPow_eq`, `emlSqrt_eq`, `emlLogBase_eq`
 
 ## Continuous verification
 
