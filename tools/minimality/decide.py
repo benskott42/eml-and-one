@@ -127,6 +127,30 @@ def add_bounds(b1, b2):
     return (iv.mpf(b1) + iv.mpf(b2)).b
 
 
+def tag(sym, off):
+    """Atoms of a value with an offset must differ from those of the exact form."""
+    return sym if off is None else f"{sym}~{'+' if off == 1 else '-' if off == -1 else '?'}"
+
+
+def zero():
+    return V("fin", "0", iv.mpf(0), iv.mpf(0), 0, lin={})
+
+
+def is_zero(v):
+    return v.kind == "fin" and v.k == 0 and v.re.a == 0 and v.re.b == 0
+
+
+def real(v):
+    return v.kind in ("big", "small") or (v.kind == "fin" and v.k == 0)
+
+
+def cexp(v):
+    out = cexp_raw(v)
+    if out.kind in ("fin", "big", "small") and out.sym.startswith("exp("):
+        EXP_ARG.setdefault(out.sym, v)
+    return out
+
+
 def cexp_raw(v):
     sym = f"exp({v.sym})"
     if v.kind == "bigk":
