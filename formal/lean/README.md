@@ -30,6 +30,13 @@ This directory contains zero-`sorry` Lean 4 proofs of core **EML and One** theor
   - `evalRpn_append_0xc_value`: appending `0xc` (`1100₂`) to any program evaluating to `v` evaluates to `exp(v) − 1`
 - [`Eml/Transcendental.lean`](Eml/Transcendental.lean) — Transcendental constructions from `eml` and `1`:
   - `emlCos_eq`, `emlSin_eq`, `emlCosh_eq`, `emlSinh_eq`, `emlPow_eq`, `emlSqrt_eq`, `emlLogBase_eq`
+- [`Eml/TreeBijection.lean`](Eml/TreeBijection.lean) — Pure axiom-free syntax-tree compiler correctness & unique parsing:
+  - `toRpn_valid`: every `EmlTree` compiles to a valid Dyck-prefix binary program
+  - `toRpn_length`: every `g`-gate tree compiles to length `2 * g + 1`
+  - `evalRpn_toRpn`: 2-button RPN execution equals direct tree evaluation in any algebra
+  - `toRpn_injective`: unique-parse theorem (no two distinct EML trees share a binary bitstring)
+- [`Eml/Extended.lean`](Eml/Extended.lean) — End-to-end RPN stack proofs of extended-domain & lower-cut constant records:
+  - `evalRpn_0x7d0` (`−∞`), `evalRpn_0x7d0c` (`−1`), `evalRpn_0x1fa1a8` (`+iπ`), `evalRpn_0x1fa1a8c` (`−2`)
 
 ## Continuous verification
 
