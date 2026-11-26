@@ -138,17 +138,18 @@ theorem runDepth_balance (xs : List Bool) (d r : Nat) :
         omega
       · cases h
 
+theorem list_bool_length_eq_count (xs : List Bool) :
+    xs.length = xs.count true + xs.count false := by
+  induction xs with
+  | nil => rfl
+  | cons b rest ih =>
+    cases b <;> simp [List.count_cons, ih] <;> omega
+
 /-- Every valid EML program has `ones = zeros + 1` and odd length `2 * zeros + 1`. -/
 theorem valid_program_odd_length (p : List Bool) (hp : IsValidProgram p) :
     p.count true = p.count false + 1 ∧ p.length = 2 * p.count false + 1 := by
   have hbal : 0 + p.count true = 1 + p.count false := runDepth_balance p 0 1 hp
-  have hlen : p.length = p.count true + p.count false := by
-    induction p with
-    | nil => rfl
-    | cons b rest ih =>
-      cases b
-      · simp [List.count_cons, ih]; omega
-      · simp [List.count_cons, ih]; omega
+  have hlen : p.length = p.count true + p.count false := list_bool_length_eq_count p
   constructor <;> omega
 
 end Eml.Binary
