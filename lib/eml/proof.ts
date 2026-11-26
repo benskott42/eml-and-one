@@ -181,12 +181,14 @@ function reduceLn(arg: SymExpr): ReduceOut {
   if (arg.kind === "neg" && isProvablyPositive(arg.arg)) {
     const inner = reduceLn(arg.arg);
     const combined = reduceSub(inner.expr, { kind: "ipi", coeff: 1 });
-    return {
-      expr: combined.expr,
-      rules: ["ln(−u) = ln(u) − iπ (lower cut)", ...inner.rules, ...combined.rules],
-      usesLn0: inner.usesLn0 || combined.usesLn0,
-      usesLowerCut: true,
-    };
+    if (combined) {
+      return {
+        expr: combined.expr,
+        rules: ["ln(−u) = ln(u) − iπ (lower cut)", ...inner.rules, ...combined.rules],
+        usesLn0: inner.usesLn0 || combined.usesLn0,
+        usesLowerCut: true,
+      };
+    }
   }
   if (arg.kind === "exp" && isInPrincipalStrip(arg.arg)) {
     return { expr: arg.arg, rules: ["ln(exp u) = u (Im u ∈ [−π, π))"], usesLn0: false, usesLowerCut: false };
@@ -194,7 +196,10 @@ function reduceLn(arg: SymExpr): ReduceOut {
   return { expr: { kind: "ln", arg }, rules: [], usesLn0: false, usesLowerCut: false };
 }
 
-function reduceSub(a: SymExpr, b: SymExpr): ReduceOut {
+function reduceSub(a: SymExpr, b: SymExpr): ReduceOut | null {
+  if (a.kind === "inf" && b.kind === "inf" && a.sign === b.sign) {
+    return null;
+  }
   if (b.kind === "int" && b.value === 0) {
     return { expr: a, rules: ["u − 0 = u"], usesLn0: false, usesLowerCut: false };
   }
@@ -299,6 +304,7 @@ export function deriveProof(root: Node, maxGates = 40): SymbolicProof | null {
     const ex = reduceExp(left);
     const ln = reduceLn(right);
     const sub = reduceSub(ex.expr, ln.expr);
+    if (!sub) return null;
 
     const stepLn0 = ex.usesLn0 || ln.usesLn0 || sub.usesLn0;
     const stepCut = ex.usesLowerCut || ln.usesLowerCut || sub.usesLowerCut;

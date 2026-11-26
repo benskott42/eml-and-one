@@ -890,12 +890,14 @@ export function tSqrt(t: Node): Node {
   // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
   if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
-  // Exact rational square root: sqrt(p^2 / q^2) = p / q (keeps full circuit, records rational fact).
+  // Exact rational square root: sqrt(p^2 / q^2) = p / q, and sqrt(-1) = +i.
   const rq = exactRationalOf(t);
   if (rq && rq.n >= BigInt(0)) {
     const rn = exactNthRoot(rq.n, 2);
     const rd = exactNthRoot(rq.d, 2);
     if (rn !== null && rd !== null) learn(node, { rational: { n: rn, d: rd } });
+  } else if ((rq && rq.n === BigInt(-1) && rq.d === BigInt(1)) || provenInteger(t) === BigInt(-1)) {
+    learn(node, { imaginaryUnit: 1 });
   }
   const inner = factsOf(t).builtFrom?.onePlus;
   if (inner && tinyScale(inner, SERIES_REL) !== null) noteBuiltFrom(node, { sqrtArg: inner });
@@ -1362,8 +1364,18 @@ export function tArctan(t: Node): Node {
   // −i·artanh(i·i) did not see i·i as −1, so the infinity lost its quarter turn and
   // came out a real ∞: exp(−arctan(i)) was 0, and 1 + exp(−arctan(i)) a certified 1.
   // As a directed infinity, exp of it is undefined, as exp(ln(0)·i) already is.
-  if (t === tI()) return tMul(tI(), tNeg(tLn(tZero())));
-  if (t === tNeg(tI())) return tMul(tI(), tLn(tZero()));
+  const tf = factsOf(t);
+  const imUnit =
+    t === tI()
+      ? 1
+      : t === tNeg(tI())
+        ? -1
+        : tf.imaginaryUnit ??
+          (tf.imagRational && tf.imagRational.d === BigInt(1) && (tf.imagRational.n === BigInt(1) || tf.imagRational.n === BigInt(-1))
+            ? Number(tf.imagRational.n)
+            : 0);
+  if (imUnit === 1) return tMul(tI(), tNeg(tLn(tZero())));
+  if (imUnit === -1) return tMul(tI(), tLn(tZero()));
   // A pure imaginary iy with |y| > 1 is i·artanh(y) on this cut.
   // artanh(−2) = −artanh(2), so arctan(−2i) = −π/2 − (artanh 2) i.
   const range = rangeOf(t);

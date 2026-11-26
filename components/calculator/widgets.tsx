@@ -195,6 +195,16 @@ function parseTargetInput(raw: string): { re: number; im: number } | null {
   if (s === "phi" || s === "φ") return { re: (1 + Math.sqrt(5)) / 2, im: 0 };
   if (s === "i" || s === "+i") return { re: 0, im: 1 };
   if (s === "-i") return { re: 0, im: -1 };
+  // Simple real fraction a/b (e.g. 1/3, -2/5, 22/7)
+  const frac = /^([+-]?\d+)\/([+-]?\d+)$/.exec(s);
+  if (frac) {
+    const num = Number(frac[1]);
+    const den = Number(frac[2]);
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
+      return { re: num / den, im: 0 };
+    }
+    return null;
+  }
   // Pure real number
   if (!s.includes("i")) {
     const re = Number(s);

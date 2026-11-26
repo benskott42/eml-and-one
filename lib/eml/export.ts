@@ -60,7 +60,8 @@ function leafLabel(node: Node, format: "eml" | "lean" | "latex"): string {
   if (node.type === "one") return "1";
   if (node.type === "var") return node.name;
   if (node.type === "input") {
-    const text = formatC(node.value);
+    const raw = formatC(node.value);
+    const text = format === "eml" ? raw : raw.replace(/−/g, "-");
     return format === "lean" ? `(${text})` : text;
   }
   return "1";
