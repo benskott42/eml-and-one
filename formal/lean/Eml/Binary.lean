@@ -97,4 +97,56 @@ theorem valid_eml_combine (p q : List Bool) (hp : IsValidProgram p) (hq : IsVali
   rw [hq']
   rfl
 
+/-- Every valid EML program starts with `true` (the `1` key) and is therefore non-empty. -/
+theorem valid_program_starts_true (p : List Bool) (hp : IsValidProgram p) :
+    ∃ rest, p = true :: rest := by
+  cases p with
+  | nil =>
+    unfold IsValidProgram runDepth at hp
+    cases hp
+  | cons b rest =>
+    cases b with
+    | true => exact ⟨rest, rfl⟩
+    | false =>
+      unfold IsValidProgram runDepth at hp
+      simp at hp
+
+/-- Helper invariant: `runDepth` changes stack depth by `ones - zeros`, so
+    `d + ones = r + zeros` whenever `runDepth xs d = some r`. -/
+theorem runDepth_balance (xs : List Bool) (d r : Nat) :
+    runDepth xs d = some r →
+      d + xs.count true = r + xs.count false := by
+  induction xs generalizing d with
+  | nil =>
+    intro h
+    simp only [runDepth, Option.some.injEq] at h
+    simp [h]
+  | cons b rest ih =>
+    intro h
+    cases b with
+    | true =>
+      simp only [runDepth] at h
+      have hrec := ih (d + 1) h
+      simp only [List.count_cons, beq_self_eq_true, Bool.true_eq_false, ↓reduceIte]
+      omega
+    | false =>
+      simp only [runDepth] at h
+      split at h
+      · rename_i hge
+        have hrec := ih (d - 1) h
+        simp only [List.count_cons, beq_self_eq_true, Bool.false_eq_true, ↓reduceIte]
+        omega
+      · cases h
+
+/-- Every valid EML program has `ones = zeros + 1` and odd length `2 * zeros + 1`. -/
+theorem valid_program_odd_length (p : List Bool) (hp : IsValidProgram p) :
+    p.count true = p.count false + 1 ∧ p.length = 2 * p.count false + 1 := by
+  have hbal : 0 + p.count true = 1 + p.count false := runDepth_balance p 0 1 hp
+  have hlen : p.length = p.count true + p.count false := by
+    induction p with
+    | nil => rfl
+    | cons b rest ih =>
+      cases b <;> simp [List.count_cons, ih] <;> omega
+  constructor <;> omega
+
 end Eml.Binary

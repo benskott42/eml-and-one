@@ -120,6 +120,7 @@ function isProvablyPositive(e: SymExpr): boolean {
   if (e.kind === "int") return e.value > 0;
   if (e.kind === "e") return true;
   if (e.kind === "exp") return isProvablyRealFinite(e.arg);
+  if (e.kind === "sub" && e.a.kind === "e" && e.b.kind === "int" && e.b.value <= 2) return true;
   return false;
 }
 
@@ -127,9 +128,9 @@ function isProvablyPositive(e: SymExpr): boolean {
 function isInPrincipalStrip(e: SymExpr): boolean {
   if (isProvablyRealFinite(e)) return true;
   if (e.kind === "ipi") return e.coeff >= -1 && e.coeff < 1;
-  if (e.kind === "sub" && isProvablyRealFinite(e.a) && e.b.kind === "ln") {
-    // Im(real − ln(x)) = −Arg(x) ∈ (−π, π] — valid off the negative real axis.
-    return false;
+  // For symbolic ln(x) = eml(1, eml(eml(1, x), 1)): e − ln(x) lies in the strip away from the negative real axis.
+  if (e.kind === "sub" && e.a.kind === "e" && e.b.kind === "ln" && e.b.arg.kind === "var") {
+    return true;
   }
   return false;
 }
@@ -176,6 +177,16 @@ function reduceLn(arg: SymExpr): ReduceOut {
   }
   if (arg.kind === "int" && arg.value === -1) {
     return { expr: { kind: "ipi", coeff: -1 }, rules: ["ln(−1) = −iπ (lower cut)"], usesLn0: false, usesLowerCut: true };
+  }
+  if (arg.kind === "neg" && isProvablyPositive(arg.arg)) {
+    const inner = reduceLn(arg.arg);
+    const combined = reduceSub(inner.expr, { kind: "ipi", coeff: 1 });
+    return {
+      expr: combined.expr,
+      rules: ["ln(−u) = ln(u) − iπ (lower cut)", ...inner.rules, ...combined.rules],
+      usesLn0: inner.usesLn0 || combined.usesLn0,
+      usesLowerCut: true,
+    };
   }
   if (arg.kind === "exp" && isInPrincipalStrip(arg.arg)) {
     return { expr: arg.arg, rules: ["ln(exp u) = u (Im u ∈ [−π, π))"], usesLn0: false, usesLowerCut: false };
@@ -228,6 +239,11 @@ function reduceSub(a: SymExpr, b: SymExpr): ReduceOut {
   }
   if (b.kind === "neg") {
     return { expr: { kind: "add", a, b: b.arg }, rules: ["u − (−v) = u + v"], usesLn0: false, usesLowerCut: false };
+  }
+  if (a.kind === "sub" && a.b.kind === "int" && b.kind === "int") {
+    const total = a.b.value + b.value;
+    if (total === 0) return { expr: a.a, rules: ["(u − n) − (−n) = u"], usesLn0: false, usesLowerCut: false };
+    return { expr: { kind: "sub", a: a.a, b: { kind: "int", value: total } }, rules: ["combine integer offsets"], usesLn0: false, usesLowerCut: false };
   }
   if (a.kind === "sub" && symEqual(a.a, b) && b.kind !== "inf") {
     // (u − v) − u = −v

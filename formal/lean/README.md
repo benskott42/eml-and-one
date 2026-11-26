@@ -13,6 +13,10 @@ This directory contains zero-`sorry` Lean 4 proofs of core **EML and One** theor
   - `valid_one`, `valid_e`, `valid_zero`
   - `valid_append_0xc`: appending `1100₂` (`0xc`) to any valid EML program yields a valid EML program
   - `valid_eml_combine`: `p ++ q ++ [false]` is valid whenever `p` and `q` are valid
+  - `valid_program_starts_true`: every valid program starts with `1`
+  - `valid_program_odd_length`: every valid program has `ones = zeros + 1` and odd length `2 * zeros + 1`
+- [`Eml/RotSub.lean`](Eml/RotSub.lean) — Formal proof of rotated subtraction (`docs/rotsub.md`):
+  - `rotSub_cancels_unwinding`: `rotSub(a, b) = a − b` for any unwinding offset `unwind b`
 
 ## Building locally
 

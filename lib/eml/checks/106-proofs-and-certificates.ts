@@ -64,10 +64,27 @@ const checkModule: CheckModule = {
       `got ${proofNeg1?.resultText}`,
     );
 
-    // exp(x) = eml(x, 1)
+    // exp(x) = eml(x, 1) and ln(x) = eml(1, eml(eml(1, x), 1))
     const x: Node = { type: "var", name: "x", id: 999_999 };
     const proofExp = deriveProof(E(x, ONE));
     assert("deriveProof(exp(x)) deduces exp(x)", proofExp?.resultText === "exp(x)");
+
+    const proofLn = deriveProof(E(ONE, E(E(ONE, x), ONE)));
+    assert("deriveProof(ln(x)) deduces ln(x)", proofLn?.resultText === "ln(x)", `got ${proofLn?.resultText}`);
+
+    // 2 = 0x7e264 (without ln 0), +iπ = 0x1fa1a8 (lower cut + ln 0), −2 = 0x1fa1a8c
+    const proofTwo = deriveProof(nodeFromRpn("111111EEE1EE11EE1EE".split("")));
+    assert("deriveProof(2, 0x7e264) deduces 2 without ln 0", proofTwo?.resultText === "2" && !proofTwo.usesLn0, `got ${proofTwo?.resultText}`);
+
+    const proofIpi = deriveProof(nodeFromRpn("111111E1EEEE11E1E1EEE".split("")));
+    assert(
+      "deriveProof(+iπ, 0x1fa1a8) deduces iπ with lower cut + ln 0",
+      proofIpi?.resultText === "iπ" && proofIpi.usesLn0 && proofIpi.usesLowerCut,
+      `got ${proofIpi?.resultText}`,
+    );
+
+    const proofNeg2 = deriveProof(nodeFromRpn("111111E1EEEE11E1E1EEE11EE".split("")));
+    assert("deriveProof(-2, 0x1fa1a8c) deduces −2", proofNeg2?.resultText === "−2", `got ${proofNeg2?.resultText}`);
   },
 };
 
