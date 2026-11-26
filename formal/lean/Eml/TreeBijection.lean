@@ -1,14 +1,17 @@
 /-
-  Machine-checked Lean 4 proofs of EML syntax-tree compilation, RPN compiler
-  correctness, and unique parsing (injectivity of `toRpn`).
+  Machine-checked Lean 4 proofs of the full bijection between EML syntax trees
+  (`EmlTree`) and valid Dyck-prefix binary programs (`{ p : List Bool // IsValidProgram p }`),
+  along with RPN compiler correctness and unique parsing.
 
-  Zero axioms, zero `sorry` — pure Lean 4 inductive proofs.
+  Zero axioms (beyond Lean's standard `propext`), zero `sorry` — pure Lean 4 inductive proofs.
 -/
 import Eml.Binary
+import Eml.RpnSoundness
 
 namespace Eml.TreeBijection
 
 open Eml.Binary
+open Eml.RpnSoundness
 
 /-- The full binary tree grammar `S → 1 | eml(S, S)`. -/
 inductive EmlTree where
@@ -75,5 +78,97 @@ theorem toRpn_injective (t₁ t₂ : EmlTree) (h : t₁.toRpn = t₂.toRpn) : t�
   rw [h1] at h2
   injection h2 with hcons
   injection hcons
+
+/-! ### Inverse parser and full bijection `EmlTree ≃ { p : List Bool // IsValidProgram p }` -/
+
+/-- Concatenate the RPN encodings of a stack of trees from bottom to top. -/
+def stackRpn : List EmlTree → List Bool
+  | [] => []
+  | t :: rest => stackRpn rest ++ t.toRpn
+
+/-- Key stack invariant: parsing `xs` in the free tree algebra preserves the
+    concatenated RPN bitstring `stackRpn st' = stackRpn st ++ xs`. -/
+theorem evalRpn_free_stackRpn (xs : List Bool) (st st' : List EmlTree)
+    (h : evalRpn EmlTree.one EmlTree.eml xs st = some st') :
+    stackRpn st' = stackRpn st ++ xs := by
+  induction xs generalizing st with
+  | nil =>
+    simp only [evalRpn, Option.some.injEq] at h
+    subst h
+    simp
+  | cons b rest ih =>
+    cases b with
+    | true =>
+      simp only [evalRpn] at h
+      have hrec := ih (EmlTree.one :: st) h
+      simp only [stackRpn, EmlTree.toRpn, List.append_assoc, List.singleton_append] at hrec ⊢
+      exact hrec
+    | false =>
+      match st with
+      | [] => simp [evalRpn] at h
+      | [_] => simp [evalRpn] at h
+      | bTree :: aTree :: restSt =>
+        simp only [evalRpn] at h
+        have hrec := ih (EmlTree.eml aTree bTree :: restSt) h
+        simp only [stackRpn, EmlTree.toRpn, List.append_assoc, List.singleton_append] at hrec ⊢
+        exact hrec
+
+/-- Parse any valid Dyck-prefix binary program back into its unique `EmlTree`. -/
+def fromRpn (p : List Bool) (hp : IsValidProgram p) : EmlTree :=
+  match h : evalRpn EmlTree.one EmlTree.eml p [] with
+  | some [t] => t
+  | some [] =>
+    False.elim (by
+      obtain ⟨v, hv⟩ := valid_program_evals_singleton EmlTree.one EmlTree.eml p hp
+      rw [hv] at h; cases h)
+  | some (_ :: _ :: _) =>
+    False.elim (by
+      obtain ⟨v, hv⟩ := valid_program_evals_singleton EmlTree.one EmlTree.eml p hp
+      rw [hv] at h; cases h)
+  | none =>
+    False.elim (by
+      obtain ⟨v, hv⟩ := valid_program_evals_singleton EmlTree.one EmlTree.eml p hp
+      rw [hv] at h; cases h)
+
+/-- Right inverse (surjectivity of `toRpn`): compiling `fromRpn p hp` recovers `p`. -/
+theorem toRpn_fromRpn (p : List Bool) (hp : IsValidProgram p) :
+    (fromRpn p hp).toRpn = p := by
+  obtain ⟨v, hv⟩ := valid_program_evals_singleton EmlTree.one EmlTree.eml p hp
+  have hfrom : fromRpn p hp = v := by
+    unfold fromRpn
+    split
+    · rename_i t ht
+      rw [hv] at ht
+      injection ht with hcons
+      injection hcons with htv
+      exact htv.symm
+    all_goals
+      rename_i hbad
+      rw [hv] at hbad
+      cases hbad
+  rw [hfrom]
+  have hinv := evalRpn_free_stackRpn p [] [v] hv
+  simpa [stackRpn] using hinv
+
+/-- Left inverse: parsing `t.toRpn` recovers `t`. -/
+theorem fromRpn_toRpn (t : EmlTree) :
+    fromRpn t.toRpn (toRpn_valid t) = t := by
+  apply toRpn_injective
+  exact toRpn_fromRpn t.toRpn (toRpn_valid t)
+
+/-- Full semantic bridge: evaluating ANY valid binary program `p` on the RPN stack
+    in any algebra `(α, one, op)` yields `[ (fromRpn p hp).eval one op ]`. -/
+theorem evalRpn_eq_eval_fromRpn {α : Type} (one : α) (op : α → α → α)
+    (p : List Bool) (hp : IsValidProgram p) :
+    evalRpn one op p [] = some [(fromRpn p hp).eval one op] := by
+  have h := evalRpn_toRpn one op (fromRpn p hp) []
+  rwa [toRpn_fromRpn p hp] at h
+
+/-- Explicit bijection `EmlTree ≃ { p : List Bool // IsValidProgram p }`. -/
+def treeEquivValidProgram : EmlTree ≃ { p : List Bool // IsValidProgram p } where
+  toFun t := ⟨t.toRpn, toRpn_valid t⟩
+  invFun s := fromRpn s.1 s.2
+  left_inv t := fromRpn_toRpn t
+  right_inv s := Subtype.ext (toRpn_fromRpn s.1 s.2)
 
 end Eml.TreeBijection

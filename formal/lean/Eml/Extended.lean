@@ -26,7 +26,9 @@
 -/
 import Eml.Basic
 import Eml.Binary
+import Eml.TreeBijection
 import Eml.RotSub
+import Eml.Records
 
 namespace Eml.Extended
 
@@ -366,5 +368,325 @@ theorem evalRpn_0x1fa1a8c :
   simp only [extExp, extSub, Complex.exp_pi_mul_I]
   congr 2
   norm_num
+
+/-- `1/2` (K = 29, `best-known.json`: `111E11111E1EEEE11E1E1EE1EEE1E`, uses `ln 0`). -/
+def bits_half : List Bool :=
+  [true, true, true, false] ++ bits_0x7d0 ++
+  [true, true, false, true, false, true, false, false, true, false, false, false, true, false]
+
+theorem valid_half : IsValidProgram bits_half := rfl
+
+theorem evalRpn_half :
+    evalRpn (EmlExt.finite 1) extEml bits_half [] = some [.finite ((1 : ℂ) / 2)] := by
+  unfold bits_half
+  change some [extEml (extEml (.finite 1)
+    (extEml (extEml (.finite 1) (.finite 1))
+      (extEml (extEml (extEml (.finite 1) (extEml (.finite 1)
+        (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))))
+        (extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1))) (.finite 1))))
+    (.finite 1)] = some [.finite ((1 : ℂ) / 2)]
+  have hnegInf : extEml (.finite 1) (extEml (.finite 1)
+      (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))) = .negInf := by
+    have h := evalRpn_0x7d0; simpa [bits_0x7d0, evalRpn] using h
+  have htree : extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1) =
+      .finite (Complex.exp (Complex.exp (Complex.exp 1))) := by
+    simp [extEml, extExp, extLowerLog, extSub, lowerLog_one]
+  have he : extEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [extEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  have hinner : extEml .negInf (.finite (Complex.exp (Complex.exp (Complex.exp 1)))) =
+      .finite (-Complex.exp (Complex.exp 1)) := by
+    simp [extEml, extExp, extLowerLog, extSub, Complex.exp_ne_zero, lowerLog_exp_of_im_zero hee_im]
+  rw [hnegInf, htree, hinner, he]
+  have h1 : extEml (.finite (-Complex.exp (Complex.exp 1))) (.finite 1) =
+      .finite (Complex.exp (-Complex.exp (Complex.exp 1))) := by
+    simp [extEml, extExp, extLowerLog, extSub, lowerLog_one]
+  rw [h1]
+  have hneg_ee_im : (-Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    simp [hee_im]
+  have h2 : extEml (.finite (Complex.exp 1)) (.finite (Complex.exp (-Complex.exp (Complex.exp 1)))) =
+      .finite (2 * Complex.exp (Complex.exp 1)) := by
+    rw [extEml_finite (Complex.exp_ne_zero _)]
+    congr 1; unfold eml; rw [lowerLog_exp_of_im_zero hneg_ee_im]; ring
+  rw [h2]
+  have h2ee_pos : (0 : ℝ) < 2 * Real.exp (Real.exp 1) := by positivity
+  have h2ee_cast : (2 : ℂ) * Complex.exp (Complex.exp 1) = ((2 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  have h2ee_ne : (2 : ℂ) * Complex.exp (Complex.exp 1) ≠ 0 := by
+    rw [h2ee_cast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt h2ee_pos)
+  rw [extEml_finite h2ee_ne, extEml_finite one_ne_zero]
+  congr 3
+  unfold eml
+  rw [lowerLog_one, sub_zero, h2ee_cast, lowerLog_ofReal_pos h2ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 2 + Real.exp 1 : ℝ) : ℂ) = ((-Real.log 2 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  push_cast; ring
+
+/-- `-1/2` (K = 29, `best-known.json`: `1111111E1EEEE11EEE11E1E1EEE1E`, uses `ln 0`). -/
+def bits_negHalf : List Bool :=
+  [true, true] ++ bits_0x7d0c ++
+  [false, true, true, false, true, false, true, false, false, false, true, false]
+
+theorem valid_negHalf : IsValidProgram bits_negHalf := rfl
+
+theorem evalRpn_negHalf :
+    evalRpn (EmlExt.finite 1) extEml bits_negHalf [] = some [.finite (-(1 : ℂ) / 2)] := by
+  unfold bits_negHalf
+  change some [extEml (extEml (.finite 1)
+    (extEml (extEml (.finite 1)
+      (extEml (extEml (.finite 1) (extEml (.finite 1)
+        (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))))
+        (extEml (.finite 1) (.finite 1))))
+      (extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1))))
+    (.finite 1)] = some [.finite (-(1 : ℂ) / 2)]
+  have hneg1 : extEml (extEml (.finite 1) (extEml (.finite 1)
+      (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))))
+      (extEml (.finite 1) (.finite 1)) = .finite (-1) := by
+    have h := evalRpn_0x7d0c; simpa [bits_0x7d0c, bits_0x7d0, evalRpn] using h
+  have htree : extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1) =
+      .finite (Complex.exp (Complex.exp (Complex.exp 1))) := by
+    simp [extEml, extExp, extLowerLog, extSub, lowerLog_one]
+  rw [hneg1, htree]
+  have h1m1 : extEml (.finite 1) (.finite (-1)) = .finite (Complex.exp 1 + Real.pi * Complex.I) := by
+    rw [extEml_finite (by norm_num)]
+    congr 1; unfold eml
+    rw [show (-1 : ℂ) = ((-1 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_neg (by norm_num)]
+    simp
+  rw [h1m1]
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  have hmid : extEml (.finite (Complex.exp 1 + Real.pi * Complex.I))
+      (.finite (Complex.exp (Complex.exp (Complex.exp 1)))) =
+      .finite (-(2 * Complex.exp (Complex.exp 1))) := by
+    rw [extEml_finite (Complex.exp_ne_zero _)]
+    congr 1; unfold eml
+    rw [Complex.exp_add, Complex.exp_pi_mul_I, lowerLog_exp_of_im_zero hee_im]
+    ring
+  rw [hmid]
+  have hneg_pos : -(2 * Real.exp (Real.exp 1)) < 0 := by
+    linarith [Real.exp_pos (Real.exp 1)]
+  have hcast : -(2 * Complex.exp (Complex.exp 1)) = ((-(2 * Real.exp (Real.exp 1)) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  have hne : -(2 * Complex.exp (Complex.exp 1)) ≠ 0 := by
+    rw [hcast]; exact Complex.ofReal_ne_zero.mpr (ne_of_lt hneg_pos)
+  rw [extEml_finite hne, extEml_finite one_ne_zero]
+  congr 3
+  unfold eml
+  rw [lowerLog_one, sub_zero, hcast, lowerLog_ofReal_neg hneg_pos, neg_neg,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - (((Real.log 2 + Real.exp 1 : ℝ) : ℂ) - Real.pi * Complex.I) =
+      ((-Real.log 2 : ℝ) : ℂ) + Real.pi * Complex.I := by
+    push_cast; ring
+  rw [hsub, Complex.exp_add, Complex.exp_pi_mul_I, ← Complex.ofReal_exp, Real.exp_neg,
+    Real.exp_log (by norm_num)]
+  push_cast; ring
+
+/-- `1/3` (K = 35, `best-known.json`: `111E111111E1EEEE11EEE11E1E1EE1EEE1E`, uses `ln 0`). -/
+def bits_third : List Bool :=
+  [true, true, true, false, true] ++ bits_0x7d0c ++
+  [false, true, true, false, true, false, true, false, false, true, false, false, false, true, false]
+
+theorem valid_third : IsValidProgram bits_third := rfl
+
+theorem evalRpn_third :
+    evalRpn (EmlExt.finite 1) extEml bits_third [] = some [.finite ((1 : ℂ) / 3)] := by
+  unfold bits_third
+  change some [extEml (extEml (.finite 1)
+    (extEml (extEml (.finite 1) (.finite 1))
+      (extEml (extEml (extEml (.finite 1)
+        (extEml (extEml (.finite 1) (extEml (.finite 1)
+          (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))))
+          (extEml (.finite 1) (.finite 1))))
+        (extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1))) (.finite 1))))
+    (.finite 1)] = some [.finite ((1 : ℂ) / 3)]
+  have hneg1 : extEml (extEml (.finite 1) (extEml (.finite 1)
+      (extEml (.finite 1) (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)))))
+      (extEml (.finite 1) (.finite 1)) = .finite (-1) := by
+    have h := evalRpn_0x7d0c; simpa [bits_0x7d0c, bits_0x7d0, evalRpn] using h
+  have htree : extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1) =
+      .finite (Complex.exp (Complex.exp (Complex.exp 1))) := by
+    simp [extEml, extExp, extLowerLog, extSub, lowerLog_one]
+  have he : extEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [extEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  rw [hneg1, htree, he]
+  have h1m1 : extEml (.finite 1) (.finite (-1)) = .finite (Complex.exp 1 + Real.pi * Complex.I) := by
+    rw [extEml_finite (by norm_num)]
+    congr 1; unfold eml
+    rw [show (-1 : ℂ) = ((-1 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_neg (by norm_num)]
+    simp
+  rw [h1m1]
+  have hmid : extEml (.finite (Complex.exp 1 + Real.pi * Complex.I))
+      (.finite (Complex.exp (Complex.exp (Complex.exp 1)))) =
+      .finite (-(2 * Complex.exp (Complex.exp 1))) := by
+    rw [extEml_finite (Complex.exp_ne_zero _)]
+    congr 1; unfold eml
+    rw [Complex.exp_add, Complex.exp_pi_mul_I, lowerLog_exp_of_im_zero hee_im]
+    ring
+  rw [hmid]
+  have h1 : extEml (.finite (-(2 * Complex.exp (Complex.exp 1)))) (.finite 1) =
+      .finite (Complex.exp (-(2 * Complex.exp (Complex.exp 1)))) := by
+    simp [extEml, extExp, extLowerLog, extSub, lowerLog_one]
+  rw [h1]
+  have h2im : (-(2 * Complex.exp (Complex.exp (1 : ℂ)))).im = 0 := by simp [hee_im]
+  have h3 : extEml (.finite (Complex.exp 1))
+      (.finite (Complex.exp (-(2 * Complex.exp (Complex.exp 1))))) =
+      .finite (3 * Complex.exp (Complex.exp 1)) := by
+    rw [extEml_finite (Complex.exp_ne_zero _)]
+    congr 1; unfold eml; rw [lowerLog_exp_of_im_zero h2im]; ring
+  rw [h3]
+  have h3ee_pos : (0 : ℝ) < 3 * Real.exp (Real.exp 1) := by positivity
+  have h3ee_cast : (3 : ℂ) * Complex.exp (Complex.exp 1) = ((3 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  have h3ee_ne : (3 : ℂ) * Complex.exp (Complex.exp 1) ≠ 0 := by
+    rw [h3ee_cast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt h3ee_pos)
+  rw [extEml_finite h3ee_ne, extEml_finite one_ne_zero]
+  congr 3
+  unfold eml
+  rw [lowerLog_one, sub_zero, h3ee_cast, lowerLog_ofReal_pos h3ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 3 + Real.exp 1 : ℝ) : ℂ) = ((-Real.log 3 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  push_cast; ring
+
+/-- The imaginary unit `i` (K = 57, `best-known.json`: `exp(div(iπ, 2))`, uses `ln 0`). -/
+def bits_i : List Bool :=
+  [true, true, true] ++ Eml.Records.bits_two ++
+  [false, false, true, false, false, true] ++ bits_0x1fa1a8 ++
+  [false, true, false, false, true, false, true, false]
+
+theorem valid_i : IsValidProgram bits_i := rfl
+
+/-- `extCI` as the K = 57 `eml` word `exp(div(iπ, 2))` on `EmlExt`. -/
+noncomputable def extCI : EmlExt :=
+  extEmlExp (extEmlDiv (.finite (Real.pi * Complex.I)) (.finite 2))
+
+theorem extCI_eq_I : extCI = .finite Complex.I := by
+  unfold extCI
+  rw [extEmlDiv_eq _ two_ne_zero, extEmlExp_eq]
+  simp only [extExp]
+  congr 1
+  have h : Real.pi * Complex.I / 2 = (Real.pi / 2 : ℂ) * Complex.I := by ring
+  rw [h, Complex.exp_pi_div_two_mul_I]
+
+theorem evalRpn_i :
+    evalRpn (EmlExt.finite 1) extEml bits_i [] = some [.finite Complex.I] := by
+  unfold bits_i
+  have h2 : evalRpn (EmlExt.finite 1) extEml Eml.Records.bits_two [] = some [.finite 2] := by
+    change some [extEml (.finite 1)
+      (extEml (extEml (extEml (.finite 1)
+        (extEml (extEml (.finite 1) (extEml (.finite 1) (extEml (.finite 1) (.finite 1)))) (.finite 1)))
+        (extEml (.finite 1) (.finite 1))) (.finite 1))] = some [.finite 2]
+    have h1 : extEml (.finite 1) (extEml (.finite 1) (.finite 1)) = .finite (Complex.exp 1 - 1) := by
+      rw [extEml_finite one_ne_zero, extEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+      congr 1; exact append0xc_eq 1
+    have hpos : (0 : ℝ) < Real.exp 1 - 1 := by linarith [Real.exp_one_gt_d9]
+    have hne : Complex.exp 1 - 1 ≠ 0 := by
+      have hcast : Complex.exp (1 : ℂ) - 1 = ((Real.exp 1 - 1 : ℝ) : ℂ) := by
+        rw [← Complex.ofReal_one, ← Complex.ofReal_exp]; push_cast; rfl
+      rw [hcast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt hpos)
+    have hln : extEml (.finite 1) (extEml (extEml (.finite 1) (extEml (.finite 1) (extEml (.finite 1) (.finite 1)))) (.finite 1)) =
+        .finite (Complex.log (Complex.exp 1 - 1)) := by
+      change extEmlLn (extEml (.finite 1) (extEml (.finite 1) (.finite 1))) = _
+      rw [h1, extEmlLn_finite_ne_zero hne]
+    rw [hln]
+    have he : extEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+      rw [extEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+    rw [he, extEml_finite (Complex.exp_ne_zero _)]
+    have hmid : eml (Complex.log (Complex.exp 1 - 1)) (Complex.exp 1) = Complex.exp 1 - 2 := by
+      unfold eml
+      rw [Complex.exp_log hne, lowerLog_exp_of_im_zero (by simp)]
+      ring
+    rw [hmid, extEml_finite one_ne_zero]
+    have hexp_ne : eml (Complex.exp 1 - 2) 1 ≠ 0 := by
+      rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _
+    rw [extEml_finite hexp_ne]
+    congr 3
+    unfold eml
+    rw [lowerLog_one, sub_zero, lowerLog_exp_of_im_zero (by simp [Complex.exp_im])]
+    ring
+  have hstep : evalRpn (EmlExt.finite 1) extEml
+      ([true, true, true] ++ Eml.Records.bits_two ++
+        [false, false, true, false, false, true] ++ bits_0x1fa1a8 ++
+        [false, true, false, false, true, false, true, false]) [] =
+      some [extCI] := by
+    have h2_st : ∀ st, evalRpn (EmlExt.finite 1) extEml Eml.Records.bits_two st = some (.finite 2 :: st) := by
+      intro st
+      have := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+        (Eml.TreeBijection.fromRpn Eml.Records.bits_two Eml.Records.valid_two) st
+      rw [Eml.TreeBijection.toRpn_fromRpn] at this
+      have h0 := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+        (Eml.TreeBijection.fromRpn Eml.Records.bits_two Eml.Records.valid_two) []
+      rw [Eml.TreeBijection.toRpn_fromRpn, h2] at h0
+      injection h0 with hcons; injection hcons with hv
+      rwa [← hv] at this
+    have hipi_st : ∀ st, evalRpn (EmlExt.finite 1) extEml bits_0x1fa1a8 st =
+        some (.finite (Real.pi * Complex.I) :: st) := by
+      intro st
+      have := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+        (Eml.TreeBijection.fromRpn bits_0x1fa1a8 valid_0x1fa1a8) st
+      rw [Eml.TreeBijection.toRpn_fromRpn] at this
+      have h0 := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+        (Eml.TreeBijection.fromRpn bits_0x1fa1a8 valid_0x1fa1a8) []
+      rw [Eml.TreeBijection.toRpn_fromRpn, evalRpn_0x1fa1a8] at h0
+      injection h0 with hcons; injection hcons with hv
+      rwa [← hv] at this
+    simp only [List.append_assoc]
+    rw [evalRpn_append]; dsimp only [evalRpn]
+    rw [evalRpn_append, h2_st]; dsimp only
+    rw [evalRpn_append]; dsimp only [evalRpn]
+    rw [evalRpn_append, hipi_st]; dsimp only
+    rfl
+  rw [hstep, extCI_eq_I]
+
+/-- `π` (K = 93, `best-known.json`: `div(iπ, i)` via `exp(ln(e - ln(i)) - ...)` using `ln 0`).
+    Let's also define `extCPi := extEmlDiv (.finite (Real.pi * Complex.I)) extCI` and prove it equals `π`. -/
+noncomputable def extCPi : EmlExt :=
+  extEmlDiv (.finite (Real.pi * Complex.I)) extCI
+
+theorem extCPi_eq_pi : extCPi = .finite (Real.pi : ℂ) := by
+  unfold extCPi
+  rw [extCI_eq_I, extEmlDiv_eq _ Complex.I_ne_zero]
+  congr 1
+  rw [mul_div_cancel_right₀ _ Complex.I_ne_zero]
+
+/-- `extCTwo` as the K = 19 `eml` word evaluated on `EmlExt` (no `ln 0`). -/
+noncomputable def extCTwo : EmlExt :=
+  extEml (.finite 1)
+    (extEml (extEml (extEmlLn (extEml (.finite 1) (extEml (.finite 1) (.finite 1))))
+      (extEml (.finite 1) (.finite 1))) (.finite 1))
+
+theorem extCTwo_eq_two : extCTwo = .finite 2 := by
+  have h1 : extEml (.finite 1) (extEml (.finite 1) (.finite 1)) = .finite (Complex.exp 1 - 1) := by
+    rw [extEml_finite one_ne_zero, extEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+    congr 1; exact append0xc_eq 1
+  have hpos : (0 : ℝ) < Real.exp 1 - 1 := by linarith [Real.exp_one_gt_d9]
+  have hne : Complex.exp 1 - 1 ≠ 0 := by
+    have hcast : Complex.exp (1 : ℂ) - 1 = ((Real.exp 1 - 1 : ℝ) : ℂ) := by
+      rw [← Complex.ofReal_one, ← Complex.ofReal_exp]; push_cast; rfl
+    rw [hcast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt hpos)
+  unfold extCTwo
+  rw [h1, extEmlLn_finite_ne_zero hne]
+  have he : extEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [extEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  rw [he, extEml_finite (Complex.exp_ne_zero _)]
+  have hmid : eml (Complex.log (Complex.exp 1 - 1)) (Complex.exp 1) = Complex.exp 1 - 2 := by
+    unfold eml; rw [Complex.exp_log hne, lowerLog_exp_of_im_zero (by simp)]; ring
+  rw [hmid, extEml_finite one_ne_zero]
+  have hexp_ne : eml (Complex.exp 1 - 2) 1 ≠ 0 := by
+    rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _
+  rw [extEml_finite hexp_ne]
+  congr 1
+  unfold eml
+  rw [lowerLog_one, sub_zero, lowerLog_exp_of_im_zero (by simp [Complex.exp_im])]
+  ring
 
 end Eml.Extended

@@ -1,9 +1,10 @@
 import Eml.Basic
-import Eml.Arithmetic
 import Eml.Binary
-import Eml.TreeBijection
 import Eml.RpnSoundness
-import Eml.Records
+import Eml.TreeBijection
+import Eml.Arithmetic
 import Eml.RotSub
+import Eml.Records
 import Eml.Extended
+import Eml.DirectedInf
 import Eml.Transcendental
