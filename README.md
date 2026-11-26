@@ -52,7 +52,14 @@ The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K
 
 ## Encoding
 
-The ranking of programs is the classical ranking of binary trees and prefix codes: Łukasiewicz, Ruskey and Hu, and Zaks. The contribution here is applying that ranking to EML programs. Within one length, 1 comes before E, so a higher program number is a lower binary value.
+The ranking of programs is the classical ranking of binary trees and prefix codes: Łukasiewicz, Ruskey and Hu, and Zaks. The contribution here is applying that ranking to EML programs. Within one length, 1 comes before E, so a higher program number is a lower binary value. The program loader also accepts `0x…` hex and `0b…` binary strings directly (applying Raney's Cycle Lemma rotation when needed); see [docs/binary.md](docs/binary.md).
+
+## Interactive tools & formal proofs
+
+- **Tree, Dyck path & step player** (`components/calculator/CircuitInspector.tsx`): step-by-step 2-button RPN stack replay (`Start`, `Prev`, `Play/Pause`, `Next`, `End`, scrubber), synchronized inline SVG binary tree (`K ≤ 63`), Dyck-path stack-height chart (`K ≤ 201`), live deductive algebraic proofs (`lib/eml/proof.ts`), and one-click export to `eml(x, y)`, LaTeX, and Lean 4 term syntax (`lib/eml/export.ts`).
+- **Complex-plane map & live minimality certifier** (`components/calculator/ComplexMap.tsx`, `lib/eml/certificate.ts`): interactive SVG plot of all distinct finite constant EML circuits for `K ≤ 11` (65 trees) and `K ≤ 13` (197 trees) — click any point to load it — plus an in-browser directed-rounding minimality certifier over Catalan trees.
+- **Circuit golf & target finder** (`components/calculator/widgets.tsx`, `lib/eml/golf.ts`): Web Worker constant search up to `K = 21` with clickable load chips, plus a reverse-EML target finder that locates the 5 closest finite circuits (`K ≤ 19`) to any real, complex, or fractional target.
+- **Machine-checked Lean 4 formalization** ([formal/lean/README.md](formal/lean/README.md)): zero-`sorry` Lean 4.14 proofs of core EML identities (`Eml.Basic`), elementary arithmetic (`Eml.Arithmetic`), rotated subtraction unwinding cancellation (`Eml.RotSub`), and binary Dyck-prefix + RPN `0xc` nibble semantics (`Eml.Binary`), verified automatically in `.github/workflows/lean.yml`.
 
 ## Prior art
 

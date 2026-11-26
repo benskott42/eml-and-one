@@ -37,6 +37,7 @@ For example, `0x4e` (`1001110₂`) is not a valid program as written, but rotati
 - **The `0xc` (`1100₂ = 11EE`) nibble computes `exp(X) − 1`:**
   - `0x7d0` (`−∞`, K 11) + nibble `0xc` → `0x7d0c` (`−1`, K 15) = $\exp(-\infty) - 1$
   - `0x1fa1a8` (`+iπ`, K 21) + nibble `0xc` → `0x1fa1a8c` (`−2`, K 25) = $\exp(i\pi) - 1$
+  - Machine-checked Lean 4 proofs of the binary invariants (`valid_program_odd_length`, `valid_append_0xc`, `evalRpn_append_0xc`) and the algebraic identity (`append0xc_eq`) live in [`formal/lean/Eml/Binary.lean`](../formal/lean/Eml/Binary.lean) and [`formal/lean/Eml/Basic.lean`](../formal/lean/Eml/Basic.lean).
 - **Integer increment pattern (`2, 3, 4`):**
   - `2` (K 19) = `0x7e264`
   - `3` (K 29) = `0x1fe26264`
