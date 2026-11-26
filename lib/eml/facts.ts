@@ -482,8 +482,9 @@ export function noteMarkedExactInt(node: Node, value: bigint): Node {
   return learn(node, { integer: { value, marked: true } });
 }
 
-/** Exact terminating decimal of a node, or null if unknown or poisoned. */
+/** Exact terminating decimal of a node, or null if unknown, poisoned, or a series shortcut. */
 export function exactDecimalOf(node: Node): ExactDecimal | null {
+  if (isSeriesShortcut(node)) return null;
   const known = factsOf(node).decimal;
   if (known !== undefined) return known;
   if (isUnverified(node) || isExactUnsure(node)) return null;
@@ -497,8 +498,9 @@ export function noteExactDecimal(node: Node, value: ExactDecimal): Node {
   return learn(node, { decimal: value });
 }
 
-/** Exact reduced rational of a node (including exact decimals and proven integers), or null if unknown or poisoned. */
+/** Exact reduced rational of a node (including exact decimals and proven integers), or null if unknown, poisoned, or a series shortcut. */
 export function exactRationalOf(node: Node): Rational | null {
+  if (isSeriesShortcut(node)) return null;
   const f = factsOf(node);
   if (f.rational !== undefined) return f.rational;
   if (isUnverified(node) || isExactUnsure(node)) return null;

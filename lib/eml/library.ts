@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -439,7 +439,13 @@ export function userNeg(b: Node): Node {
  * and building it overwrites that range. Reading ln(0) afterwards would miss −∞.
  */
 function userSum(a: Node, b: Node, sub: boolean): Node {
+  const errA = maxSeriesErrorExp(a);
+  const errB = maxSeriesErrorExp(b);
+  const inheritedErr = errA !== undefined && errB !== undefined ? Math.max(errA, errB) : (errA ?? errB);
   const node = userSumBuild(a, b, sub);
+  // Preserve crude series-shortcut error bounds even if algebraic cancellation (e.g. a − (a + c) → −c)
+  // dropped the shortcut node from the resulting DAG.
+  if (inheritedErr !== undefined) markSeriesError(node, inheritedErr);
   if (!isUnverified(node) && !isExactUnsure(node)) {
     const exact = exactRationalOf(node);
     const f = factsOf(node);

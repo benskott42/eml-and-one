@@ -75,6 +75,17 @@ const checkModule: CheckModule = {
       "clearProvenInt clears integer while preserving unverified",
       provenInteger(probe) === undefined && isUnverified(probe) === true,
     );
+
+    // 6. Series-shortcut error bounds survive algebraic cancellation in userSum (a − (a + c) → −c)
+    for (const expr of [
+      "sinh(1e-7) - (1e-7 + 1e-25)",
+      "atanh(1e-7) - (1e-7 + 1e-25)",
+      "(sinh(1e-7) + 1e-25) - 1e-7",
+      "(atanh(1e-7) + 1e-25) - 1e-7",
+    ]) {
+      const rep = exactReport(compileExpression(expr, {}));
+      assert(`${expr} must be refused (contaminated by dropped z^3 term)`, rep.unverified === true, `got ${formatExact(rep.value)}`);
+    }
   },
 };
 
