@@ -587,8 +587,9 @@ async function main() {
   heldView.close();
   delete workerGlobal.Worker;
 
-  // Step 7 re-test: float mode keeps "this is e" naming and the rotation notice
-  // of a loaded word (1E1 -> 11E) across Undo and mode switches.
+  // Step 7 re-test: float mode keeps "· e" naming and the rotation notice
+  // of a loaded word (1E1 -> 11E) across Undo and mode switches, and rebuilding
+  // a flagged circuit from its press string preserves pole/precision flags.
   const rotDom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, {
     url: "http://localhost/",
     pretendToBeVisual: true,
@@ -627,26 +628,32 @@ async function main() {
   };
   await rotClick("hardware");
   await rotWait(40);
-  const progInput = rotView.document.querySelector('input[aria-label="Program number or word"]');
+  const progInput = rotView.document.querySelector("input[placeholder='#110, 110, or 11E']");
   const loadBtn = rotBtn("Load");
-  if (progInput instanceof rotView.HTMLInputElement && loadBtn instanceof rotView.HTMLButtonElement) {
+  if (!(progInput instanceof rotView.HTMLInputElement) || !(loadBtn instanceof rotView.HTMLButtonElement)) {
+    console.error("missing program input or Load button in rot test");
+    failed = true;
+  } else {
     const setter = Object.getOwnPropertyDescriptor(rotView.HTMLInputElement.prototype, "value")?.set;
-    await act(async () => {
-      setter?.call(progInput, "1E1");
-      progInput.dispatchEvent(new rotView.Event("input", { bubbles: true }));
-    });
-    await act(async () => {
-      loadBtn.click();
-    });
-    await rotWait(40);
+    const loadWord = async (word: string) => {
+      await act(async () => {
+        setter?.call(progInput, word);
+        progInput.dispatchEvent(new rotView.Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        loadBtn.click();
+      });
+      await rotWait(40);
+    };
     const checkRot = (phase: string) => {
       const cap = rotView.document.querySelector(".ti-lcd-caption")?.textContent ?? "";
       const note = rotView.document.querySelector(".ti-lcd-note")?.textContent ?? "";
-      if (!cap.includes("this is e") || !note.includes("Rotated 1E1 to 11E.")) {
+      if (!cap.includes("· e") || !note.includes("Rotated 1E1 to 11E.")) {
         console.error(`float loaded-word naming/notice lost at ${phase}`, { cap, note });
         failed = true;
       }
     };
+    await loadWord("1E1");
     checkRot("initial load");
     await rotClick("1");
     await rotClick("Undo");
@@ -657,6 +664,38 @@ async function main() {
     await rotClick("hardware");
     await rotWait(60);
     checkRot("after exact -> hardware mode switch");
+    // Load in exact mode, push 1, switch to hardware, then Undo into float mode.
+    await rotClick("exact");
+    await rotWait(40);
+    await loadWord("1E1");
+    await rotWait(60);
+    await rotClick("1");
+    await rotClick("hardware");
+    await rotWait(60);
+    await rotClick("Undo");
+    await rotWait(60);
+    checkRot("after exact load -> hardware -> Undo");
+
+    // Rebuilding a flagged circuit (tan(pi/2)) from its press string after another
+    // expression cleared the hash-cons table must preserve the "near a pole" flag.
+    const { compileExpression } = await import("../lib/eml/parse");
+    const { rpnTokens } = await import("../lib/eml/node");
+    const { encodePresses } = await import("../lib/eml/presses");
+    const tanNode = compileExpression("tan(pi/2)", {});
+    const tanTokens = rpnTokens(tanNode, 20_000);
+    const tanPresses = tanTokens ? encodePresses(tanTokens) : null;
+    compileExpression("1 + 1", {});
+    if (!tanPresses) {
+      console.error("could not encode tan(pi/2) presses");
+      failed = true;
+    } else {
+      await loadWord(tanPresses);
+      const flags = [...rotView.document.querySelectorAll(".ti-lcd-flag")].map((el) => el.textContent ?? "").join(" | ");
+      if (!flags.includes("near a pole")) {
+        console.error("rebuilt tan(pi/2) press string lost pole flag", { flags });
+        failed = true;
+      }
+    }
   }
   await act(async () => {
     rotRoot.unmount();

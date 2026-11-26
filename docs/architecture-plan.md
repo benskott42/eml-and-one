@@ -96,7 +96,7 @@ Several results are recognized instead of computed: x^0, an odd function at 0, s
 - hypot(2×10^(−160), 1)-style results that pass through a 0 that only the snap in the gates makes exact (step 2 with exact-zero facts).
 - 1/10 + 2/10 − 3/10, 0.1·3 − 0.3 and 0.5² − 0.25 say "couldn't verify": exact decimals are followed through sums only (step 1c: add products, quotients by an integer, and integer powers).
 - sinh(0.00005i) in float mode prints 0.0000499999999792i with no flag, just under the 12-digit bound, while the screen shows 12 digits. Decide whether the flag bound or the float display should move, as was done for 13- to 15-digit integers.
-- Float mode drops the "this is e" naming and the rotation notice of a loaded word when a row is rebuilt by Undo or a mode switch. The 1.0.3 audit says notices are kept; re-test, and fix what is left.
+- Float mode drops the "this is e" naming and the rotation notice of a loaded word when a row is rebuilt by Undo or a mode switch. Re-tested and verified fixed (both `· e` naming and `Rotated 1E1 to 11E.` survive Undo and mode switches in both directions; regression test fixed and active in `scripts/calculator-smoke.tsx`).
 
 ## Step 8: housekeeping
 

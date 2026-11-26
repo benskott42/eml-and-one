@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -196,9 +196,15 @@ function expGates(t: Node): Node {
 export function tLn(t: Node): Node {
   const plus = factsOf(t).builtFrom?.onePlus;
   const minus = factsOf(t).builtFrom?.oneMinus;
-  // ln(1+x) = x − x²/2 + … . The next term is below the 480-digit cap only for |x| ≤ 10^(−480).
-  if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
-  if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+  // ln(1+x) = x − x²/2 + … . Keep the leading term once the next term is past 478 digits (decade ≤ −479).
+  const plusScale = plus ? tinyScale(plus, SERIES_REL) : null;
+  if (plus && plusScale !== null) {
+    return markSeriesError(markSeries(plus, "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * plusScale + 2);
+  }
+  const minusScale = minus ? tinyScale(minus, SERIES_REL) : null;
+  if (minus && minusScale !== null) {
+    return markSeriesError(markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * minusScale + 2);
+  }
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
   const argErr = maxSeriesErrorExp(t);
   if (argErr !== undefined) {
@@ -232,7 +238,9 @@ export const tZero = memo(() => tagReal(programNode("0"), 0));
 /**
  * Odd functions and cos(x)−1 drop a relative x². That term is past 480 digits
  * only once |x| ≤ 10^(−241). exp(x)−1, ln(1+x), and sqrt(1+x)−1 drop a relative
- * x, which needs |x| ≤ 10^(−480). A larger argument keeps the real circuit.
+ * x; at decade ≤ −479 (|x| < 10^(−478)) the dropped x²/2 term is marked via
+ * markSeriesError so any cancellation exposing it stays refused. A larger argument
+ * keeps the real circuit.
  */
 const SERIES_ODD = -241;
 /**
@@ -245,7 +253,7 @@ const SERIES_POLY = -61;
  * A wider argument stays on the circuit rather than a truncated polynomial.
  */
 const SERIES_WIDE = -20;
-const SERIES_REL = -480;
+const SERIES_REL = -479;
 const LEAD_NOTE = "series shortcut: the leading term, for |x| ≤ 10^(−241)";
 const POLY_NOTE = "series shortcut: odd powers kept until the remainder is past the 480-digit cap";
 const SMALL_NOTE = "series shortcut: the leading term z, for a small |z|";
@@ -267,6 +275,12 @@ export function recognizedNote(root: Node): string | null {
 function tinyScale(node: Node, limit: number): number | null {
   const decade = decadeOf(node);
   if (decade !== undefined && decade <= limit) return decade;
+  const dec = exactDecimalOf(node);
+  if (dec && dec.n !== BigInt(0)) {
+    const absN = dec.n < BigInt(0) ? -dec.n : dec.n;
+    const decExp = absN.toString().length - 1 - dec.s;
+    if (decExp <= limit) return decExp;
+  }
   const known = knownValue(node);
   if (known && known.im === 0 && Number.isFinite(known.re) && known.re !== 0) {
     const decadeKnown = Math.floor(Math.log10(Math.abs(known.re)));
@@ -370,11 +384,17 @@ function cosMinusOne(a: Node, b: Node): Node | null {
 function expMinusOne(a: Node, b: Node): Node | null {
   const expA = factsOf(a).builtFrom?.expArg;
   if (expA && isOneNode(b)) {
-    if (tinyScale(expA, SERIES_REL) !== null) return markSeries(expA, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+    const scale = tinyScale(expA, SERIES_REL);
+    if (scale !== null) {
+      return markSeriesError(markSeries(expA, "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * scale + 2);
+    }
   }
   const expB = factsOf(b).builtFrom?.expArg;
   if (expB && isOneNode(a)) {
-    if (tinyScale(expB, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), expB), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
+    const scale = tinyScale(expB, SERIES_REL);
+    if (scale !== null) {
+      return markSeriesError(markSeries(rawMul(tNeg(ONE), expB), "series shortcut: the leading term, for |x| < 10^(−478)"), 2 * scale + 2);
+    }
   }
   return null;
 }
@@ -385,7 +405,7 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
   const scale = tinyScale(inner, SERIES_REL);
   if (scale === null) return null;
   const half = tHalfOf(inner);
-  return markSeries(noteDecade(half, scale - 1), "series shortcut: x/2, for |x| ≤ 10^(−480)");
+  return markSeriesError(markSeries(noteDecade(half, scale - 1), "series shortcut: x/2, for |x| < 10^(−478)"), 2 * scale + 2);
 }
 
 export function tSub(a: Node, b: Node): Node {
