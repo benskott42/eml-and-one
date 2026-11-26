@@ -53,7 +53,9 @@ theorem evalRpn_toRpn {α : Type} (one : α) (op : α → α → α) (t : EmlTre
   | one => rfl
   | eml a b iha ihb =>
     simp only [EmlTree.toRpn, EmlTree.eval]
-    rw [List.append_assoc, evalRpn_append, iha, evalRpn_append, ihb]
+    rw [List.append_assoc, evalRpn_append, iha]
+    dsimp only
+    rw [evalRpn_append, ihb]
     rfl
 
 /-- Evaluating a tree in the free term algebra `(EmlTree, .one, .eml)` is the identity. -/
