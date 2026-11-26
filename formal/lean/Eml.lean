@@ -2,9 +2,12 @@ import Eml.Basic
 import Eml.Binary
 import Eml.RpnSoundness
 import Eml.TreeBijection
+import Eml.CycleLemma
 import Eml.Arithmetic
 import Eml.RotSub
 import Eml.Records
 import Eml.Extended
 import Eml.DirectedInf
 import Eml.Transcendental
+import Eml.InverseTrig
+import Eml.MinimalityZero

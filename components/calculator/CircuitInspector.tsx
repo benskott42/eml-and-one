@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { dyckProfile } from "@/lib/eml/binary";
-import { layoutBinaryTree, nodeToEmlExpr, nodeToLatex, nodeToLean4, traceRpnSteps } from "@/lib/eml/export";
+import {
+  layoutBinaryTree,
+  leanTheoremForRpn,
+  nodeToEmlExpr,
+  nodeToLatex,
+  nodeToLean4Snippet,
+  traceRpnSteps,
+} from "@/lib/eml/export";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { deriveProof } from "@/lib/eml/proof";
@@ -52,9 +59,10 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
     return {
       eml: nodeToEmlExpr(node),
       latex: nodeToLatex(node),
-      lean: nodeToLean4(node),
+      lean: nodeToLean4Snippet(node),
+      leanTheorem: pureBits ? leanTheoremForRpn(pureBits) : null,
     };
-  }, [node]);
+  }, [node, pureBits]);
 
   const proof = useMemo(() => (node ? deriveProof(node, 24) : null), [node]);
 
@@ -142,6 +150,17 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
             >
               {copiedKey === "lean" ? "Copied Lean 4" : "Copy Lean 4"}
             </button>
+          ) : null}
+          {exports.leanTheorem ? (
+            <a
+              className="ti-chip"
+              href={`https://github.com/benskott42/eml-and-one/blob/main/formal/lean/Eml/${exports.leanTheorem.file}`}
+              target="_blank"
+              rel="noreferrer"
+              title={`Machine-checked in Lean 4 + Mathlib: ${exports.leanTheorem.theorem} (${exports.leanTheorem.value})`}
+            >
+              Lean 4: {exports.leanTheorem.theorem}
+            </a>
           ) : null}
         </div>
       ) : (

@@ -16,8 +16,11 @@
   Zero `sorry`, zero custom axioms.
 -/
 import Mathlib.Analysis.Complex.ExponentialBounds
+import Mathlib.Analysis.SpecialFunctions.Pow.Complex
 import Eml.Basic
 import Eml.Binary
+import Eml.TreeBijection
+import Eml.Arithmetic
 
 namespace Eml.Records
 
@@ -371,5 +374,257 @@ theorem evalRpn_negThird :
   rw [hexp]
   congr 2
   ring
+
+/-- `cNegOneStrict` as the K = 17 `ln 0`-free word `11111EEE1EE11E1EE`. -/
+noncomputable def cNegOneStrict : ℂ :=
+  eml (emlLn (eml 1 (eml 1 1))) (eml (eml 1 1) 1)
+
+theorem cNegOneStrict_eq : cNegOneStrict = -1 := by
+  have h := evalRpn_negOne_strict
+  change some [cNegOneStrict] = some [-1] at h
+  injection h with hcons; injection hcons
+
+/-- K = 31 word `111E111111EEE1EE11E1EEE1E1EEE1E` (`1/2-strict`, without `ln 0`). -/
+def bits_half_strict : List Bool :=
+  [true, true, true, false, true] ++ bits_negOne_strict ++
+  [false, true, false, true, false, false, false, true, false]
+
+theorem valid_half_strict : IsValidProgram bits_half_strict := rfl
+
+theorem evalRpn_half_strict :
+    evalRpn (1 : ℂ) eml bits_half_strict [] = some [(1 : ℂ) / 2] := by
+  unfold bits_half_strict
+  change some [eml (eml 1 (eml (eml 1 1) (eml (eml (eml 1 cNegOneStrict) 1) 1))) 1] =
+    some [(1 : ℂ) / 2]
+  rw [cNegOneStrict_eq]
+  have h1m1 : eml 1 (-1) = Complex.exp 1 + Real.pi * Complex.I := by
+    unfold eml
+    rw [show (-1 : ℂ) = ((-1 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_neg (by norm_num)]
+    simp
+  rw [h1m1]
+  have hnegee : eml (Complex.exp 1 + Real.pi * Complex.I) 1 = -Complex.exp (Complex.exp 1) := by
+    unfold eml
+    rw [lowerLog_one, sub_zero, Complex.exp_add, Complex.exp_pi_mul_I]
+    ring
+  rw [hnegee]
+  have hee_im : (-Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [Complex.neg_im, ← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp,
+      Complex.ofReal_im, neg_zero]
+  have h2ee : eml (eml 1 1) (eml (-Complex.exp (Complex.exp 1)) 1) =
+      2 * Complex.exp (Complex.exp 1) := by
+    unfold eml
+    rw [lowerLog_one, sub_zero, sub_zero, lowerLog_exp_of_im_zero hee_im]
+    ring
+  rw [h2ee]
+  have h2ee_pos : (0 : ℝ) < 2 * Real.exp (Real.exp 1) := by positivity
+  have h2ee_cast : (2 : ℂ) * Complex.exp (Complex.exp 1) = ((2 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  unfold eml
+  rw [lowerLog_one, sub_zero, h2ee_cast, lowerLog_ofReal_pos h2ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 2 + Real.exp 1 : ℝ) : ℂ) = ((-Real.log 2 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  congr 2; push_cast; ring
+
+/-- K = 31 word `1111111EEE1EE11E1EEE11E1E1EEE1E` (`-1/2-strict`, without `ln 0`). -/
+def bits_negHalf_strict : List Bool :=
+  [true, true] ++ bits_negOne_strict ++
+  [false, true, true, false, true, false, true, false, false, false, true, false]
+
+theorem valid_negHalf_strict : IsValidProgram bits_negHalf_strict := rfl
+
+theorem evalRpn_negHalf_strict :
+    evalRpn (1 : ℂ) eml bits_negHalf_strict [] = some [-(1 : ℂ) / 2] := by
+  unfold bits_negHalf_strict
+  change some [eml (eml 1 (eml (eml 1 cNegOneStrict) (eml (eml (eml 1 1) 1) 1))) 1] =
+    some [-(1 : ℂ) / 2]
+  rw [cNegOneStrict_eq]
+  have h1m1 : eml 1 (-1) = Complex.exp 1 + Real.pi * Complex.I := by
+    unfold eml
+    rw [show (-1 : ℂ) = ((-1 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_neg (by norm_num)]
+    simp
+  have htree : eml (eml (eml 1 1) 1) 1 = Complex.exp (Complex.exp (Complex.exp 1)) := by
+    simp [eml, lowerLog_one]
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  rw [h1m1, htree]
+  have hmid : eml (Complex.exp 1 + Real.pi * Complex.I) (Complex.exp (Complex.exp (Complex.exp 1))) =
+      -(2 * Complex.exp (Complex.exp 1)) := by
+    unfold eml
+    rw [Complex.exp_add, Complex.exp_pi_mul_I, lowerLog_exp_of_im_zero hee_im]
+    ring
+  rw [hmid]
+  have hneg_pos : -(2 * Real.exp (Real.exp 1)) < 0 := by linarith [Real.exp_pos (Real.exp 1)]
+  have hcast : -(2 * Complex.exp (Complex.exp 1)) = ((-(2 * Real.exp (Real.exp 1)) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  unfold eml
+  rw [lowerLog_one, sub_zero, hcast, lowerLog_ofReal_neg hneg_pos, neg_neg,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - (((Real.log 2 + Real.exp 1 : ℝ) : ℂ) - Real.pi * Complex.I) =
+      ((-Real.log 2 : ℝ) : ℂ) + Real.pi * Complex.I := by
+    push_cast; ring
+  rw [hsub, Complex.exp_add, Complex.exp_pi_mul_I, ← Complex.ofReal_exp, Real.exp_neg,
+    Real.exp_log (by norm_num)]
+  congr 2; push_cast; ring
+
+/-- K = 31 word `1111111E1E1EEE1EE11E1E1EE1EEE1E` (`1/2-alt`, without `ln 0`). -/
+def bits_half_alt : List Bool :=
+  [true, true, true, true, true, true, true, false, true, false, true, false, false, false, true,
+   false, false, true, true, false, true, false, true, false, false, true, false, false, false,
+   true, false]
+
+theorem valid_half_alt : IsValidProgram bits_half_alt := rfl
+
+theorem evalRpn_half_alt :
+    evalRpn (1 : ℂ) eml bits_half_alt [] = some [(1 : ℂ) / 2] := by
+  change some [eml (eml 1 (eml 1 (eml (eml (emlLn (eml 1 (eml (eml (eml 1 1) 1) 1)))
+    (eml (eml (eml 1 1) 1) 1)) 1))) 1] = some [(1 : ℂ) / 2]
+  have htree : eml (eml (eml 1 1) 1) 1 = Complex.exp (Complex.exp (Complex.exp 1)) := by
+    simp [eml, lowerLog_one]
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  rw [htree]
+  have hstep1 : eml 1 (Complex.exp (Complex.exp (Complex.exp 1))) =
+      Complex.exp 1 - Complex.exp (Complex.exp 1) := by
+    unfold eml; rw [lowerLog_exp_of_im_zero hee_im]
+  have hne_neg : Complex.exp (1 : ℂ) - Complex.exp (Complex.exp 1) ≠ 0 := by
+    have hcast : Complex.exp (1 : ℂ) - Complex.exp (Complex.exp 1) =
+        ((Real.exp 1 - Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+      rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+    rw [hcast]; exact Complex.ofReal_ne_zero.mpr (by linarith [exp_exp_one_gt_exp_one])
+  rw [hstep1, emlLn_eq_log]
+  have hstep2 : eml (Complex.log (Complex.exp 1 - Complex.exp (Complex.exp 1)))
+      (Complex.exp (Complex.exp (Complex.exp 1))) =
+      Complex.exp 1 - 2 * Complex.exp (Complex.exp 1) := by
+    unfold eml; rw [Complex.exp_log hne_neg, lowerLog_exp_of_im_zero hee_im]; ring
+  rw [hstep2]
+  have hstep2_im : (Complex.exp (1 : ℂ) - 2 * Complex.exp (Complex.exp 1)).im = 0 := by
+    have he1_im : (Complex.exp (1 : ℂ)).im = 0 := by rw [Complex.exp_im]; simp
+    simp [he1_im, hee_im]
+  have hstep3 : eml 1 (eml (Complex.exp 1 - 2 * Complex.exp (Complex.exp 1)) 1) =
+      2 * Complex.exp (Complex.exp 1) := by
+    unfold eml; rw [lowerLog_one, sub_zero, lowerLog_exp_of_im_zero hstep2_im]; ring
+  rw [hstep3]
+  have h2ee_pos : (0 : ℝ) < 2 * Real.exp (Real.exp 1) := by positivity
+  have h2ee_cast : (2 : ℂ) * Complex.exp (Complex.exp 1) = ((2 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  unfold eml
+  rw [lowerLog_one, sub_zero, h2ee_cast, lowerLog_ofReal_pos h2ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 2 + Real.exp 1 : ℝ) : ℂ) = ((-Real.log 2 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  congr 2; push_cast; ring
+
+/-- K = 37 word `111E111111EEE1EE11E1EEE11E1E1EE1EEE1E` (`1/3-strict`, without `ln 0`). -/
+def bits_third_strict : List Bool :=
+  [true, true, true, false, true] ++ bits_negOne_strict ++
+  [false, true, true, false, true, false, true, false, false, true, false, false, false, true, false]
+
+theorem valid_third_strict : IsValidProgram bits_third_strict := rfl
+
+theorem evalRpn_third_strict :
+    evalRpn (1 : ℂ) eml bits_third_strict [] = some [(1 : ℂ) / 3] := by
+  unfold bits_third_strict
+  change some [eml (eml 1 (eml (eml 1 1)
+    (eml (eml (eml 1 cNegOneStrict) (eml (eml (eml 1 1) 1) 1)) 1))) 1] = some [(1 : ℂ) / 3]
+  rw [cNegOneStrict_eq]
+  have h1m1 : eml 1 (-1) = Complex.exp 1 + Real.pi * Complex.I := by
+    unfold eml
+    rw [show (-1 : ℂ) = ((-1 : ℝ) : ℂ) by norm_num, lowerLog_ofReal_neg (by norm_num)]
+    simp
+  have htree : eml (eml (eml 1 1) 1) 1 = Complex.exp (Complex.exp (Complex.exp 1)) := by
+    simp [eml, lowerLog_one]
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  rw [h1m1, htree]
+  have hmid : eml (Complex.exp 1 + Real.pi * Complex.I) (Complex.exp (Complex.exp (Complex.exp 1))) =
+      -(2 * Complex.exp (Complex.exp 1)) := by
+    unfold eml; rw [Complex.exp_add, Complex.exp_pi_mul_I, lowerLog_exp_of_im_zero hee_im]; ring
+  rw [hmid]
+  have hmid_im : (-(2 * Complex.exp (Complex.exp (1 : ℂ)))).im = 0 := by simp [hee_im]
+  have h3ee : eml (eml 1 1) (eml (-(2 * Complex.exp (Complex.exp 1))) 1) =
+      3 * Complex.exp (Complex.exp 1) := by
+    unfold eml; rw [lowerLog_one, sub_zero, sub_zero, lowerLog_exp_of_im_zero hmid_im]; ring
+  rw [h3ee]
+  have h3ee_pos : (0 : ℝ) < 3 * Real.exp (Real.exp 1) := by positivity
+  have h3ee_cast : (3 : ℂ) * Complex.exp (Complex.exp 1) = ((3 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  unfold eml
+  rw [lowerLog_one, sub_zero, h3ee_cast, lowerLog_ofReal_pos h3ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 3 + Real.exp 1 : ℝ) : ℂ) = ((-Real.log 3 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  congr 2; push_cast; ring
+
+/-- K = 61 word `111111111EEE1EE11EE1EEEE1EE111111111EEE1EE11EE1EEE1EEE1EE1E1E`
+    (`√2 = 2^(1/2)`, without `ln 0`). -/
+def bits_sqrt2 : List Bool :=
+  [true, true, true] ++ bits_two ++
+  [false, false, true, false, false, true] ++ bits_ln2 ++
+  [false, true, false, false, true, false, true, false]
+
+theorem valid_sqrt2 : IsValidProgram bits_sqrt2 := rfl
+
+theorem evalRpn_sqrt2 :
+    evalRpn (1 : ℂ) eml bits_sqrt2 [] = some [(Real.sqrt 2 : ℂ)] := by
+  unfold bits_sqrt2
+  have h2_st : ∀ st, evalRpn (1 : ℂ) eml bits_two st = some (2 :: st) := by
+    intro st
+    have := Eml.TreeBijection.evalRpn_toRpn (1 : ℂ) eml
+      (Eml.TreeBijection.fromRpn bits_two valid_two) st
+    rw [Eml.TreeBijection.toRpn_fromRpn] at this
+    have h0 := Eml.TreeBijection.evalRpn_toRpn (1 : ℂ) eml
+      (Eml.TreeBijection.fromRpn bits_two valid_two) []
+    rw [Eml.TreeBijection.toRpn_fromRpn, evalRpn_two] at h0
+    injection h0 with hcons; injection hcons with hv
+    rwa [← hv] at this
+  have hln2_st : ∀ st, evalRpn (1 : ℂ) eml bits_ln2 st = some (Complex.log 2 :: st) := by
+    intro st
+    have := Eml.TreeBijection.evalRpn_toRpn (1 : ℂ) eml
+      (Eml.TreeBijection.fromRpn bits_ln2 valid_ln2) st
+    rw [Eml.TreeBijection.toRpn_fromRpn] at this
+    have h0 := Eml.TreeBijection.evalRpn_toRpn (1 : ℂ) eml
+      (Eml.TreeBijection.fromRpn bits_ln2 valid_ln2) []
+    rw [Eml.TreeBijection.toRpn_fromRpn, evalRpn_ln2] at h0
+    injection h0 with hcons; injection hcons with hv
+    rwa [← hv] at this
+  have hstep : evalRpn (1 : ℂ) eml
+      ([true, true, true] ++ bits_two ++
+        [false, false, true, false, false, true] ++ bits_ln2 ++
+        [false, true, false, false, true, false, true, false]) [] =
+      some [emlExp (Eml.Arithmetic.emlDiv (Complex.log 2) 2)] := by
+    simp only [List.append_assoc]
+    rw [evalRpn_append]; dsimp only [evalRpn]
+    rw [evalRpn_append, h2_st]; dsimp only
+    rw [evalRpn_append]; dsimp only [evalRpn]
+    rw [evalRpn_append, hln2_st]; dsimp only
+    rfl
+  rw [hstep, emlExp_eq]
+  have hlog2_ne : Complex.log (2 : ℂ) ≠ 0 := by
+    rw [show (2 : ℂ) = ((2 : ℝ) : ℂ) by norm_num, ← Complex.ofReal_log (by norm_num)]
+    exact Complex.ofReal_ne_zero.mpr (ne_of_gt (Real.log_pos (by norm_num)))
+  have h2_nee : (2 : ℂ) ≠ Complex.exp (Complex.exp 1) := by
+    intro h
+    have hre : (2 : ℝ) = Real.exp (Real.exp 1) := by
+      have := congrArg Complex.re h
+      simpa [← Complex.ofReal_one, ← Complex.ofReal_exp] using this
+    linarith [exp_one_gt_two, exp_exp_one_gt_exp_one]
+  rw [Eml.Arithmetic.emlDiv_eq hlog2_ne two_ne_zero h2_nee]
+  congr 2
+  rw [show (2 : ℂ) = ((2 : ℝ) : ℂ) by norm_num, ← Complex.ofReal_log (by norm_num)]
+  have hdiv : ((Real.log 2 : ℝ) : ℂ) / ((2 : ℝ) : ℂ) = ((Real.log 2 / 2 : ℝ) : ℂ) := by
+    push_cast; rfl
+  rw [hdiv, ← Complex.ofReal_exp]
+  congr 1
+  symm
+  rw [Real.sqrt_eq_iff_eq_sq (by norm_num) (le_of_lt (Real.exp_pos _)), sq, ← Real.exp_add]
+  rw [show Real.log 2 / 2 + Real.log 2 / 2 = Real.log 2 by ring, Real.exp_log (by norm_num)]
 
 end Eml.Records

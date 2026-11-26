@@ -45,6 +45,11 @@ import Eml
 #print axioms Eml.Records.evalRpn_negThree
 #print axioms Eml.Records.evalRpn_twoThirds
 #print axioms Eml.Records.evalRpn_negThird
+#print axioms Eml.Records.evalRpn_half_strict
+#print axioms Eml.Records.evalRpn_negHalf_strict
+#print axioms Eml.Records.evalRpn_half_alt
+#print axioms Eml.Records.evalRpn_third_strict
+#print axioms Eml.Records.evalRpn_sqrt2
 
 -- Extended-domain (`ln 0 = -∞`) RPN constant records (`Eml.Extended`)
 #print axioms Eml.Extended.evalRpn_0x7d0
@@ -81,3 +86,29 @@ import Eml
 #print axioms Eml.Transcendental.extEmlTan_eq
 #print axioms Eml.Transcendental.extEmlPow_eq
 #print axioms Eml.Transcendental.extEmlLogBase_eq
+
+-- Inverse trig & inverse hyperbolic `eml` words & branch cuts (`Eml.InverseTrig`)
+#print axioms Eml.InverseTrig.extEmlArtanh_eq
+#print axioms Eml.InverseTrig.tanh_artanh
+#print axioms Eml.InverseTrig.extEmlArtanh_ofReal_gt_one
+#print axioms Eml.InverseTrig.extEmlArctan_eq
+#print axioms Eml.InverseTrig.tan_arctan
+#print axioms Eml.InverseTrig.extEmlArctan_neg_two_I
+#print axioms Eml.InverseTrig.extEmlArsinh_eq
+#print axioms Eml.InverseTrig.sinh_arsinh
+#print axioms Eml.InverseTrig.extEmlArcosh_eq
+#print axioms Eml.InverseTrig.cosh_arcosh
+#print axioms Eml.InverseTrig.extEmlArcsin_eq
+#print axioms Eml.InverseTrig.sin_arcsin
+#print axioms Eml.InverseTrig.extEmlArccos_eq
+#print axioms Eml.InverseTrig.cos_arccos
+#print axioms Eml.InverseTrig.extEmlArccos_two
+
+-- Raney's Cycle Lemma & Catalan counting (`Eml.CycleLemma`)
+#print axioms Eml.CycleLemma.raney_cycle_lemma
+#print axioms Eml.CycleLemma.card_emlTreesOfGates
+#print axioms Eml.CycleLemma.card_validProgramsOfGates
+
+-- Unconditional minimality of 0 at K = 7 (`Eml.MinimalityZero`)
+#print axioms Eml.MinimalityZero.zero_minimal_k7
+#print axioms Eml.MinimalityZero.ext_zero_minimal_k7

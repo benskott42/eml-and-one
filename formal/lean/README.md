@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. All 62 main theorems across all 10 modules are audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. All 87 main theorems across all 13 modules are audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -44,6 +44,7 @@ Direct RPN stack evaluations `evalRpn (1 : ℂ) eml bits [] = some [v]` on the e
 - `evalRpn_four` — `1111111111EEE1EE11EEE1EE11EEE1EE11EE1EE` (K = 39) → `4`.
 - `evalRpn_twoThirds` — `111E1111111EEE1EE11EE1EEE11E1E1EE1EEE1E` (K = 39) → `2/3`.
 - `evalRpn_negThird` — `111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE` (K = 41) → `-1/3`.
+- `evalRpn_half_strict` (K = 31) → `1/2`, `evalRpn_negHalf_strict` (K = 31) → `-1/2`, `evalRpn_half_alt` (K = 31) → `1/2`, `evalRpn_third_strict` (K = 37) → `1/3`, `evalRpn_sqrt2` (K = 61) → `√2`.
 
 ### Extended-domain (`ln 0 = -∞`) RPN constant records ([`Eml/Extended.lean`](Eml/Extended.lean))
 
@@ -66,15 +67,26 @@ Every function is built solely from `eml` / `extEml` and `1` (using `cTwo`/`extC
 - Pure `ℂ` (`ln 0`-free): `emlPow_eq` (`x ^ y`), `emlSqrt_eq` (`x ^ (1/2)`), `emlLogBase_eq` (`log x / log b`).
 - Extended `EmlExt` (all `x : ℂ`, zero strip restrictions): `extEmlNeg_eq` (`-x`), `extEmlAddRot_eq` (`a + b`), `extEmlCosh_eq` (`Complex.cosh x`), `extEmlSinh_eq` (`Complex.sinh x`), `extEmlTanh_eq` (`Complex.tanh x` for `cosh x ≠ 0`), `extEmlSigma_eq` (`(1 + exp(-x))⁻¹` for `1 + exp(-x) ≠ 0`), `extEmlCos_eq` (`Complex.cos x`), `extEmlSin_eq` (`Complex.sin x`), `extEmlTan_eq` (`Complex.tan x` for `cos x ≠ 0`), `extEmlPow_eq` (`x ^ y` for `x ≠ 0, y ≠ 0`), `extEmlLogBase_eq` (`log x / log b` for `b ≠ 0, x ≠ 0, log b ≠ 0`).
 
-### Binary encoding, full bijection & RPN soundness
+### Inverse trig & inverse hyperbolic `eml` words & branch cuts ([`Eml/InverseTrig.lean`](Eml/InverseTrig.lean))
+
+Built purely from `extEml` and `.finite 1` (zero smuggled constants):
+
+- `extEmlArtanh_eq`, `tanh_artanh`, and branch-cut theorem `extEmlArtanh_ofReal_gt_one` (`x > 1 → artanh(x) = ½ ln((x+1)/(x-1)) - iπ/2`, matching `mpmath` and `README.md`).
+- `extEmlArctan_eq`, `tan_arctan`, and `extEmlArctan_neg_two_I` (`arctan(-2i) = -π/2 - (½ ln 3)i`).
+- `extEmlArsinh_eq` / `sinh_arsinh`, `extEmlArcosh_eq` / `cosh_arcosh`, `extEmlArcsin_eq` / `sin_arcsin`, `extEmlArccos_eq` / `cos_arccos`, and `extEmlArccos_two` (`arccos(2) = i · ln(2 + √3)`).
+
+### Binary encoding, Raney's Cycle Lemma, Catalan counting & `0` minimality
 
 - [`Eml/Binary.lean`](Eml/Binary.lean) — Pure inductive proofs of Dyck-prefix validity (`valid_one`, `valid_e`, `valid_zero`, `valid_append_0xc`, `valid_eml_combine`, `valid_program_starts_true`, `valid_program_odd_length`, `evalRpn_append_0xc`).
 - [`Eml/TreeBijection.lean`](Eml/TreeBijection.lean) — Full bijection `treeEquivValidProgram : EmlTree ≃ { p : List Bool // IsValidProgram p }` (`toRpn_valid`, `toRpn_length`, `evalRpn_toRpn`, `toRpn_injective`, `fromRpn`, `toRpn_fromRpn`, `fromRpn_toRpn`, `evalRpn_eq_eval_fromRpn`).
+- [`Eml/CycleLemma.lean`](Eml/CycleLemma.lean) — **Raney's Cycle Lemma** (`raney_cycle_lemma`: every bitstring with `count true = count false + 1` has a unique valid cyclic rotation) and **Catalan enumeration** (`card_emlTreesOfGates`, `card_validProgramsOfGates`: exactly `catalan n` valid EML programs of length `K = 2n + 1`).
 - [`Eml/RpnSoundness.lean`](Eml/RpnSoundness.lean) — Stack-depth soundness (`evalRpn_some_of_runDepth`, `valid_program_evals_singleton`) and concrete RPN stack proofs over `ℂ` (`evalRpn_0x1`, `evalRpn_0x6`, `evalRpn_0x74`, `evalRpn_append_0xc_value`).
+- [`Eml/MinimalityZero.lean`](Eml/MinimalityZero.lean) — Unconditional machine-checked minimality of `0` at `K = 7` over both `ℂ` (`zero_minimal_k7`) and `EmlExt` (`ext_zero_minimal_k7`): no valid program with `K ≤ 5` evaluates to `0`.
 
 ## What is NOT formalized
 
-- **Minimality lower bounds** (excluding all shorter programs for `0`, `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
+- **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
+- **Two `-iπ` words** (`-ipi` K 45 and `-ipi-strict` K 47): the remaining 26 `best-known.json` constant/RPN records are proved in `RpnSoundness.lean`, `Records.lean`, and `Extended.lean`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
 
 ## Building and auditing locally
