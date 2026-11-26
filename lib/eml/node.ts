@@ -153,9 +153,106 @@ type PrecisionNote =
 
 const precisionNotes = new WeakMap<Node, PrecisionNote>();
 
+type HashPair = { h1: number; h2: number; key: string };
+const ONE_HASH: HashPair = { h1: 0x9e3779b1, h2: 0x85ebca77, key: "9e3779b1:85ebca77" };
+const structHashCache = new WeakMap<Node, HashPair | null>();
+const varHashCache = new Map<string, HashPair>();
+
+function hashVar(name: string): HashPair {
+  let cached = varHashCache.get(name);
+  if (cached) return cached;
+  let h1 = 0x243f6a88;
+  let h2 = 0x85a308d3;
+  for (let i = 0; i < name.length; i += 1) {
+    const ch = name.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ (ch + 17), 0x85ebca6b) >>> 0;
+  }
+  cached = { h1, h2, key: `${h1.toString(16)}:${h2.toString(16)}` };
+  varHashCache.set(name, cached);
+  return cached;
+}
+
+function mixHash(a: HashPair, b: HashPair): HashPair {
+  const h1 = (Math.imul(a.h1 ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b.h1 + 0x7f4a7c15) >>> 0, 0xc2b2ae35)) >>> 0;
+  const h2 = (Math.imul((a.h2 + 0x517cc1b7) >>> 0, 0x27d4eb2d) ^ Math.imul(b.h2 ^ 0x165667b1, 0x165667b1)) >>> 0;
+  return { h1, h2, key: `${h1.toString(16)}:${h2.toString(16)}` };
+}
+
+/** Deterministic structural hash of a pure circuit (leaves 1, x, y, and eml), or null if an input leaf is present. */
+function structHash(root: Node): HashPair | null {
+  const cached = structHashCache.get(root);
+  if (cached !== undefined) return cached;
+  const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
+  while (stack.length) {
+    const frame = stack.pop();
+    if (!frame) break;
+    const n = frame.n;
+    if (structHashCache.has(n)) continue;
+    if (n.type === "one") {
+      structHashCache.set(n, ONE_HASH);
+      continue;
+    }
+    if (n.type === "var") {
+      structHashCache.set(n, hashVar(n.name));
+      continue;
+    }
+    if (n.type === "input") {
+      structHashCache.set(n, null);
+      continue;
+    }
+    if (!frame.seen) {
+      stack.push({ n, seen: true });
+      stack.push({ n: n.b, seen: false });
+      stack.push({ n: n.a, seen: false });
+      continue;
+    }
+    const ha = structHashCache.get(n.a) ?? null;
+    const hb = structHashCache.get(n.b) ?? null;
+    structHashCache.set(n, ha && hb ? mixHash(ha, hb) : null);
+  }
+  return structHashCache.get(root) ?? null;
+}
+
+type StoredPrecisionNote =
+  | { kind: "asinh" | "pole" | "trig"; argKey: string | null; argFallback: Node }
+  | { kind: "add"; leftKey: string | null; leftFallback: Node; rightKey: string | null; rightFallback: Node };
+
+const PRECISION_STRUCT_LIMIT = 512;
+/**
+ * Bounded structural registry so rebuilding a pure circuit from its press string
+ * (via nodeFromRpn) preserves low-precision, pole, and large-angle flags across
+ * isolateCircuit clears. Pure gate-tree structure is immutable, so these entries
+ * never leak stale per-expression state.
+ */
+const precisionByStruct = new Map<string, StoredPrecisionNote>();
+
 /** Mark a circuit whose float value is untrustworthy for a small unknown input. Evaluation still returns the gates. */
 export function notePrecision(node: Node, note: PrecisionNote): void {
   precisionNotes.set(node, note);
+  const h = structHash(node);
+  if (!h) return;
+  const stored: StoredPrecisionNote =
+    note.kind === "add"
+      ? {
+          kind: "add",
+          leftKey: structHash(note.left)?.key ?? null,
+          leftFallback: note.left,
+          rightKey: structHash(note.right)?.key ?? null,
+          rightFallback: note.right,
+        }
+      : {
+          kind: note.kind,
+          argKey: structHash(note.arg)?.key ?? null,
+          argFallback: note.arg,
+        };
+  if (precisionByStruct.has(h.key)) {
+    precisionByStruct.delete(h.key);
+  } else if (precisionByStruct.size >= PRECISION_STRUCT_LIMIT) {
+    const oldest = precisionByStruct.keys().next().value;
+    if (oldest !== undefined) precisionByStruct.delete(oldest);
+  }
+  precisionByStruct.set(h.key, stored);
 }
 
 export function precisionNoteOf(node: Node): PrecisionNote | undefined {
@@ -376,8 +473,9 @@ function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget
 }
 
 /**
- * A rebuilt press string does not carry this note: it lives beside the node,
- * not in the gates. Callers that copy the circuit by RPN lose the flag.
+ * Decide whether the root carries a low-precision, pole, or large-angle flag.
+ * Rebuilding a pure circuit from its press string via nodeFromRpn restores these
+ * notes from the structural registry.
  */
 export function precisionMessage(root: Node, valueOf: (n: Node) => C | undefined): string | null {
   const note = precisionNotes.get(root);
@@ -606,18 +704,60 @@ export function rpnTokens(node: Node, budget = 48): string[] | null {
   return tokens;
 }
 
-/** Parse an RPN program of 1, x, y, and E back into a hash-consed circuit. */
+/** Parse an RPN program of 1, x, y, and E back into a hash-consed circuit, restoring any recorded precision notes. */
 export function nodeFromRpn(tokens: readonly string[]): Node {
   const stack: Node[] = [];
+  const track = precisionByStruct.size > 0;
+  const hashes: HashPair[] = [];
+  const byKey = track ? new Map<string, Node>() : null;
   for (const token of tokens) {
-    if (token === "1") stack.push(ONE);
-    else if (token === "x") stack.push(V("x"));
-    else if (token === "y") stack.push(V("y"));
-    else if (token === "E") {
+    if (token === "1") {
+      stack.push(ONE);
+      if (track) {
+        hashes.push(ONE_HASH);
+        byKey?.set(ONE_HASH.key, ONE);
+      }
+    } else if (token === "x" || token === "y") {
+      const v = V(token);
+      stack.push(v);
+      if (track) {
+        const hv = hashVar(token);
+        hashes.push(hv);
+        byKey?.set(hv.key, v);
+      }
+    } else if (token === "E") {
       const b = stack.pop();
       const a = stack.pop();
       if (!a || !b) throw new EmlError("The RPN program is missing a value.");
-      stack.push(E(a, b));
+      const node = E(a, b);
+      stack.push(node);
+      if (track) {
+        const hb = hashes.pop();
+        const ha = hashes.pop();
+        if (ha && hb) {
+          const h = mixHash(ha, hb);
+          hashes.push(h);
+          structHashCache.set(node, h);
+          byKey?.set(h.key, node);
+          if (!precisionNotes.has(node)) {
+            const saved = precisionByStruct.get(h.key);
+            if (saved) {
+              if (saved.kind === "add") {
+                precisionNotes.set(node, {
+                  kind: "add",
+                  left: (saved.leftKey ? byKey?.get(saved.leftKey) : undefined) ?? saved.leftFallback,
+                  right: (saved.rightKey ? byKey?.get(saved.rightKey) : undefined) ?? saved.rightFallback,
+                });
+              } else {
+                precisionNotes.set(node, {
+                  kind: saved.kind,
+                  arg: (saved.argKey ? byKey?.get(saved.argKey) : undefined) ?? saved.argFallback,
+                });
+              }
+            }
+          }
+        }
+      }
     } else {
       throw new EmlError(`Unknown RPN token ${token}.`);
     }

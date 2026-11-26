@@ -1138,8 +1138,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
             precision. A known tiny add or subtraction is scaled by a power of ten inside
             the circuit, up to 10^307. A variable at ±1 is ±π/2 in both modes. A variable just off the cut, with |x| &gt; 1 and |eps/x| ≤ 10^(−15), can still be wrong in float. Those points are not given a second formula, and the flag shows the exact value. Float transcendentals can differ by a few ulps across engines.
             Anything else unfinished is listed in docs/known-limitations.md and does not block this version.
-            Rebuilding a circuit from its press string drops the low-precision flag, which
-            is stored beside the node. A subtrahend with a real part around 1.3×10^154 or larger overflows the
+            A subtrahend with a real part around 1.3×10^154 or larger overflows the
             scale, so x − y is undefined and flagged out of float range.
           </p>
         </Fold>
