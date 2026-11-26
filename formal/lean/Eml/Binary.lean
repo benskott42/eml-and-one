@@ -127,14 +127,14 @@ theorem runDepth_balance (xs : List Bool) (d r : Nat) :
     | true =>
       simp only [runDepth] at h
       have hrec := ih (d + 1) h
-      simp only [List.count_cons, beq_self_eq_true, Bool.true_eq_false, ↓reduceIte]
+      simp [List.count_cons]
       omega
     | false =>
       simp only [runDepth] at h
       split at h
       · rename_i hge
         have hrec := ih (d - 1) h
-        simp only [List.count_cons, beq_self_eq_true, Bool.false_eq_true, ↓reduceIte]
+        simp [List.count_cons]
         omega
       · cases h
 
@@ -146,7 +146,9 @@ theorem valid_program_odd_length (p : List Bool) (hp : IsValidProgram p) :
     induction p with
     | nil => rfl
     | cons b rest ih =>
-      cases b <;> simp [List.count_cons, ih] <;> omega
+      cases b
+      · simp [List.count_cons, ih]; omega
+      · simp [List.count_cons, ih]; omega
   constructor <;> omega
 
 end Eml.Binary

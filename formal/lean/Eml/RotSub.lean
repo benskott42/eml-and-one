@@ -22,7 +22,6 @@ class RotSubModel (α : Type) where
   div : α → α → α
   sub_self_add : ∀ a b k, sub (add (sub a b) k) k = sub a b
   mul_sub_distrib : ∀ c x y, sub (mul c x) (mul c y) = mul c (sub x y)
-  mul_div_cancel_left : ∀ c x, c ≠ c → True
   div_mul_cancel : ∀ c x, div (mul c x) c = x
   add_zero_left : ∀ k, add (sub k k) k = k
 
