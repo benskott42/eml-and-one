@@ -24,11 +24,8 @@ section Operations
 
 variable {α : Type} [A : EmlArithModel α]
 
-/-- `emlNeg x = 0 − x = −x` via `eml(ln(0))` is extended; on the finite domain
-    we build `−x = ln(exp(−x))` or directly `eml(ln(1), exp(x))`? Wait:
-    `eml(ln(1), exp(x)) = exp(0) − x = 1 − x`, and `eml(cZero, exp(x)) = 1 − x`.
-    Using `rawSub a b = eml(ln a, exp b) = a − b`, `a + b` is `rawSub a (neg b)`
-    and `a * b = exp(ln a + ln b)` and `a / b = exp(ln a − ln b)`! -/
+/- `emlMul`, `emlDiv`, `emlInv`, and `emlAdd` constructed from `eml` and `1`
+   under explicit `nonzero` and `inStrip` hypotheses. -/
 
 /-- `emlMul a b = exp(ln a + ln b) = a * b` for `a ≠ 0, b ≠ 0`. -/
 def emlMul (a b : α) : α :=
