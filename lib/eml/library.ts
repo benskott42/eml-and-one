@@ -200,6 +200,11 @@ export function tLn(t: Node): Node {
   if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
+  const argErr = maxSeriesErrorExp(t);
+  if (argErr !== undefined) {
+    const expT = magnitudeExp(t);
+    if (expT === null || expT <= argErr + 12) return markUnverified(node);
+  }
   noteBuiltFrom(node, { lnArg: t });
   if (!isUnverified(t) && !isExactUnsure(t)) {
     const expArg = factsOf(t).builtFrom?.expArg;
@@ -872,6 +877,14 @@ export function tPow(a: Node, b: Node): Node {
     if (exp !== null) return unitPower(Number((exp * BigInt(unit)) % BigInt(4)));
   }
   const node = applyProgram("pow", { x: a, y: b });
+  const errB = maxSeriesErrorExp(b);
+  if (errB !== undefined && errB >= -14) return markUnverified(node);
+  const errA = maxSeriesErrorExp(a);
+  if (errA !== undefined) {
+    const expA = magnitudeExp(a);
+    const expB = magnitudeExp(b);
+    if (expA !== null && expB !== null && errA + expB - expA >= -14) return markUnverified(node);
+  }
   const ia = provenInteger(a);
   const ib = provenInteger(b);
   if (ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(10000)) {
@@ -1341,7 +1354,11 @@ export function tArcsin(t: Node): Node {
   const known = knownValue(t);
   // Below about 10^(−60) the x³/6 term is not kept beside x: not certified.
   const tiny = known ? Math.hypot(known.re, known.im) : Number.NaN;
-  if (tiny > 0 && tiny < 1e-60) return markSeries(t, SMALL_NOTE);
+  if (tiny > 0 && tiny < 1e-60) {
+    const out = markSeries(t, SMALL_NOTE);
+    markSeriesError(out, Math.ceil(3 * Math.log10(tiny)));
+    return out;
+  }
   if (known && (known.im === 0 || Object.is(known.im, -0)) && (known.re === 1 || known.re === -1)) {
     const half = tHalfOf(tPi());
     return recognized(known.re < 0 ? tNeg(half) : half);
