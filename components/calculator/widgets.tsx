@@ -1,7 +1,8 @@
 // Small pieces of the calculator screen that keep their own state.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { binaryProgramInfo, binaryTreeMetrics, rpnToBinary } from "@/lib/eml/binary";
-import type { GolfHit } from "@/lib/eml/golf";
+import { formatC } from "@/lib/eml/format";
+import type { GolfHit, NearestHit } from "@/lib/eml/golf";
 import { ln0Dependence } from "@/lib/eml/golf-label";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
@@ -185,8 +186,42 @@ export function KeyButton({
   );
 }
 
-export function GolfPanel() {
-  const [line, setLine] = useState("Search constants up to K 21. The slow script runs through K 35.");
+function parseTargetInput(raw: string): { re: number; im: number } | null {
+  const s = raw.trim().replace(/\s+/g, "").replace(/−/g, "-").toLowerCase();
+  if (!s) return null;
+  if (s === "pi" || s === "π") return { re: Math.PI, im: 0 };
+  if (s === "-pi" || s === "-π") return { re: -Math.PI, im: 0 };
+  if (s === "e") return { re: Math.E, im: 0 };
+  if (s === "phi" || s === "φ") return { re: (1 + Math.sqrt(5)) / 2, im: 0 };
+  if (s === "i" || s === "+i") return { re: 0, im: 1 };
+  if (s === "-i") return { re: 0, im: -1 };
+  // Pure real number
+  if (!s.includes("i")) {
+    const re = Number(s);
+    return Number.isFinite(re) ? { re, im: 0 } : null;
+  }
+  // Pure imaginary (e.g. 2.5i, -3i, 1e-2i)
+  const pureIm = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)i$/.exec(s);
+  if (pureIm) {
+    const im = Number(pureIm[1]);
+    return Number.isFinite(im) ? { re: 0, im } : null;
+  }
+  // Complex a+bi or a-bi
+  const complex = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([+-](?:(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)?)i$/.exec(s);
+  if (complex) {
+    const re = Number(complex[1]);
+    const imPart = complex[2];
+    const im = imPart === "+" ? 1 : imPart === "-" ? -1 : Number(imPart);
+    return Number.isFinite(re) && Number.isFinite(im) ? { re, im } : null;
+  }
+  return null;
+}
+
+export function GolfPanel({ onLoadProgram }: { onLoadProgram?: (program: string) => void } = {}) {
+  const [line, setLine] = useState("Search constants up to K 21, or find the closest short circuit to any target number.");
+  const [hits, setHits] = useState<GolfHit[]>([]);
+  const [nearest, setNearest] = useState<NearestHit[]>([]);
+  const [targetText, setTargetText] = useState("1.6180339887");
   const [busy, setBusy] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const requestRef = useRef(0);
@@ -205,7 +240,7 @@ export function GolfPanel() {
     if (cancelled) setLine("Search cancelled.");
   }
 
-  function start(allowLn0: boolean) {
+  function launchWorker(payload: Record<string, unknown>, initialMessage: string) {
     stop(false);
     if (typeof Worker === "undefined") {
       setLine("Web Workers are not available in this browser.");
@@ -221,8 +256,20 @@ export function GolfPanel() {
     }
     workerRef.current = worker;
     setBusy(true);
-    setLine("Searching…");
-    worker.onmessage = (event: MessageEvent<{ type: string; request?: number; k?: number; pool?: number; hits?: GolfHit[]; message?: string }>) => {
+    setHits([]);
+    setNearest([]);
+    setLine(initialMessage);
+    worker.onmessage = (
+      event: MessageEvent<{
+        type: string;
+        request?: number;
+        k?: number;
+        pool?: number;
+        hits?: GolfHit[];
+        nearest?: NearestHit[];
+        message?: string;
+      }>,
+    ) => {
       const data = event.data;
       if (data.request !== request) return;
       if (data.type === "progress") setLine(`K ${data.k} · ${data.pool} new circuits`);
@@ -233,7 +280,9 @@ export function GolfPanel() {
         if (workerRef.current === worker) workerRef.current = null;
       }
       if (data.type === "done") {
-        const text = (data.hits ?? [])
+        const list = data.hits ?? [];
+        setHits(list);
+        const text = list
           .map((hit) => {
             const dependence = ln0Dependence(hit);
             const hex = /^[1E]+$/.test(hit.rpn) ? binaryProgramInfo(rpnToBinary(hit.rpn))?.hex : null;
@@ -241,6 +290,14 @@ export function GolfPanel() {
           })
           .join(" · ");
         setLine(text || "No constants in range.");
+        setBusy(false);
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      }
+      if (data.type === "done-nearest") {
+        const list = data.nearest ?? [];
+        setNearest(list);
+        setLine(list.length > 0 ? `Closest circuits up to K 19 (click any hit to load):` : "No finite circuits found.");
         setBusy(false);
         worker.terminate();
         if (workerRef.current === worker) workerRef.current = null;
@@ -253,13 +310,69 @@ export function GolfPanel() {
       if (workerRef.current === worker) workerRef.current = null;
       setBusy(false);
     };
-    worker.postMessage({ maxK: 21, request, allowLn0 });
+    worker.postMessage({ ...payload, request });
+  }
+
+  function start(allowLn0: boolean) {
+    launchWorker({ mode: "constants", maxK: 21, allowLn0 }, "Searching…");
+  }
+
+  function startNearest() {
+    const parsed = parseTargetInput(targetText);
+    if (!parsed) {
+      setLine("Enter a real or complex number (e.g. 1.6180339887, pi, phi, 0.5772, 1+2i).");
+      return;
+    }
+    launchWorker(
+      { mode: "nearest", maxK: 19, targetRe: parsed.re, targetIm: parsed.im, limit: 5, allowLn0: true },
+      `Searching closest circuits to ${formatC(parsed)}…`,
+    );
   }
 
   return (
     <details className="ti-fold ti-golf">
-      <summary>Circuit golf</summary>
+      <summary>Circuit golf &amp; target finder</summary>
       <p aria-live="polite">{line}</p>
+      {hits.length > 0 && onLoadProgram ? (
+        <div className="ti-chips">
+          {hits.map((hit) => {
+            const hex = /^[1E]+$/.test(hit.rpn) ? binaryProgramInfo(rpnToBinary(hit.rpn))?.hex : null;
+            return (
+              <button
+                key={`${hit.id}-${hit.rpn}`}
+                type="button"
+                className="ti-chip"
+                onClick={() => onLoadProgram(hit.rpn)}
+                title={`Load ${hit.rpn}`}
+              >
+                {golfLabel(hit.id)} · K {hit.k}
+                {hex ? ` · ${hex}` : ""}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {nearest.length > 0 ? (
+        <ul className="ti-fold-list">
+          {nearest.map((hit) => {
+            const hex = /^[1E]+$/.test(hit.rpn) ? binaryProgramInfo(rpnToBinary(hit.rpn))?.hex : null;
+            const errLabel = hit.absError < 1e-13 ? "exact" : `err ${hit.absError.toExponential(2)}`;
+            return (
+              <li key={hit.rpn} className="ti-nearest-row">
+                <span>
+                  <strong>{formatC({ re: hit.re, im: hit.im })}</strong> · K {hit.k}
+                  {hex ? ` (${hex})` : ""} · {errLabel}
+                </span>
+                {onLoadProgram ? (
+                  <button type="button" className="ti-chip" onClick={() => onLoadProgram(hit.rpn)}>
+                    Load
+                  </button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
       <div className="ti-manual-actions">
         <button type="button" onClick={() => start(true)} disabled={busy} className="ti-text-btn ti-text-btn-strong">
           Search with ln 0
@@ -271,6 +384,30 @@ export function GolfPanel() {
           Cancel
         </button>
       </div>
+      <form
+        className="ti-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          startNearest();
+        }}
+      >
+        <label className="ti-label">
+          Find closest circuit to target (real, complex, pi, phi)
+          <input
+            value={targetText}
+            onChange={(event) => setTargetText(event.target.value)}
+            placeholder="1.6180339887, 0.5772, pi, 1+2i"
+            className="ti-field"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+        <div className="ti-manual-actions">
+          <button type="submit" disabled={busy} className="ti-text-btn ti-text-btn-strong">
+            Find closest (K ≤ 19)
+          </button>
+        </div>
+      </form>
     </details>
   );
 }

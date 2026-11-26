@@ -36,6 +36,15 @@ export type GolfHit = {
   branch: "lower-bank" | "either";
   domain: "C" | "extended";
 };
+export type NearestHit = {
+  k: number;
+  rpn: string;
+  re: number;
+  im: number;
+  absError: number;
+  relError: number;
+  usesLn0: boolean;
+};
 export type SearchProgress = { k: number; pool: number };
 
 type Target = { id: string; re: number; im: number };
@@ -423,6 +432,173 @@ export { ln0Dependence } from "./golf-label";
 
 export function searchConstantsMerged(maxK: number, workers: number): GolfHit[] {
   return searchConstants(maxK, { workers, partition: workers > 1 }).hits;
+}
+
+/**
+ * Find the shortest/closest finite 1-and-EML circuits to an arbitrary complex
+ * target `targetRe + i*targetIm` up to length `maxK`.
+ * Inspired by symbolic-regression / constant-finder tools in the EML ecosystem.
+ */
+export function searchNearestConstant(
+  targetRe: number,
+  targetIm: number,
+  maxK: number,
+  options: {
+    allowLn0?: boolean;
+    limit?: number;
+    shouldStop?: () => boolean;
+    onProgress?: (progress: SearchProgress) => void;
+  } = {},
+): { hits: NearestHit[]; pool: number } {
+  const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 5)));
+  const maxGates = (maxK - 1) >> 1;
+  const targetMag = Math.hypot(targetRe, targetIm);
+  let cap = 4096;
+  let left = new Int32Array(cap);
+  let right = new Int32Array(cap);
+  let re = new Float64Array(cap);
+  let im = new Float64Array(cap);
+  let logged = new Uint8Array(cap);
+  const grow = () => {
+    cap *= 2;
+    const nextLeft = new Int32Array(cap);
+    const nextRight = new Int32Array(cap);
+    const nextRe = new Float64Array(cap);
+    const nextIm = new Float64Array(cap);
+    const nextLogged = new Uint8Array(cap);
+    nextLeft.set(left);
+    nextRight.set(right);
+    nextRe.set(re);
+    nextIm.set(im);
+    nextLogged.set(logged);
+    left = nextLeft;
+    right = nextRight;
+    re = nextRe;
+    im = nextIm;
+    logged = nextLogged;
+  };
+  left[0] = -1;
+  right[0] = -1;
+  re[0] = 1;
+  im[0] = 0;
+  logged[0] = 0;
+  let count = 1;
+  let unstored = 0;
+  const level = [0, 1];
+  const seenValues = new KeySet();
+  seenValues.add(...keyOf(1, 0));
+
+  type Candidate = NearestHit & { valKey: string };
+  const best: Candidate[] = [];
+  let worstErr = Number.POSITIVE_INFINITY;
+
+  const valKeyOf = (vr: number, vi: number): string => {
+    const [a, b, c, d] = keyOf(vr, vi);
+    return `${a}:${b}:${c}:${d}`;
+  };
+
+  const consider = (k: number, rpn: string, vr: number, vi: number, usesLn0: boolean) => {
+    if (!Number.isFinite(vr) || !Number.isFinite(vi)) return;
+    const absError = Math.hypot(vr - targetRe, vi - targetIm);
+    if (!Number.isFinite(absError)) return;
+    if (best.length >= limit && absError > worstErr) return;
+    const vk = valKeyOf(vr, vi);
+    const existing = best.findIndex((item) => item.valKey === vk);
+    const relError = targetMag > 0 ? absError / targetMag : absError;
+    if (existing >= 0) {
+      const prev = best[existing];
+      if (prev && (k < prev.k || (k === prev.k && absError < prev.absError))) {
+        best[existing] = { k, rpn, re: vr, im: vi, absError, relError, usesLn0, valKey: vk };
+      } else {
+        return;
+      }
+    } else {
+      best.push({ k, rpn, re: vr, im: vi, absError, relError, usesLn0, valKey: vk });
+    }
+    best.sort((p, q) => {
+      // Treat near-exact ties (within 1e-13) by preferring shorter K.
+      if (Math.abs(p.absError - q.absError) <= 1e-13 * Math.max(1, targetMag)) {
+        return p.k - q.k || p.absError - q.absError;
+      }
+      return p.absError - q.absError || p.k - q.k;
+    });
+    if (best.length > limit) best.length = limit;
+    worstErr = best.length >= limit ? (best[best.length - 1]?.absError ?? Number.POSITIVE_INFINITY) : Number.POSITIVE_INFINITY;
+  };
+
+  consider(1, "1", 1, 0, false);
+
+  const toHits = (): NearestHit[] =>
+    best.map((item) => ({
+      k: item.k,
+      rpn: item.rpn,
+      re: item.re,
+      im: item.im,
+      absError: item.absError,
+      relError: item.relError,
+      usesLn0: item.usesLn0,
+    }));
+
+  const touchesLn0 = (a: number, b: number) =>
+    logged[a] === 1 || logged[b] === 1 || ((re[b] ?? 0) === 0 && (im[b] ?? 0) === 0);
+
+  for (let gates = 1; gates <= maxGates; gates += 1) {
+    if (options.shouldStop?.()) break;
+    const start = count;
+    const last = gates === maxGates;
+    const k = gates * 2 + 1;
+    let pair = 0;
+    for (let i = 0; i < gates; i += 1) {
+      const j = gates - 1 - i;
+      for (let a = level[i] ?? 0; a < (level[i + 1] ?? count); a += 1) {
+        for (let b = level[j] ?? 0; b < (level[j + 1] ?? count); b += 1) {
+          if ((pair++ & 2047) === 0 && options.shouldStop?.()) {
+            level[gates + 1] = count;
+            return { hits: toHits(), pool: count + unstored };
+          }
+          const fromLn = touchesLn0(a, b);
+          if (options.allowLn0 === false && fromLn) continue;
+          const value = eml({ re: re[a] ?? 0, im: im[a] ?? 0 }, { re: re[b] ?? 0, im: im[b] ?? 0 });
+          if (Number.isNaN(value.re) || Number.isNaN(value.im)) continue;
+          const finite = Number.isFinite(value.re) && Number.isFinite(value.im);
+          const aFinite = Number.isFinite(re[a] ?? 0) && Number.isFinite(im[a] ?? 0);
+          const bFinite = Number.isFinite(re[b] ?? 0) && Number.isFinite(im[b] ?? 0);
+          const bZero = (re[b] ?? 0) === 0 && (im[b] ?? 0) === 0;
+          const overflow = !finite && (aFinite && bFinite && !bZero ? true : !fromLn);
+          if (overflow || expUnderflows({ re: re[a] ?? 0, im: im[a] ?? 0 })) continue;
+
+          if (finite) {
+            const absError = Math.hypot(value.re - targetRe, value.im - targetIm);
+            if (best.length < limit || absError <= worstErr) {
+              consider(k, `${rpnOf(left, right, a)}${rpnOf(left, right, b)}E`, value.re, value.im, fromLn);
+            }
+          }
+
+          if (last) {
+            unstored += 1;
+          } else {
+            // Deduplicate the intermediate pool by 10-digit value so K=19..21 runs in <1s.
+            const [w0, w1, w2, w3] = keyOf(value.re, value.im);
+            if (!seenValues.add(w0, w1, w2, w3)) continue;
+            if (count >= cap) grow();
+            logged[count] = fromLn ? 1 : 0;
+            left[count] = a;
+            right[count] = b;
+            re[count] = value.re;
+            im[count] = value.im;
+            count += 1;
+          }
+        }
+      }
+    }
+    level[gates + 1] = count;
+    options.onProgress?.({ k, pool: count + unstored - start });
+  }
+
+  return {
+    hits: toHits(),
+    pool: count + unstored,
+  };
 }
 
 export const FINGERPRINT_POINTS = [

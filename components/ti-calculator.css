@@ -570,3 +570,127 @@ html.ti-two-buttons .ti-btn-eml {
 .ti-radio .ti-btn[aria-checked="false"]:focus-visible {
   filter: saturate(0.6) brightness(0.92);
 }
+
+.ti-inspector {
+  margin-top: 8px;
+}
+
+.ti-inspector-note {
+  color: #b7c3cd;
+  font-size: 0.85rem;
+}
+
+.ti-player {
+  margin-top: 10px;
+}
+
+.ti-inspector-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #d7e0e8;
+}
+
+.ti-inspector-slider input[type="range"] {
+  width: 100%;
+  accent-color: #9bb88c;
+}
+
+.ti-inspector-stack {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #9bb88c;
+  color: #1c2419;
+  font-family: "VT323", ui-monospace, monospace;
+  font-size: 1.05rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.ti-svg-box {
+  margin: 10px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: #9bb88c;
+  color: #1c2419;
+}
+
+.ti-svg-box figcaption {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ti-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ti-svg-edge {
+  stroke: rgba(28, 36, 25, 0.28);
+  stroke-width: 1.5;
+}
+
+.ti-svg-edge.is-active {
+  stroke: #1c2419;
+  stroke-width: 2;
+}
+
+.ti-svg-node circle {
+  fill: #b4cca5;
+  stroke: rgba(28, 36, 25, 0.35);
+  stroke-width: 1.2;
+}
+
+.ti-svg-node text {
+  fill: rgba(28, 36, 25, 0.45);
+  font-family: "VT323", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.ti-svg-node.is-done circle {
+  fill: #89a77a;
+  stroke: #1c2419;
+}
+
+.ti-svg-node.is-done text {
+  fill: #1c2419;
+}
+
+.ti-svg-node.is-current circle {
+  fill: #1c2419;
+  stroke: #1c2419;
+}
+
+.ti-svg-node.is-current text {
+  fill: #c8ddb9;
+}
+
+.ti-svg-dyck {
+  fill: none;
+  stroke: #1c2419;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.ti-svg-cursor {
+  stroke: rgba(28, 36, 25, 0.45);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.ti-svg-dot {
+  fill: #1c2419;
+}
+
+.ti-nearest-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
