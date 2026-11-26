@@ -1,14 +1,14 @@
 /-
   Machine-checked Lean 4 soundness bridge between the combinatorial binary
-  representation (`Eml.Binary`) and the algebraic EML semantics (`Eml.Basic`).
+  representation (`Eml.Binary`) and the concrete complex EML semantics (`Eml.Basic`).
 
-  Key theorems (zero `sorry`):
-  - `evalRpn_runDepth_iff`: `runDepth xs st.length = some r` iff `evalRpn`
+  Key theorems (zero `sorry`, zero custom axioms):
+  - `evalRpn_some_of_runDepth`: `runDepth xs st.length = some r` implies `evalRpn`
     succeeds with a stack of length `r`.
   - `valid_program_evals_singleton`: every valid binary EML program
     (`IsValidProgram p`) never underflows and evaluates to a singleton `[v]`.
-  - Concrete end-to-end RPN stack proofs for `0x1` (`1`), `0x6` (`e`),
-    `0x74` (`0`), and the `0xc` nibble (`p ++ 0xc ↦ exp(v) − 1`).
+  - Concrete end-to-end RPN stack proofs over `ℂ` (`evalRpn (1 : ℂ) eml`) for
+    `0x1` (`1`), `0x6` (`e`), `0x74` (`0`), and the `0xc` nibble (`p ++ 0xc ↦ exp(v) − 1`).
 -/
 import Eml.Basic
 import Eml.Binary
@@ -64,36 +64,34 @@ theorem valid_program_evals_singleton {α : Type} (one : α) (op : α → α →
   | [] => simp at hlen
   | _ :: _ :: _ => simp at hlen
 
-section ConcretePrograms
+section ConcreteComplexPrograms
 
-variable {α : Type} [M : EmlModel α]
-
-/-- Binary `0x1` (`1₂`) evaluates on the RPN stack to `1`. -/
+/-- Binary `0x1` (`1₂`) evaluates on the RPN stack over `ℂ` to `1`. -/
 theorem evalRpn_0x1 :
-    evalRpn M.one (eml (α := α)) [true] [] = some [M.one] := rfl
+    evalRpn (1 : ℂ) eml [true] [] = some [1] := rfl
 
-/-- Binary `0x6` (`110₂`) evaluates on the RPN stack to `e = exp(1)`. -/
+/-- Binary `0x6` (`110₂`) evaluates on the RPN stack over `ℂ` to `e = exp 1`. -/
 theorem evalRpn_0x6 :
-    evalRpn M.one (eml (α := α)) [true, true, false] [] = some [M.exp M.one] := by
-  change some [cE (α := α)] = some [M.exp M.one]
+    evalRpn (1 : ℂ) eml [true, true, false] [] = some [Complex.exp 1] := by
+  change some [cE] = some [Complex.exp 1]
   rw [cE_eq_exp_one]
 
-/-- Binary `0x74` (`1110100₂`) evaluates on the RPN stack to `0`. -/
+/-- Binary `0x74` (`1110100₂`) evaluates on the RPN stack over `ℂ` to `0`. -/
 theorem evalRpn_0x74 :
-    evalRpn M.one (eml (α := α)) [true, true, true, false, true, false, false] [] = some [M.zero] := by
-  change some [cZero (α := α)] = some [M.zero]
+    evalRpn (1 : ℂ) eml [true, true, true, false, true, false, false] [] = some [0] := by
+  change some [cZero] = some [0]
   rw [cZero_eq_zero]
 
-/-- End-to-end `0xc` nibble theorem: if binary program `p` evaluates on the
-    RPN stack to `[v]`, then `p ++ 0xc` (`1100₂`) evaluates to `[exp(v) − 1]`. -/
-theorem evalRpn_append_0xc_value (p : List Bool) (v : α)
-    (hp : evalRpn M.one (eml (α := α)) p [] = some [v]) :
-    evalRpn M.one (eml (α := α)) (p ++ [true, true, false, false]) [] =
-      some [M.sub (M.exp v) M.one] := by
-  rw [evalRpn_append_0xc M.one (eml (α := α)) p v hp]
-  change some [append0xc v] = some [M.sub (M.exp v) M.one]
+/-- End-to-end `0xc` nibble theorem over `ℂ`: if binary program `p` evaluates on
+    the RPN stack to `[v]`, then `p ++ 0xc` (`1100₂`) evaluates to `[exp v − 1]`. -/
+theorem evalRpn_append_0xc_value (p : List Bool) (v : ℂ)
+    (hp : evalRpn (1 : ℂ) eml p [] = some [v]) :
+    evalRpn (1 : ℂ) eml (p ++ [true, true, false, false]) [] =
+      some [Complex.exp v - 1] := by
+  rw [evalRpn_append_0xc (1 : ℂ) eml p v hp]
+  change some [append0xc v] = some [Complex.exp v - 1]
   rw [append0xc_eq]
 
-end ConcretePrograms
+end ConcreteComplexPrograms
 
 end Eml.RpnSoundness

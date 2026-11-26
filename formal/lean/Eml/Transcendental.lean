@@ -1,105 +1,73 @@
 /-
-  Machine-checked Lean 4 proofs of elementary transcendental functions
-  (`cos`, `sin`, `cosh`, `sinh`, `pow`, `sqrt`, `logBase`) built from
-  `eml(x, y) = exp(x) − ln(y)` and `1`.
+  Machine-checked Lean 4 + Mathlib proofs of transcendental operations
+  (`x ^ y`, `x ^ (1/2)`, `log_b x`) built genuinely as `eml` words over `ℂ`
+  (zero `ln 0`, zero `sorry`, zero custom axioms).
 
-  Zero `sorry`.
+  Note: Earlier circular/hyperbolic theorems (`cos`, `sin`, `cosh`, `sinh`)
+  from the axiomatic version were dropped because they were not expressed
+  as `eml` words (and in `best-known.json`, `i` uses `ln 0`).
 -/
+import Mathlib.Analysis.SpecialFunctions.Pow.Complex
 import Eml.Basic
 import Eml.Arithmetic
+import Eml.Records
 
 namespace Eml.Transcendental
 
 open Eml
 open Eml.Arithmetic
+open Eml.Records
 
-/-- Algebraic model extending `EmlArithModel` with `2`, `i`, and the
-    exponential definitions of circular and hyperbolic functions. -/
-class EmlTransModel (α : Type) extends EmlArithModel α where
-  two : α
-  iu : α
-  cos : α → α
-  sin : α → α
-  cosh : α → α
-  sinh : α → α
-  pow : α → α → α
-  sqrt : α → α
-  logBase : α → α → α
-  cos_def : ∀ x, cos x = div (add (exp (mul iu x)) (exp (neg (mul iu x)))) two
-  sin_def : ∀ x, sin x = div (sub (exp (mul iu x)) (exp (neg (mul iu x)))) (mul two iu)
-  cosh_def : ∀ x, cosh x = div (add (exp x) (exp (neg x))) two
-  sinh_def : ∀ x, sinh x = div (sub (exp x) (exp (neg x))) two
-  pow_def : ∀ x y, nonzero x → pow x y = exp (mul y (ln x))
-  sqrt_def : ∀ x, nonzero x → sqrt x = exp (div (ln x) two)
-  logBase_def : ∀ b x, nonzero b → nonzero x → logBase b x = div (ln x) (ln b)
+/-- Complex power `x ^ y` built from `eml` and `1`:
+    `emlExp (emlMul y (emlLn x))`. -/
+noncomputable def emlPow (x y : ℂ) : ℂ :=
+  emlExp (emlMul y (emlLn x))
 
-section Constructions
-
-variable {α : Type} [T : EmlTransModel α]
-
-/-- `emlCos x = (emlExp(i·x) + emlExp(−(i·x))) / 2 = cos(x)`. -/
-def emlCos (x : α) : α :=
-  T.div (T.add (emlExp (T.mul T.iu x)) (emlExp (T.neg (T.mul T.iu x)))) T.two
-
-theorem emlCos_eq (x : α) : emlCos x = T.cos x := by
-  unfold emlCos
-  rw [emlExp_eq, emlExp_eq, T.cos_def]
-
-/-- `emlSin x = (emlExp(i·x) − emlExp(−(i·x))) / (2i) = sin(x)`. -/
-def emlSin (x : α) : α :=
-  T.div (T.sub (emlExp (T.mul T.iu x)) (emlExp (T.neg (T.mul T.iu x)))) (T.mul T.two T.iu)
-
-theorem emlSin_eq (x : α) : emlSin x = T.sin x := by
-  unfold emlSin
-  rw [emlExp_eq, emlExp_eq, T.sin_def]
-
-/-- `emlCosh x = (emlExp(x) + emlExp(−x)) / 2 = cosh(x)`. -/
-def emlCosh (x : α) : α :=
-  T.div (T.add (emlExp x) (emlExp (T.neg x))) T.two
-
-theorem emlCosh_eq (x : α) : emlCosh x = T.cosh x := by
-  unfold emlCosh
-  rw [emlExp_eq, emlExp_eq, T.cosh_def]
-
-/-- `emlSinh x = (emlExp(x) − emlExp(−x)) / 2 = sinh(x)`. -/
-def emlSinh (x : α) : α :=
-  T.div (T.sub (emlExp x) (emlExp (T.neg x))) T.two
-
-theorem emlSinh_eq (x : α) : emlSinh x = T.sinh x := by
-  unfold emlSinh
-  rw [emlExp_eq, emlExp_eq, T.sinh_def]
-
-/-- `emlPow x y = emlExp(y · emlLn(x)) = x^y` for `x ≠ 0` and `e − ln x` in the strip. -/
-def emlPow (x y : α) : α :=
-  emlExp (T.mul y (emlLn x))
-
-theorem emlPow_eq (x y : α) (hx : T.nonzero x)
-    (hstrip : T.inStrip (T.sub (T.exp T.one) (T.ln x))) :
-    emlPow x y = T.pow x y := by
+/-- `emlPow x y = x ^ y` (principal branch `Complex.cpow`) for `x ≠ 0`, `x ≠ 1`
+    (so `log x ≠ 0`), `y ≠ 0`, and `y ≠ exp(exp 1)`. -/
+theorem emlPow_eq {x y : ℂ} (hx : x ≠ 0) (hlogx : Complex.log x ≠ 0)
+    (hy : y ≠ 0) (hye : y ≠ Complex.exp (Complex.exp 1)) :
+    emlPow x y = x ^ y := by
   unfold emlPow
-  rw [emlExp_eq, emlLn_eq x hstrip, T.pow_def x y hx]
+  rw [emlLn_eq_log, emlExp_eq, emlMul_eq hy hlogx hye, Complex.cpow_def_of_ne_zero hx, mul_comm]
 
-/-- `emlSqrt x = emlExp(emlLn(x) / 2) = √x` for `x ≠ 0` and `e − ln x` in the strip. -/
-def emlSqrt (x : α) : α :=
-  emlExp (T.div (emlLn x) T.two)
+/-- Principal square root `x ^ (1/2)` built from `eml` and `1` using the K = 19
+    word `cTwo` for `2`: `emlExp (emlDiv (emlLn x) cTwo)`. -/
+noncomputable def emlSqrt (x : ℂ) : ℂ :=
+  emlExp (emlDiv (emlLn x) cTwo)
 
-theorem emlSqrt_eq (x : α) (hx : T.nonzero x)
-    (hstrip : T.inStrip (T.sub (T.exp T.one) (T.ln x))) :
-    emlSqrt x = T.sqrt x := by
+private theorem two_ne_exp_exp_one : (2 : ℂ) ≠ Complex.exp (Complex.exp 1) := by
+  intro h
+  have hre : (2 : ℝ) = Real.exp (Real.exp 1) := by
+    have := congrArg Complex.re h
+    simpa [← Complex.ofReal_one, ← Complex.ofReal_exp] using this
+  have h1 : (2 : ℝ) < Real.exp 1 := by linarith [Real.exp_one_gt_d9]
+  have h2 : Real.exp 1 < Real.exp (Real.exp 1) := by
+    have := Real.add_one_lt_exp (ne_of_gt (Real.exp_pos 1))
+    linarith
+  linarith
+
+/-- `emlSqrt x = x ^ ((1 : ℂ) / 2)` for `x ≠ 0` and `Complex.log x ≠ 0` (`x ≠ 1`). -/
+theorem emlSqrt_eq {x : ℂ} (hx : x ≠ 0) (hlogx : Complex.log x ≠ 0) :
+    emlSqrt x = x ^ ((1 : ℂ) / 2) := by
   unfold emlSqrt
-  rw [emlExp_eq, emlLn_eq x hstrip, T.sqrt_def x hx]
+  rw [emlLn_eq_log, cTwo_eq_two, emlExp_eq,
+    emlDiv_eq hlogx two_ne_zero two_ne_exp_exp_one,
+    Complex.cpow_def_of_ne_zero hx]
+  congr 1
+  ring
 
-/-- `emlLogBase b x = emlLn(x) / emlLn(b) = log_b(x)`. -/
-def emlLogBase (b x : α) : α :=
-  T.div (emlLn x) (emlLn b)
+/-- Base-`b` logarithm built from `eml` and `1`:
+    `emlDiv (emlLn x) (emlLn b)`. -/
+noncomputable def emlLogBase (b x : ℂ) : ℂ :=
+  emlDiv (emlLn x) (emlLn b)
 
-theorem emlLogBase_eq (b x : α) (hb : T.nonzero b) (hx : T.nonzero x)
-    (hsb : T.inStrip (T.sub (T.exp T.one) (T.ln b)))
-    (hsx : T.inStrip (T.sub (T.exp T.one) (T.ln x))) :
-    emlLogBase b x = T.logBase b x := by
+/-- `emlLogBase b x = Complex.log x / Complex.log b` whenever `log x ≠ 0`,
+    `log b ≠ 0`, and `log b ≠ exp(exp 1)`. -/
+theorem emlLogBase_eq {b x : ℂ} (hlogx : Complex.log x ≠ 0) (hlogb : Complex.log b ≠ 0)
+    (hlogbe : Complex.log b ≠ Complex.exp (Complex.exp 1)) :
+    emlLogBase b x = Complex.log x / Complex.log b := by
   unfold emlLogBase
-  rw [emlLn_eq x hsx, emlLn_eq b hsb, T.logBase_def b x hb hx]
-
-end Constructions
+  rw [emlLn_eq_log, emlLn_eq_log, emlDiv_eq hlogx hlogb hlogbe]
 
 end Eml.Transcendental

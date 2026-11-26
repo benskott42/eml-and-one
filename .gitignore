@@ -7,3 +7,7 @@ next-env.d.ts
 # Rust search tool output
 tools/emlsearch/target
 __pycache__/
+
+# Lean 4 / Lake build artifacts
+.lake/
+formal/lean/.lake/

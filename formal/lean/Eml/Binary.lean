@@ -127,14 +127,14 @@ theorem runDepth_balance (xs : List Bool) (d r : Nat) :
     | true =>
       simp only [runDepth] at h
       have hrec := ih (d + 1) h
-      simp [List.count_cons]
+      simp
       omega
     | false =>
       simp only [runDepth] at h
       split at h
       · rename_i hge
         have hrec := ih (d - 1) h
-        simp [List.count_cons]
+        simp
         omega
       · cases h
 
@@ -143,7 +143,7 @@ theorem list_bool_length_eq_count (xs : List Bool) :
   induction xs with
   | nil => rfl
   | cons b rest ih =>
-    cases b <;> simp [List.count_cons, ih] <;> omega
+    cases b <;> simp [ih] <;> omega
 
 /-- Every valid EML program has `ones = zeros + 1` and odd length `2 * zeros + 1`. -/
 theorem valid_program_odd_length (p : List Bool) (hp : IsValidProgram p) :
