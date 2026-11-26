@@ -3,6 +3,7 @@ import { dyckProfile } from "@/lib/eml/binary";
 import { layoutBinaryTree, nodeToEmlExpr, nodeToLatex, nodeToLean4, traceRpnSteps } from "@/lib/eml/export";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
+import { deriveProof } from "@/lib/eml/proof";
 import { Fold } from "./widgets";
 
 const MAX_TRACE_K = 201;
@@ -54,6 +55,8 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
       lean: nodeToLean4(node),
     };
   }, [node]);
+
+  const proof = useMemo(() => (node ? deriveProof(node, 24) : null), [node]);
 
   const maxStep = trace ? trace.length - 1 : 0;
   const [step, setStep] = useState(maxStep);
@@ -144,6 +147,23 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
       ) : (
         <p className="ti-inspector-note">Formula export is available for circuits up to 120 expanded nodes.</p>
       )}
+
+      {proof && proof.steps.length > 0 ? (
+        <div className="ti-proof">
+          <p className="ti-inspector-note">
+            <strong>Deductive proof</strong> → {proof.resultText}
+            {proof.usesLn0 ? " · uses ln 0 = −∞" : ""}
+            {proof.usesLowerCut ? " · lower cut" : ""}
+          </p>
+          <ol className="ti-fold-list ti-proof-list">
+            {proof.steps.map((s) => (
+              <li key={s.index}>
+                <code>{s.statement}</code> <span className="ti-proof-rule">({s.rule})</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
 
       {trace && current ? (
         <>

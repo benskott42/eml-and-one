@@ -21,6 +21,11 @@ const ONE_U = new DU(1);
 const ONE_D = new DD(1);
 const EPS_U = new DU(10).pow(1 - PRECISION);
 const DU_BUMP = new DU("1.000000000000000001");
+const NEG_PI = D.acos(-1).neg();
+
+if (DU.rounding !== Decimal.ROUND_UP || DD.rounding !== Decimal.ROUND_DOWN) {
+  throw new Error("Ball arithmetic requires directed rounding (ROUND_UP / ROUND_DOWN).");
+}
 
 function up(x: Decimal): Decimal {
   return new DU(x.abs()).add(ZERO_U);
@@ -126,8 +131,7 @@ function cln(z: Ball): Ball {
   const mag2 = z.re.mul(z.re).add(z.im.mul(z.im));
   if (!mag2.isFinite() || mag2.lte(0)) return bad();
   const re = mag2.ln().div(2);
-  const negPi = D.acos(-1).neg();
-  const im = z.im.isZero() && z.re.isNeg() ? negPi : D.atan2(z.im, z.re);
+  const im = z.im.isZero() && z.re.isNeg() ? NEG_PI : D.atan2(z.im, z.re);
   const lip = rho.div(d);
   const rr = lip.add(EPS_U.mul(ONE_U.add(up(re).mul(2))));
   const ir = lip.add(EPS_U.mul(2));

@@ -92,6 +92,7 @@ function lnReducedL(x: Decimal, L: Decimal.Constructor, epsL: Decimal): Decimal 
     k += 1;
   }
   const u = r.sub(1).div(r.plus(1));
+  if (!u.isFinite() || u.abs().gte("0.5")) throw new BallFail("ln-unconverged");
   const u2 = u.mul(u);
   let term = u;
   let sum = u;
@@ -99,6 +100,7 @@ function lnReducedL(x: Decimal, L: Decimal.Constructor, epsL: Decimal): Decimal 
     term = term.mul(u2);
     sum = sum.plus(term.div(n));
   }
+  if (term.abs().gt(epsL)) throw new BallFail("ln-unconverged");
   return sum.mul(2 * (1 << k));
 }
 
@@ -135,7 +137,10 @@ function atan2FastCore(y: Decimal, x: Decimal, ctx: PrecCtx): Decimal | null {
   const seed = Math.atan2(ys, xs);
   const th = new L(seed);
   const { c, s } = cosSinL(th, ctx);
-  const t = Y.mul(c).sub(X.mul(s)).div(X.mul(c).plus(Y.mul(s)));
+  const denom = X.mul(c).plus(Y.mul(s));
+  // Require strict positivity of X*cos(th) + Y*sin(th) so th lies in the same half-plane as (X, Y).
+  if (!denom.isFinite() || denom.lte(0)) return null;
+  const t = Y.mul(c).sub(X.mul(s)).div(denom);
   if (!t.isFinite() || t.abs().gt("1e-8")) return null;
   const t2 = t.mul(t);
   let term = t;
@@ -172,6 +177,7 @@ function cosSinSmallL(r: Decimal, L: Decimal.Constructor, epsL: Decimal): { c: D
     c = c.plus(cTerm);
     s = s.plus(sTerm);
   }
+  if (cTerm.abs().gt(epsL) || sTerm.abs().gt(epsL)) throw new BallFail("trig-unconverged");
   for (let j = 0; j < halves; j += 1) {
     const c2 = c.mul(c).sub(s.mul(s));
     const s2 = c.mul(s).mul(2);
@@ -337,7 +343,7 @@ export function ballEnclose(
   const subComp = (a: Comp, b: Comp): Comp => {
     if (isInf(a) || isInf(b)) {
       if (isInf(a) && isInf(b)) {
-        if (a.v.isNeg() === b.v.isNeg()) fail();
+        if (a.v.isNeg() === b.v.isNeg()) fail("indeterminate");
         return a;
       }
       return isInf(a) ? a : infinite(!b.v.isNeg());
@@ -409,7 +415,7 @@ export function ballEnclose(
   };
 
   const expBalls = (x: Ball): Ball[] => {
-    if (x.re.v.isNaN() || x.im.v.isNaN() || !x.im.v.isFinite()) fail();
+    if (x.re.v.isNaN() || x.im.v.isNaN() || !x.im.v.isFinite()) fail("indeterminate");
     if (x.key !== undefined) {
       // exp(ln(Y)) is Y.
       const y = lnArg.get(x.key);
@@ -477,7 +483,7 @@ export function ballEnclose(
     if (!x.re.r.isFinite() || !x.im.r.isFinite()) fail();
     if (zeroVector(x)) return [{ re: { v: ctx.oneB, r: zeroU, exact: true, key: ONE_KEY }, im: signedZero(x.im.v.isNeg()), key }];
     const m = x.re.v.exp();
-    if (!m.isFinite() || m.isZero()) fail();
+    if (!m.isFinite() || m.isZero()) fail("overflow");
     const mUp = up(m).mul(oneU.add(epsU.mul(2)));
     const d = x.re.r.add(trig ? zeroU : x.im.r);
     // |e^(z+δ) − e^z| ≤ e^Re z · (e^|δ| − 1).

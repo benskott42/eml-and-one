@@ -694,3 +694,21 @@ html.ti-two-buttons .ti-btn-eml {
   justify-content: space-between;
   gap: 8px;
 }
+
+.ti-proof {
+  margin-top: 10px;
+}
+
+.ti-proof-list {
+  font-size: 0.83rem;
+}
+
+.ti-proof-list code {
+  color: #f7f4ee;
+  font-family: "VT323", ui-monospace, monospace;
+  font-size: 1rem;
+}
+
+.ti-proof-rule {
+  color: #aebbc6;
+}
