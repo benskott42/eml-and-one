@@ -36,6 +36,7 @@ import { type CalcAction, type CalcState, INITIAL_CALC_STATE, calcReducer } from
 import { readTwoButtons, subscribeTwoButtons, writeTwoButtons } from "@/components/calculator/twoButtons";
 import { useExactJobs } from "@/components/calculator/useExactJobs";
 import { CircuitInspector } from "@/components/calculator/CircuitInspector";
+import { ComplexMap } from "@/components/calculator/ComplexMap";
 import { CopyNumber, Fold, GolfPanel, KeyButton, PressLine } from "@/components/calculator/widgets";
 import { compileSubmission, nextTurn } from "@/components/submitTurn";
 
@@ -1048,6 +1049,7 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
           are programs written only in those two.
         </p>
         <CircuitInspector node={top?.node ?? null} />
+        {twoButtons ? null : <ComplexMap onLoadProgram={loadProgramText} />}
         {twoButtons ? null : <GolfPanel onLoadProgram={loadProgramText} />}
 
         <Fold summary="Branch, subtraction, and infinity">

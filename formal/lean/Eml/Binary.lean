@@ -152,4 +152,38 @@ theorem valid_program_odd_length (p : List Bool) (hp : IsValidProgram p) :
   have hlen : p.length = p.count true + p.count false := list_bool_length_eq_count p
   constructor <;> omega
 
+/-- Formal RPN stack evaluator parameterized by any binary operator `op` and constant `one`. -/
+def evalRpn {α : Type} (one : α) (op : α → α → α) : List Bool → List α → Option (List α)
+  | [], st => some st
+  | true :: rest, st => evalRpn one op rest (one :: st)
+  | false :: rest, y :: x :: st => evalRpn one op rest (op x y :: st)
+  | false :: _, _ => none
+
+theorem evalRpn_append {α : Type} (one : α) (op : α → α → α) (xs ys : List Bool) (st : List α) :
+    evalRpn one op (xs ++ ys) st =
+      match evalRpn one op xs st with
+      | some st' => evalRpn one op ys st'
+      | none => none := by
+  induction xs generalizing st with
+  | nil => rfl
+  | cons b rest ih =>
+    cases b with
+    | true => exact ih (one :: st)
+    | false =>
+      cases st with
+      | nil => rfl
+      | cons y st1 =>
+        cases st1 with
+        | nil => rfl
+        | cons x st2 => exact ih (op x y :: st2)
+
+/-- Semantics bridge for the `0xc` nibble (`1100₂ = [true, true, false, false]`):
+    if program `p` evaluates to value `v` on the stack, then `p ++ 0xc`
+    evaluates to `op v (op one one)` (= `eml v (eml 1 1) = exp(v) - 1`). -/
+theorem evalRpn_append_0xc {α : Type} (one : α) (op : α → α → α)
+    (p : List Bool) (v : α) (hp : evalRpn one op p [] = some [v]) :
+    evalRpn one op (p ++ [true, true, false, false]) [] = some [op v (op one one)] := by
+  rw [evalRpn_append, hp]
+  rfl
+
 end Eml.Binary

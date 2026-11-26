@@ -712,3 +712,29 @@ html.ti-two-buttons .ti-btn-eml {
 .ti-proof-rule {
   color: #aebbc6;
 }
+
+.ti-chip-active {
+  background: #1d4e89;
+  box-shadow: 0 3px 0 #0c2744, inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.ti-svg-axis {
+  fill: rgba(28, 36, 25, 0.6);
+  font-family: "VT323", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.ti-svg-plot-pt {
+  cursor: pointer;
+  opacity: 0.78;
+}
+
+.ti-svg-plot-pt:hover {
+  opacity: 1;
+}
+
+.ti-svg-dot.is-selected {
+  fill: #1c2419;
+  stroke: #c8ddb9;
+  stroke-width: 1.5;
+}
