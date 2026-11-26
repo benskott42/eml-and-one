@@ -199,10 +199,10 @@ const checks: CheckModule[] = [
         ["hypot(2e-160,1)", "1"],
         ["(1+1e-200)^1e200", "2.718281828459"],
         ["(atan(1e-7)-1e-7)+1e-100", "−3.333333333333×10^−22"],
+        ["hypot(1e160,-1)", "1×10^160"],
       ];
       // Still refused: a term absorbed into a huge value and cancelled with it, a part
-      // past the cap, a collapsed logarithm, a series zero, and hypot(1e160,-1) whose
-      // circuit passes through a 0 that only the gates' snap makes exact (known-limitations).
+      // past the cap, a collapsed logarithm, and a series zero.
       const refused = [
         "((1+10^(-500))-1)+i/2",
         "(exp(1200)+1)-exp(1200)",
@@ -211,7 +211,6 @@ const checks: CheckModule[] = [
         "ln(1+exp(-1000))",
         "ln(1-exp(-1000))",
         "pi+sqrt(exp(800))-sqrt(exp(800))-pi",
-        "hypot(1e160,-1)",
         "(1+1e-450)^1e450",
         "sinh(1e-7)-1e-7",
       ];

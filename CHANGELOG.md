@@ -2,15 +2,12 @@
 
 ## Unreleased
 
-- Fixed `tanh(i·π/2)` certifying `−∞` instead of `undefined` (near a pole), fixed `sinh(i·kπ)` returning unverified instead of `0`, and added exact rational `log(base, value)` tracking in `tLogBase` (`log(2, 8) − 3 = 0`, `log(10, 1000) − 3 = 0`, `log(1/2, 4) + 2 = 0`, `log(4, 8) − 3/2 = 0`, `log(8, 2) = 1/3`).
-- Added `dyckProfile` and `binaryToFormula` to `lib/eml/binary.ts`, plus `max stack` metadata and a `Copy hex` button in `PressLine`.
+## 1.0.7 — 2026-11-25
 
-- Fixed positive powers of `−0` (`(−0)^2 = 0`, `(−0)^3 = −0`, `(−0)^(1/2) = 0`) instead of returning unverified when `exp(b·ln(−0))` dropped its angle, and fixed malformed `0x`/`0b` prefixes in `parseProgramInput` falling through to variable `x`.
-- Added Binary ↔ Catalan rank bijection (`binaryToRank` / `rankToBinary`) and structural metrics (`binaryTreeMetrics`) in `lib/eml/binary.ts`.
-
-- Deepened the binary program representation (`lib/eml/binary.ts`): `PressLine` now shows the binary integer value (`0x74 (116)` for `0`, `0x6 (6)` for `e`, `0x7d0c (32012)` for `−1`, etc.), `parseProgramInput` accepts `0x...` hex and `0b...` binary inputs (with Cycle Lemma rotation), and `isValidBinaryProgram` / `nextBinaryProgram` / `cycleOrbit` expose the Catalan Dyck-prefix binary sequence (`1, 6, 26, 28, 106, 108, 114, 116, 120, ...`).
-- The calculator LCD note now displays the exact reduced fraction (`= 1/3`, `= −2/3`, `= 4/9`) for non-terminating exact rationals.
-- Extended `lib/eml/exact-ball.ts` with 4-axis `exp(ln(A) + i·kπ/2)` exact magnitude preservation and promoted the ball enclosure as first judge for zero-component refusal checks in `lib/eml/exact.ts`.
+- Added a complete binary program representation module (`lib/eml/binary.ts`) and reference ([docs/binary.md](docs/binary.md)): `isValidBinaryProgram`, $O(K)$ `nextBinaryProgram`, `binaryToRank` / `rankToBinary` bijection, `cycleOrbit`, `binaryTreeMetrics`, `dyckProfile`, and `binaryToFormula`. `parseProgramInput` now accepts `0x...` hex and `0b...` binary strings (with Cycle Lemma rotation), `PressLine` displays `Binary value: 0x… · max stack …` with a `Copy hex` button, and `GolfPanel` shows each record's hex encoding.
+- Extended exact rational propagation to `log(base, value)` (`base^p = value^q`), `sqrt(p²/q²)`, `hypot(a, b)`, rational powers `(p/q)^(a/b)` (`2 <= b <= 6`), `exp(ln(q))`, and `ln(exp(q))`, and added an exact reduced fraction note (`= 1/3`, `= −2/3`, `= 4/9`) to the calculator LCD for non-terminating exact rationals.
+- Fixed `tanh(i·(k + 1/2)π)` certifying `−∞` instead of `undefined` (near a pole), fixed `sinh(i·kπ)` and `sinh(i·(k + 1/2)π)` / `tanh(i·(k + 1/4)π)` recognitions, added `Facts.imagRational` so left-associated `q·i·π` angles (`3*i*pi/2`) preserve their angle fact, fixed positive powers of `−0` (`(−0)^2 = 0`, `(−0)^3 = −0`, `(−0)^(1/2) = 0`), and fixed malformed `0x`/`0b` prefixes in `parseProgramInput`.
+- Extended `lib/eml/exact-ball.ts` with 4-axis `exp(ln(A) + i·kπ/2)` exact magnitude preservation and promoted the ball enclosure as first judge for zero-component refusal checks in `lib/eml/exact.ts` (newly certifying `hypot(1e160, −1)` as `1×10^160`).
 
 ## 1.0.6 — 2026-11-25
 

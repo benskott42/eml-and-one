@@ -81,6 +81,7 @@ export type ScaleFact = {
 export type BuiltFromFact = {
   cosArg?: Node;
   expArg?: Node;
+  lnArg?: Node;
   sqrtArg?: Node;
   onePlus?: Node;
   oneMinus?: Node;
@@ -779,38 +780,73 @@ function rationalOf(op: Op, a: Node, b: Node | undefined): Rational | null {
   return normalizeRational({ n: x.n * y.d, d: x.d * y.n });
 }
 
-/** Record exact decimal/rational for a^b when a is an exact decimal/rational and b is a small integer. */
+/** Exact non-negative k-th root of a non-negative bigint, or null if not an exact k-th power. */
+export function exactNthRoot(v: bigint, k: number): bigint | null {
+  if (v < BigInt(0) || !Number.isInteger(k) || k < 1) return null;
+  if (k === 1 || v <= BigInt(1)) return v;
+  const kBig = BigInt(k);
+  const bits = v.toString(2).length;
+  let lo = BigInt(1);
+  let hi = BigInt(1) << BigInt(Math.ceil(bits / k) + 1);
+  while (lo <= hi) {
+    const mid = (lo + hi) >> BigInt(1);
+    const pow = mid ** kBig;
+    if (pow === v) return mid;
+    if (pow < v) lo = mid + BigInt(1);
+    else hi = mid - BigInt(1);
+  }
+  return null;
+}
+
+/** Record exact decimal/rational for a^b when a is an exact decimal/rational and b is a small integer or rational. */
 export function derivePow(out: Node, a: Node, b: Node): Node {
   const p = integerOf(b);
-  if (p === null || p < BigInt(-100) || p > BigInt(100)) return out;
-  let dec: ExactDecimal | null = null;
-  const x = exactDecimalOf(a);
-  if (x && p >= BigInt(0)) {
-    const exp = Number(p);
-    const digits = (x.n < BigInt(0) ? -x.n : x.n).toString().length;
-    if (x.s * exp <= DECIMAL_SCALE_MAX && digits * exp <= DECIMAL_SCALE_MAX + 20) {
-      dec = normalizeDecimal({ n: x.n ** p, s: x.s * exp });
-    }
-  }
-  let rat: Rational | null = null;
-  if (!dec) {
-    const q = exactRationalOf(a);
-    if (q) {
-      const absP = p < BigInt(0) ? -p : p;
-      const exp = Number(absP);
-      const nDigits = (q.n < BigInt(0) ? -q.n : q.n).toString().length;
-      const dDigits = q.d.toString().length;
-      if (nDigits * exp <= RATIONAL_DIGITS_MAX && dDigits * exp <= RATIONAL_DIGITS_MAX) {
-        if (p >= BigInt(0)) rat = normalizeRational({ n: q.n ** absP, d: q.d ** absP });
-        else if (q.n !== BigInt(0)) rat = normalizeRational({ n: q.d ** absP, d: q.n ** absP });
+  if (p !== null && p >= BigInt(-100) && p <= BigInt(100)) {
+    let dec: ExactDecimal | null = null;
+    const x = exactDecimalOf(a);
+    if (x && p >= BigInt(0)) {
+      const exp = Number(p);
+      const digits = (x.n < BigInt(0) ? -x.n : x.n).toString().length;
+      if (x.s * exp <= DECIMAL_SCALE_MAX && digits * exp <= DECIMAL_SCALE_MAX + 20) {
+        dec = normalizeDecimal({ n: x.n ** p, s: x.s * exp });
       }
     }
+    let rat: Rational | null = null;
+    if (!dec) {
+      const q = exactRationalOf(a);
+      if (q) {
+        const absP = p < BigInt(0) ? -p : p;
+        const exp = Number(absP);
+        const nDigits = (q.n < BigInt(0) ? -q.n : q.n).toString().length;
+        const dDigits = q.d.toString().length;
+        if (nDigits * exp <= RATIONAL_DIGITS_MAX && dDigits * exp <= RATIONAL_DIGITS_MAX) {
+          if (p >= BigInt(0)) rat = normalizeRational({ n: q.n ** absP, d: q.d ** absP });
+          else if (q.n !== BigInt(0)) rat = normalizeRational({ n: q.d ** absP, d: q.n ** absP });
+        }
+      }
+    }
+    if (!dec && !rat) return out;
+    return learn(out, {
+      ...(dec ? { decimal: dec } : {}),
+      ...(rat ? { rational: rat } : {}),
+    });
   }
-  if (!dec && !rat) return out;
-  return learn(out, {
-    ...(dec ? { decimal: dec } : {}),
-    ...(rat ? { rational: rat } : {}),
-  });
+  // Rational exponent p/q (2 <= q <= 6, |p| <= 12) of a non-negative exact rational (e.g. (8/27)^(1/3) = 2/3).
+  const pb = exactRationalOf(b);
+  const qa = exactRationalOf(a);
+  if (!pb || !qa || qa.n < BigInt(0) || pb.d < BigInt(2) || pb.d > BigInt(6)) return out;
+  const absN = pb.n < BigInt(0) ? -pb.n : pb.n;
+  if (absN > BigInt(12)) return out;
+  const root = Number(pb.d);
+  const rn = exactNthRoot(qa.n, root);
+  const rd = exactNthRoot(qa.d, root);
+  if (rn === null || rd === null) return out;
+  const pow = pb.n >= BigInt(0)
+    ? normalizeRational({ n: rn ** absN, d: rd ** absN })
+    : rn !== BigInt(0)
+      ? normalizeRational({ n: rd ** absN, d: rn ** absN })
+      : null;
+  return pow ? learn(out, { rational: pow }) : out;
 }
 
 function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {

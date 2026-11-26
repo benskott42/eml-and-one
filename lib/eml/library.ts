@@ -39,7 +39,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -170,6 +170,11 @@ export function tExp(t: Node): Node {
 function expGates(t: Node): Node {
   const node = noteExp(E(t, ONE), t);
   noteBuiltFrom(node, { expArg: t });
+  const lnArg = factsOf(t).builtFrom?.lnArg;
+  if (lnArg && !isUnverified(t) && !isExactUnsure(t)) {
+    const q = exactRationalOf(lnArg);
+    if (q && q.n > BigInt(0)) learn(node, { rational: q });
+  }
   // exp(+∞) is a pole, so exp(+∞) − exp(+∞) is the indeterminate subtraction.
   // exp(−∞) stays a zero: exp(−∞) − exp(−∞) is 0.
   // A finite real past about 709 overflows float to +∞. Mark it as overflow,
@@ -191,6 +196,12 @@ export function tLn(t: Node): Node {
   if (plus && tinyScale(plus, SERIES_REL) !== null) return markSeries(plus, "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   if (minus && tinyScale(minus, SERIES_REL) !== null) return markSeries(rawMul(tNeg(ONE), minus), "series shortcut: the leading term, for |x| ≤ 10^(−480)");
   const node = noteLn(E(ONE, E(E(ONE, t), ONE)), t);
+  noteBuiltFrom(node, { lnArg: t });
+  if (!isUnverified(t) && !isExactUnsure(t)) {
+    const expArg = factsOf(t).builtFrom?.expArg;
+    const eq = expArg ? exactRationalOf(expArg) : null;
+    if (eq) learn(node, { rational: eq });
+  }
   if (provenInteger(t) === BigInt(0)) markInfiniteSource(node);
   // ln of an imaginary infinity is not the real infinity the log word prints.
   if (oddDirection(t)) return markUnverified(markMaybeInfinite(node, t));
@@ -879,6 +890,13 @@ export function tSqrt(t: Node): Node {
   // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
   if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
+  // Exact rational square root: sqrt(p^2 / q^2) = p / q (keeps full circuit, records rational fact).
+  const rq = exactRationalOf(t);
+  if (rq && rq.n >= BigInt(0)) {
+    const rn = exactNthRoot(rq.n, 2);
+    const rd = exactNthRoot(rq.d, 2);
+    if (rn !== null && rd !== null) learn(node, { rational: { n: rn, d: rd } });
+  }
   const inner = factsOf(t).builtFrom?.onePlus;
   if (inner && tinyScale(inner, SERIES_REL) !== null) noteBuiltFrom(node, { sqrtArg: inner });
   if (!v) return node;
@@ -915,9 +933,15 @@ export function tSigmoid(t: Node): Node {
 export function tSinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
-  // sinh(i·kπ) = 0 for any integer k.
+  // sinh(i·kπ) = 0 and sinh(i·(k + 1/2)π) = ±i.
   const ang = factsOf(t).angle;
-  if (ang && ang.unit === "imag" && ang.q.d === BigInt(1)) return recognized(tZero());
+  if (ang && ang.unit === "imag") {
+    if (ang.q.d === BigInt(1)) return recognized(tZero());
+    if (ang.q.d === BigInt(2)) {
+      const m = Number(((ang.q.n % BigInt(4)) + BigInt(4)) % BigInt(4));
+      return recognized(m === 1 ? tI() : tNeg(tI()));
+    }
+  }
   const known = tightValue(t);
   // sinh z = z + z³/6. Below about 10^(−6) the cubic is dust, and the exp formula is not.
   // The dropped cubic is not exact, so z is marked as a series shortcut with its cubic error
@@ -941,10 +965,15 @@ export function tCosh(t: Node): Node {
 export function tTanh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
-  // tanh(i·(k + 1/2)π) = i·tan((k + 1/2)π) is a pole (undefined, not −∞).
+  // tanh(i·kπ) = 0, tanh(i·(k + 1/4)π) = ±i, and tanh(i·(k + 1/2)π) = pole.
   const ang = factsOf(t).angle;
-  if (ang && ang.unit === "imag" && ang.q.d === BigInt(2)) {
-    return tTan(tMul(tNeg(tI()), t));
+  if (ang && ang.unit === "imag") {
+    if (ang.q.d === BigInt(1)) return recognized(tZero());
+    if (ang.q.d === BigInt(2)) return tTan(tMul(tNeg(tI()), t));
+    if (ang.q.d === BigInt(4)) {
+      const m = Number(((ang.q.n % BigInt(4)) + BigInt(4)) % BigInt(4));
+      return recognized(m === 1 ? tI() : tNeg(tI()));
+    }
   }
   const small = tinyRealArgument(t);
   if (small) return small;
@@ -1498,6 +1527,13 @@ function tAbs(t: Node): Node {
 }
 
 export function tHypot(a: Node, b: Node): Node {
+  const ra = exactRationalOf(a);
+  const rb = exactRationalOf(b);
+  if (ra && rb) {
+    if (ra.n === BigInt(0) && rb.n === BigInt(0)) return tZero();
+    if (ra.n === BigInt(0)) return rb.n < BigInt(0) ? tNeg(b) : b;
+    if (rb.n === BigInt(0)) return ra.n < BigInt(0) ? tNeg(a) : a;
+  }
   const va = knownValue(a);
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0) {

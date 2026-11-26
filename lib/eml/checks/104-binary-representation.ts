@@ -154,8 +154,13 @@ const checkModule: CheckModule = {
       ["(-0)^(1/2)", "0"],
       ["sinh(i*pi)", "0"],
       ["sinh(-2*i*pi)", "0"],
+      ["sinh(i*pi/2) - i", "0"],
+      ["sinh(3*i*pi/2) + i", "0"],
       ["tanh(i*pi/2)", "undefined"],
       ["tanh(3*i*pi/2)", "undefined"],
+      ["tanh(3*i*pi)", "0"],
+      ["tanh(i*pi/4) - i", "0"],
+      ["tanh(-i*pi/4) + i", "0"],
     ] as const) {
       const rep = exactReport(compileExpression(src, {}), {}, { maxNodes: 800_000 });
       const gotText = formatExact(rep.value);

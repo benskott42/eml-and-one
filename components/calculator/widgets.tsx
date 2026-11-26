@@ -1,6 +1,6 @@
 // Small pieces of the calculator screen that keep their own state.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { binaryProgramInfo, binaryTreeMetrics } from "@/lib/eml/binary";
+import { binaryProgramInfo, binaryTreeMetrics, rpnToBinary } from "@/lib/eml/binary";
 import type { GolfHit } from "@/lib/eml/golf";
 import { ln0Dependence } from "@/lib/eml/golf-label";
 import { type Node } from "@/lib/eml/node";
@@ -236,7 +236,8 @@ export function GolfPanel() {
         const text = (data.hits ?? [])
           .map((hit) => {
             const dependence = ln0Dependence(hit);
-            return `${golfLabel(hit.id)} = K ${hit.k}${dependence ? ` · ${dependence}` : ""}`;
+            const hex = /^[1E]+$/.test(hit.rpn) ? binaryProgramInfo(rpnToBinary(hit.rpn))?.hex : null;
+            return `${golfLabel(hit.id)} = K ${hit.k}${hex ? ` (${hex})` : ""}${dependence ? ` · ${dependence}` : ""}`;
           })
           .join(" · ");
         setLine(text || "No constants in range.");

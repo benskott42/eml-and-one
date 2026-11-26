@@ -29,6 +29,14 @@ const checkModule: CheckModule = {
       "log(2, 1/8) + 3",
       "log(4, 8) - 3/2",
       "log(8, 2) - 1/3",
+      "sqrt(4/9) - 2/3",
+      "sqrt(9/16) - 3/4",
+      "sqrt(1/4) - 1/2",
+      "hypot(3/5, 4/5) - 1",
+      "hypot(1/3, 0) - 1/3",
+      "(8/27)^(1/3) - 2/3",
+      "exp(ln(1/3)) - 1/3",
+      "ln(exp(1/3)) - 1/3",
     ];
     for (const src of exactZeros) {
       const node = compileExpression(src, {});
