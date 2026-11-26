@@ -34,6 +34,7 @@ export function screenOf(node: Node, report: ExactReport, maxNodes: number): Scr
     exactNotes.push("certified");
   }
   if (report.touchedLn0) exactNotes.push("ln0");
+  if (report.nearCut) exactNotes.push("near-cut");
   if (seriesShortcutNote(node)) exactNotes.push("series-shortcut");
 
   const floatRep = evaluateReport(node, {}, { maxNodes });

@@ -9,6 +9,7 @@ import {
   SINGULAR_POLE,
   type EvalBudget,
   type Node,
+  isPure,
   precisionMessage,
   trigArg,
 } from "./node";
@@ -148,7 +149,23 @@ function cosSin(theta: Decimal): { c: Decimal; s: Decimal } {
     if (ax === 2) return { c: ONE.neg(), s: ZERO };
     return { c: ZERO, s: ONE.neg() };
   }
-  return { c: cosD(theta), s: sinD(theta) };
+  if (theta.e > 500) {
+    // decimal.js's PI_PRECISION is ~1000 and leaves D.precision mutated if getPi throws;
+    // an angle past 10^500 cannot be reduced within the 480-digit cap anyway.
+    rangeLost = true;
+    return { c: NAN, s: NAN };
+  }
+  const savedPrec = D.precision;
+  try {
+    return { c: cosD(theta), s: sinD(theta) };
+  } catch (err) {
+    D.set({ precision: savedPrec });
+    if (err instanceof Error && /DecimalError/.test(err.message)) {
+      rangeLost = true;
+      return { c: NAN, s: NAN };
+    }
+    throw err;
+  }
 }
 
 function axisInfinity(part: Decimal): Decimal {
@@ -172,12 +189,17 @@ function expZ(v: Z): Z {
   const mag = expD(v.re);
   if (mag.isZero()) {
     // A finite exponent past the decimal range: exp(−10^20) is not 0. Record its
-    // decade, so a result that vanished here is refused rather than certified.
+    // decade and mark underflowLost so vanished results and pure towers are refused.
+    underflowLost = true;
     const decade = Math.floor(v.re.div(LN10_APPROX).toNumber());
     if (Number.isFinite(decade) && decade < tiniest) tiniest = decade;
     return { re: signedZeroFrom(trig.c), im: signedZeroFrom(trig.s) };
   }
-  if (!mag.isFinite()) return { re: signedInf(trig.c), im: signedInf(trig.s) };
+  if (!mag.isFinite()) {
+    // A finite exponent past decimal.js's maxE (e.g. T5 = exp(T4)): not a true infinity.
+    rangeLost = true;
+    return { re: signedInf(trig.c), im: signedInf(trig.s) };
+  }
   return { re: mag.mul(trig.c), im: mag.mul(trig.s) };
 }
 
@@ -303,6 +325,12 @@ let absorbReTerm = Number.NEGATIVE_INFINITY;
  * and a plain tiny literal never logs such a point.
  */
 let cutGap = 0;
+/** True when a finite exp overflowed decimal.js range, or trig exceeded PI_PRECISION. */
+let rangeLost = false;
+/** True when a finite exp underflowed decimal.js minE to 0 (e.g. exp(−10^20) or exp(−T4)). */
+let underflowLost = false;
+/** True when the last exactEml call's imaginary part came from the lower-cut convention on the negative real axis. */
+let gateCutIm = false;
 
 function noteNearCut(v: Z): void {
   if (v.im.isZero() || !v.re.isNeg() || !v.re.isFinite() || !v.im.isFinite()) return;
@@ -494,7 +522,8 @@ function sameInfinity(left: Decimal, right: Decimal): boolean {
   return !left.isNaN() && !right.isNaN() && !left.isFinite() && !right.isFinite() && left.isNeg() === right.isNeg();
 }
 
-function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false): Z {
+function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false, leftCutIm = false): Z {
+  gateCutIm = false;
   if (x.re.isNaN() || x.im.isNaN() || y.re.isNaN() || y.im.isNaN()) return { re: NAN, im: NAN };
   const a = expZ(x);
   const b = lnEml(y);
@@ -507,6 +536,10 @@ function exactEml(x: Z, y: Z, leftNoise = false, rightNoise = false): Z {
   noteAbsorbRe(a.re, b.re, re, leftNoise, bNoisy);
   noteAbsorb(a.im, b.im, im);
   if (re.isNaN() || im.isNaN()) return { re: NAN, im: NAN };
+  const lnOnCut = y.im.isZero() && y.re.isNeg();
+  if (im.isFinite() && !im.isZero()) {
+    gateCutIm = lnOnCut || (leftCutIm && a.im.isFinite() && !a.im.isZero());
+  }
   return { re, im };
 }
 
@@ -687,6 +720,12 @@ export type ExactReport = {
   surviveLoss?: number;
   /** Largest gap of a log taken just off the negative real axis (see cutGap). */
   cutGap?: number;
+  /** True when the displayed value's imaginary part comes from the lower-cut convention on the negative real axis. */
+  nearCut?: boolean;
+  /** True when a finite exp overflowed decimal.js range, or trig exceeded PI_PRECISION. */
+  rangeLost?: boolean;
+  /** True when a finite exp underflowed decimal.js minE to 0. */
+  underflowLost?: boolean;
 };
 
 type Work = { all: number; re: number; im: number; hits: CancelHit[] };
@@ -723,7 +762,7 @@ function componentProd(part: "re" | "im", value: Decimal, hits: CancelHit[]): nu
   return best;
 }
 /** `loss`, `tiniest` and `lead` are the subtree's share of the pass state, restored on a hit. */
-type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; surviveLoss: number; tiniest: number; tinyParts: TinyParts; lead: boolean; big: number; absorb: number; absorbRe: number; absorb2: number; absorbReTerm: number; absorbExposed: boolean; cut: number };
+type Cached = { value: Z; why: string | null; logged: boolean; work: Work; loss: number; surviveLoss: number; tiniest: number; tinyParts: TinyParts; lead: boolean; big: number; absorb: number; absorbRe: number; absorb2: number; absorbReTerm: number; absorbExposed: boolean; cut: number; rangeLost: boolean; underflowLost: boolean; cutIm: boolean };
 /** Var-free subcircuits, by working precision. A rebuilt circuit is new nodes, so it misses this map. */
 const pureCache = new Map<number, WeakMap<Node, Cached>>();
 const hasVarOf = new WeakMap<Node, boolean>();
@@ -895,7 +934,11 @@ function confirmDust(report: ExactReport, root: Node, env: Record<string, C | Z>
   }
   if (again.isFinite() && part.sub(again).abs().lte(part.abs().mul("1e-6"))) return report;
   const cleared = part.isNeg() ? new D(-0) : ZERO;
-  return { ...report, value: which === "re" ? { re: cleared, im: report.value.im } : { re: report.value.re, im: cleared } };
+  return {
+    ...report,
+    ...(which === "im" ? { nearCut: false } : {}),
+    value: which === "re" ? { re: cleared, im: report.value.im } : { re: report.value.re, im: cleared },
+  };
 }
 
 /**
@@ -1132,6 +1175,56 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
   if (agreesWithInteger(root, out.value)) return false;
   const v = out.value;
   const digits = out.digits ?? D.precision;
+  // A finite exp that overflowed decimal.js range (e.g. T5 = exp(T4) in 111E1E1E1E1EE1E)
+  // or a trig argument past PI_PRECISION cannot be certified unless the ball proves it.
+  if (out.rangeLost) {
+    if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits)) return true;
+  }
+  // A finite exp that underflowed minE to 0 (e.g. exp(−T4) or exp(−10^20)) cannot certify
+  // a vanished 0, nor an exact-looking deep tower program.
+  if (out.underflowLost && (vanished(v) || (isPure(root) && firstBig > 308))) {
+    if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits)) return true;
+  }
+  // An imaginary term absorbed past the 480-digit cap can hide a component or flip a branch cut.
+  if ((out.absorbIm ?? 0) > PRECISION_CAP) {
+    if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits, 24)) return true;
+  }
+  // Pure 1-and-E tower impostors must never silently certify as exact integers or short
+  // terminating decimals when an extra real term was absorbed past working precision
+  // inside a deep tower (firstBig > 308, e.g. 111E1E1E1EE11EE = −1 + e/T4,
+  // 111111EEEE1E1E1EE11EE), sits inside the exactInteger dust band
+  // (1111EE1E1E1EE11EE = −1 + 4.4×10^(−116)), or was snapped to 0 and then exp'd to 1
+  // (1111EE1E1E1EE1E11EE1E).
+  if (isPure(root)) {
+    const deepAbsorb = (out.absorbRe ?? 0) > PRECISION_CAP || ((firstBig > 308 || !out.touchedLn0) && (out.absorbRe ?? 0) > digits - 12);
+    if (deepAbsorb && zFinite(v) && (looksExactDecimal(v.re) || looksExactDecimal(v.im))) {
+      return true;
+    }
+    if (!out.touchedLn0 && v.im.isZero() && exactInteger(v.re)) {
+      const rounded = v.re.round();
+      const gap = v.re.sub(rounded).abs();
+      const snapped = (out.lossGap ?? 0) > digits - 12;
+      if (!gap.isZero() || snapped) {
+        const firstNext = snapped ? Math.min(PRECISION_CAP, Math.max(digits + 24, (out.lossGap ?? 0) + 48)) : Math.min(PRECISION_CAP, digits + 24);
+        if (firstNext > digits) {
+          const again = atPrecision(firstNext, root, env, budget, false);
+          if (!again.unverified && again.value.re.isFinite()) {
+            const gap2 = again.value.re.sub(rounded).abs();
+            if (!gap.isZero()) {
+              if (!gap2.isZero() && !residueMoved(gap, gap2)) return true;
+            } else if (!gap2.isZero()) {
+              const secondNext = Math.min(PRECISION_CAP, firstNext + 24);
+              if (secondNext <= firstNext) return true;
+              const check = atPrecision(secondNext, root, env, budget, false);
+              if (check.unverified || !check.value.re.isFinite()) return true;
+              const gap3 = check.value.re.sub(rounded).abs();
+              if (!gap3.isZero() && !residueMoved(gap2, gap3)) return true;
+            }
+          }
+        }
+      }
+    }
+  }
   if (v.re.isFinite() && v.im.isFinite() && v.re.isZero() !== v.im.isZero()) {
     // A value below the precision went through the pass: retry with room for it.
     // If the zero part comes back nonzero above the noise, or the room needed is
@@ -1155,7 +1248,9 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
   if (firstBig > 308) {
     if (!zFinite(v)) return out.singular === SINGULAR_NONFINITE;
     const top = exponentCeil(v);
-    if (top >= -300 && top < firstBig - (digits - 12)) return !confirmedBeside(root, env, budget, v, digits);
+    if (top >= -300 && top < firstBig - (digits - 12)) {
+      if (!confirmedBeside(root, env, budget, v, digits)) return true;
+    }
   }
   // A second-order term (x²/2 of exp or cos) was rounded into 1 inside a gate and the
   // result vanished to 0 or sits at the working-precision floor (e.g. exp(10^(−237)) − 1 − 10^(−237)):
@@ -1167,6 +1262,19 @@ function refusedResult(root: Node, env: Record<string, C | Z>, budget: EvalBudge
     (vanished(v) || (digits > D.precision && zFinite(v) && Math.abs(exponentCeil(v) + digits) <= 4))
   ) {
     if (!zFinite(v) || !confirmedBeside(root, env, budget, v, digits, 24)) return true;
+  }
+  return false;
+}
+
+/** True when formatExact would display `d` as an exact integer or short terminating decimal (no 12-place tail). */
+function looksExactDecimal(d: Decimal): boolean {
+  if (!d.isFinite() || d.isZero()) return false;
+  if (exactInteger(d)) return true;
+  const abs = d.abs();
+  if (abs.lt("1e16") && abs.gte("1e-6")) {
+    const trimmed = abs.toFixed(12).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    const places = (trimmed.split(".")[1] ?? "").length;
+    if (places <= 9) return true;
   }
   return false;
 }
@@ -1760,6 +1868,9 @@ function exactReportOnce(
   const absorbReTermOf = new Map<Node, number>();
   const absorbExposedOf = new Map<Node, boolean>();
   const cutOf = new Map<Node, number>();
+  const rangeLostOf = new Map<Node, boolean>();
+  const underflowLostOf = new Map<Node, boolean>();
+  const cutImOf = new Map<Node, boolean>();
   const tinyOf = new Map<Node, number>();
   const tinyPartsOf = new Map<Node, TinyParts>();
   const leadOf = new Map<Node, boolean>();
@@ -1775,6 +1886,8 @@ function exactReportOnce(
   absorb2 = 0;
   absorbReTerm = Number.NEGATIVE_INFINITY;
   cutGap = 0;
+  rangeLost = false;
+  underflowLost = false;
   tinyRe = 0;
   tinyIm = 0;
   biggest = Number.NEGATIVE_INFINITY;
@@ -1879,6 +1992,11 @@ function exactReportOnce(
       absorbExposedOf.set(n, hit.absorbExposed);
       if (hit.cut > cutGap) cutGap = hit.cut;
       cutOf.set(n, hit.cut);
+      if (hit.rangeLost) rangeLost = true;
+      rangeLostOf.set(n, hit.rangeLost);
+      if (hit.underflowLost) underflowLost = true;
+      underflowLostOf.set(n, hit.underflowLost);
+      cutImOf.set(n, hit.cutIm);
       if (hit.tiniest < tiniest) tiniest = hit.tiniest;
       if (hit.tinyParts.re < tinyRe) tinyRe = hit.tinyParts.re;
       if (hit.tinyParts.im < tinyIm) tinyIm = hit.tinyParts.im;
@@ -1934,6 +2052,10 @@ function exactReportOnce(
     tiniest = 0;
     const outerCut = cutGap;
     cutGap = 0;
+    const outerRangeLost: boolean = rangeLost;
+    rangeLost = false;
+    const outerUnderflowLost: boolean = underflowLost;
+    underflowLost = false;
     // An angle under the rounding noise of the gates that produced it is that
     // noise, and turns as 0 (cosSin no longer snaps a tiny angle to the axis).
     const turn = angleNoise(a, work.get(n.a)) ? { re: a.re, im: ZERO } : a;
@@ -1955,7 +2077,15 @@ function exactReportOnce(
         if (hidden.gap > absorb2) absorb2 = hidden.gap;
       }
     }
-    const value = lifted(angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b, aNoisy, bNoisy), a, b);
+    const value = lifted(angleInfinite ? { re: NAN, im: NAN } : exactEml(turn, b, aNoisy, bNoisy, cutImOf.get(n.a) === true), a, b);
+    const subCutIm = !angleInfinite && gateCutIm;
+    cutImOf.set(n, subCutIm);
+    const subRangeLost = rangeLost || rangeLostOf.get(n.a) === true || rangeLostOf.get(n.b) === true;
+    rangeLost = outerRangeLost || subRangeLost;
+    rangeLostOf.set(n, subRangeLost);
+    const subUnderflowLost = underflowLost || underflowLostOf.get(n.a) === true || underflowLostOf.get(n.b) === true;
+    underflowLost = outerUnderflowLost || subUnderflowLost;
+    underflowLostOf.set(n, subUnderflowLost);
     const ownLoss = lossGap;
     lossGap = Math.max(outerLoss, ownLoss);
     const ownSurviveLoss = surviveLoss;
@@ -2032,7 +2162,7 @@ function exactReportOnce(
     const varA = n.a.type === "var" || hasVarOf.get(n.a) === true;
     const varB = n.b.type === "var" || hasVarOf.get(n.b) === true;
     hasVarOf.set(n, varA || varB);
-    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, surviveLoss: subSurviveLoss, tiniest: subTiny, tinyParts: subTinyParts, lead: subLead, big: subBig, absorb: subAbsorb, absorbRe: subAbsorbRe, absorb2: subAbsorb2, absorbReTerm: subAbsorbReTerm, absorbExposed: subAbsorbExposed, cut: subCut });
+    if (!varA && !varB) cache.set(n, { value, why: singular, logged: childLog, work: nodeWork, loss: subLoss, surviveLoss: subSurviveLoss, tiniest: subTiny, tinyParts: subTinyParts, lead: subLead, big: subBig, absorb: subAbsorb, absorbRe: subAbsorbRe, absorb2: subAbsorb2, absorbReTerm: subAbsorbReTerm, absorbExposed: subAbsorbExposed, cut: subCut, rangeLost: subRangeLost, underflowLost: subUnderflowLost, cutIm: subCutIm });
   }
 
   const out = memo.get(root);
@@ -2071,6 +2201,9 @@ function exactReportOnce(
     lossGap,
     surviveLoss,
     cutGap,
+    nearCut: cutImOf.get(root) === true && out.re.isFinite() && out.im.isFinite() && nearCut(out.im),
+    rangeLost: rangeLostOf.get(root) === true,
+    underflowLost: underflowLostOf.get(root) === true,
     ...riskReport(out, riskBelow(root, out, risk)),
   };
 }
