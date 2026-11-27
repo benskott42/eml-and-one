@@ -79,6 +79,11 @@ function cls(s: LeanSym): 0 | 1 | 2 {
   }
 }
 
+/** `e − n` for any integer `n`: never 0, since 2 < e < 3 (Cert.lean eSubInt). */
+function eSubInt(a: LeanSym, b: LeanSym): boolean {
+  return a.kind === "e" && b.kind === "int";
+}
+
 function nz(s: LeanSym): boolean {
   switch (s.kind) {
     case "int":
@@ -96,12 +101,13 @@ function nz(s: LeanSym): boolean {
     case "add":
       return false;
     case "sub":
-      return eSubSmall(s.a, s.b);
+      return eSubInt(s.a, s.b);
   }
 }
 
+/** `exp (ln u) = u` needs only `u ≠ 0` (Cert.lean lnInvOk). */
 function lnInvOk(u: LeanSym): boolean {
-  return cls(u) === 2 || (u.kind === "int" && u.n !== Z0);
+  return cls(u) === 2 || nz(u);
 }
 
 function rExp(a: LeanSym): LeanSym {

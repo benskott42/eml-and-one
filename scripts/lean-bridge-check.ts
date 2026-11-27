@@ -5,6 +5,7 @@ import { LEAN_VERIFIED_THEOREMS, nodeToLean4Snippet } from "../lib/eml/export";
 import { certifyRpnForLean, rpnToLeanBits } from "../lib/eml/leanCert";
 import { E, ONE, V, nodeFromRpn } from "../lib/eml/node";
 import { isProgram } from "../lib/eml/programIndex";
+import { SHORT_PROGRAMS } from "../lib/eml/programs";
 
 /**
  * End-to-end bridge verifier between TypeScript (`lib/eml/`) and Lean 4 (`formal/lean/`):
@@ -17,7 +18,7 @@ import { isProgram } from "../lib/eml/programIndex";
  * 2. Compiles sample outputs of `nodeToLean4Snippet` (certified theorem, record, and
  *    symbolic variable circuit) directly with Lean 4.
  * 3. Cross-checks `certifyRpnForLean` against `Eml.Cert.certify` on every valid
- *    EML program up to K = 9 (23 programs) plus sample records.
+ *    EML program up to K = 13 (197 programs) plus every closed stored word.
  */
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -73,12 +74,13 @@ for (const [rpn, ref] of Object.entries(LEAN_VERIFIED_THEOREMS)) {
 
 lines.push("");
 
-// 2. Cross-check certifyRpnForLean against Eml.Cert.certify on all valid programs up to K = 9
+// 2. Cross-check certifyRpnForLean against Eml.Cert.certify on every valid program up to
+// K = 13 (197 programs) and on every closed stored word, certified or not.
 const samplePrograms = [
-  ...enumerateValidPrograms(4), // K = 1, 3, 5, 7, 9 (23 programs)
-  "111E1EE11EE",
-  "11111EEE1EE11E1EE",
-  "111111EEE1EE11EE1EE",
+  ...new Set([
+    ...enumerateValidPrograms(6), // K = 1 … 13
+    ...Object.values(SHORT_PROGRAMS).filter((word) => !/[xy]/.test(word)),
+  ]),
 ];
 
 let certMatches = 0;

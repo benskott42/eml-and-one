@@ -17,7 +17,7 @@
   `ℂ` and `EmlExt` evaluations agree.
 
   The TypeScript port in `lib/eml/leanCert.ts` is checked against this file on
-  every program with K ≤ 9 plus sample records (26 programs) by the generated
+  every program with K ≤ 13 plus every closed stored word (237 programs) by the generated
   `formal/lean/.lake/UiCrossCheck.lean` (`scripts/lean-bridge-check.ts`).
 
   Zero `sorry`, zero custom axioms.
@@ -151,6 +151,26 @@ theorem cls_pos_ne_zero {s : Sym} (h : cls s = 2) : s.denote ≠ 0 := by
 
 /-! ### Provably nonzero (so `ln` of it is never `ln 0`) -/
 
+/-- `e − n` for any integer `n`: never 0, since `2 < e < 3`. -/
+def eSubInt : Sym → Sym → Bool
+  | .e, .int _ => true
+  | _, _ => false
+
+theorem eSubInt_ne_zero {a b : Sym} (h : eSubInt a b = true) : a.denote - b.denote ≠ 0 := by
+  cases a <;> cases b <;> simp_all [eSubInt]
+  rename_i n
+  show Complex.exp 1 - (n : ℂ) ≠ 0
+  have hcast : Complex.exp (1 : ℂ) - (n : ℂ) = ((Real.exp 1 - n : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp]; push_cast; rfl
+  rw [hcast, Complex.ofReal_ne_zero, sub_ne_zero]
+  intro h
+  have h2 : (2 : ℝ) < Real.exp 1 := by linarith [Real.exp_one_gt_d9]
+  have h3 : Real.exp 1 < 3 := by linarith [Real.exp_one_lt_d9]
+  rw [h] at h2 h3
+  have : (2 : ℤ) < n := by exact_mod_cast h2
+  have : n < (3 : ℤ) := by exact_mod_cast h3
+  omega
+
 def nz : Sym → Bool
   | .int n => n != 0
   | .e => true
@@ -159,7 +179,7 @@ def nz : Sym → Bool
   | .ln _ => false
   | .neg a => nz a
   | .add _ _ => false
-  | .sub a b => eSubSmall a b
+  | .sub a b => eSubInt a b
 
 theorem nz_sound : ∀ s : Sym, nz s = true → s.denote ≠ 0
   | .int n, h => by simpa [nz, Sym.denote] using h
@@ -171,19 +191,20 @@ theorem nz_sound : ∀ s : Sym, nz s = true → s.denote ≠ 0
   | .ln _, h => by simp [nz] at h
   | .neg a, h => by simpa [Sym.denote] using nz_sound a h
   | .add _ _, h => by simp [nz] at h
-  | .sub a b, h => cls_pos_ne_zero (by simp only [nz] at h; simp only [cls, h, ↓reduceIte])
+  | .sub a b, h => by simpa [Sym.denote] using eSubInt_ne_zero (by simpa [nz] using h)
 
 /-! ### `exp` rules -/
 
+/-- `exp (ln u) = u` needs only `u ≠ 0`: a positive real, or anything `nz` proves nonzero. -/
 def lnInvOk (u : Sym) : Bool :=
-  cls u == 2 || (match u with | .int n => n != 0 | _ => false)
+  cls u == 2 || nz u
 
 theorem lnInvOk_sound {u : Sym} (h : lnInvOk u = true) : u.denote ≠ 0 := by
   unfold lnInvOk at h
   simp only [Bool.or_eq_true, beq_iff_eq] at h
   rcases h with h | h
   · exact cls_pos_ne_zero h
-  · cases u <;> simp_all [Sym.denote]
+  · exact nz_sound u h
 
 def rExp : Sym → Sym
   | .int n => if n = 0 then .int 1 else if n = 1 then .e else .exp (.int n)
