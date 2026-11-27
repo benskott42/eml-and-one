@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.13 — 2026-11-26
 
 - Added proof-carrying circuit certificates: [`formal/lean/Eml/Cert.lean`](formal/lean/Eml/Cert.lean) proves `certify_sound` once and for all over both `ℂ` and `EmlExt` (zero `ln 0`), mirrored in `lib/eml/leanCert.ts` so `Copy Lean 4` emits a kernel-checked `theorem circuit_eval := certify_sound (by decide)` for certifiable pure circuits.
 - Proved the last two `best-known.json` constant records in Lean 4 (`Eml.Extended.evalRpn_negIpi` K 45 and `Eml.Records.evalRpn_negIpi_strict` K 47 → **28/28 constant records** verified) and added general inverse-trig branch-cut theorems in `Eml.InverseTrig` (`artanh` for `x < -1`, `arctan` for `|Im| > 1`, `arcsin`/`arccos` for `x > 1`).
