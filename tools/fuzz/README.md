@@ -20,4 +20,4 @@ python3 tools/fuzz/oracle.py /tmp/fuzz.json
 ## Exit codes
 
 - `fuzz.ts` exits with `1` if any expression disagrees between in-process evaluation and worker-wire evaluation.
-- `oracle.py` exits with `1` if any certified finite value differs from 2,500-digit `mpmath` by more than `1e-10` relative error.
+- `oracle.py` exits with `1` if any certified finite value differs from 2,500-digit `mpmath` by more than `1e-10` relative error. It also checks each part on its own: a part certified as exact 0 is wrong when the true part is above the 480-digit cap (`1e-470` relative to the value), and a nonzero part must match to `1e-10` of itself. The whole-value test cannot see a dropped tiny part (`-5` against `-5 - 1e-236 i`).

@@ -69,13 +69,26 @@ def main():
             scale = max(abs(want), mp.mpf("1e-300"))
             err = abs(got - want) / scale
             if err > mp.mpf("1e-10"):
-                wrong.append((row["source"], row["exact"], mp.nstr(want, 12), mp.nstr(err, 4)))
+                wrong.append((row["source"], row["exact"], mp.nstr(want, 12), f"rel_err={mp.nstr(err, 4)}"))
+                continue
+            # Each part on its own. The whole-value test above cannot see a dropped tiny
+            # part: -5 against -5 - 1e-236 i passes it. A certified exact 0 is wrong when
+            # the true part is above the engine's 480-digit cap relative to the value;
+            # a nonzero part must carry its own digits.
+            for name, g, w in (("re", got.real, want.real), ("im", got.imag, want.imag)):
+                if g == 0:
+                    if abs(w) > scale * mp.mpf("1e-470"):
+                        wrong.append((row["source"], row["exact"], mp.nstr(want, 12), f"dropped {name} part {mp.nstr(w, 6)}"))
+                        break
+                elif w != 0 and abs(g - w) / abs(w) > mp.mpf("1e-10"):
+                    wrong.append((row["source"], row["exact"], mp.nstr(want, 12), f"{name} part rel_err={mp.nstr(abs(g - w) / abs(w), 4)}"))
+                    break
         except Exception:
             skipped += 1
 
     print(f"mpmath oracle (dps={mp.mp.dps}): checked={checked} skipped={skipped} wrong={len(wrong)}")
-    for source, got_s, want_s, err_s in wrong[:25]:
-        print(f"  WRONG {source}: got={got_s} want={want_s} rel_err={err_s}")
+    for source, got_s, want_s, why in wrong[:25]:
+        print(f"  WRONG {source}: got={got_s} want={want_s} ({why})")
     sys.exit(1 if wrong else 0)
 
 
