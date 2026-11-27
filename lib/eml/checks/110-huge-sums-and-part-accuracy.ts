@@ -7,7 +7,8 @@ import type { CheckModule } from "./_types";
  * Regressions for:
  * A. A huge integer kept beside a non-integer (10^400 + i) is evaluated as that sum.
  *    Every circuit built on it was refused before: (10^400 + i)/7 said it could not verify.
- *    A circuit rebuilt from its tokens has no record of the sum, and stays refused or right.
+ *    The worker wire carries the record, so the app's exact worker agrees; a circuit
+ *    rebuilt from its press string has no record and stays refused.
  * B. A part far below the other keeps only the decades its pass resolved. (10^100 + i)·2
  *    printed 2.000…0078i: the raised read was rounded back to 120 significant digits.
  * Expected values are mpmath at 1000 digits, principal branches.
@@ -34,17 +35,18 @@ const checkModule: CheckModule = {
       ["(10^200+i)*2", "2×10^200 + 2i"],
       ["(10^300+i)*2", "2×10^300 + 2i"],
       ["(10^300+i)*i", "−1 + 1×10^300i"],
+      ["acos(((((0.5)+(10^400)))^(-1)))", "1.570796326795"],
     ];
     for (const [source, want] of kept) {
       const node = compileExpression(source, {});
       const report = exactReport(node);
       const got = report.unverified ? "unverified" : formatExact(report.value);
       if (got !== want) ctx.fail(`FAIL huge-sum ${source} got="${got}" want="${want}"`);
-      // The packed circuit loses the remembered sum. It may refuse, but never certify the bare integer.
+      // The worker wire carries the remembered sum, so the app's exact worker agrees.
       const packed = packCircuit(node);
       const wire = exactReport(unpackCircuit(packed.tokens, packed.root));
       const wireGot = wire.unverified ? "unverified" : formatExact(wire.value);
-      if (wireGot !== "unverified" && wireGot !== want) ctx.fail(`FAIL huge-sum wire ${source} got="${wireGot}" want="${want}" or unverified`);
+      if (wireGot !== want) ctx.fail(`FAIL huge-sum wire ${source} got="${wireGot}" want="${want}"`);
     }
     // Past what 480 digits can hold, the beside sum stays refused.
     const refused = ["(10^400+0.5)*2-2*10^400", "atan(10^400-6+i)", "atanh(exp(-50)-10^400)"];
