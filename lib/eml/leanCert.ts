@@ -79,12 +79,134 @@ function cls(s: LeanSym): 0 | 1 | 2 {
   }
 }
 
+// ---- Fixed-point boxes (formal/lean/Eml/CertBox.lean), exactly the same Int arithmetic ----
+
+/** Lean's `Int` division (`Int.ediv`): Euclidean, the remainder is never negative. */
+function ediv(n: bigint, d: bigint): bigint {
+  const q = n / d;
+  if (n % d < Z0) return d > Z0 ? q - Z1 : q + Z1;
+  return q;
+}
+
+const D = BigInt("281474976710656"); // 2^48
+const N = BigInt(65536); // 2^16
+const cdiv = (n: bigint, d: bigint) => -ediv(-n, d);
+const E_LO = ediv(BigInt(2718281828) * D, BigInt(1000000000));
+const E_HI = cdiv(BigInt("27182818286") * D, BigInt("10000000000"));
+const PI_LO = ediv(BigInt(3141592) * D, BigInt(1000000));
+const PI_HI = cdiv(BigInt(3141593) * D, BigInt(1000000));
+const EXP_CAP = BigInt(64) * D;
+
+export type Box = { rl: bigint; rh: bigint; il: bigint; ih: bigint };
+
+function sqDn(k: number, r: bigint): bigint {
+  for (let i = 0; i < k; i += 1) r = ediv(r * r, D);
+  return r;
+}
+
+function sqUp(k: number, r: bigint): bigint {
+  for (let i = 0; i < k; i += 1) r = cdiv(r * r, D);
+  return r;
+}
+
+function expLo(x: bigint): bigint {
+  const m = x < EXP_CAP ? x : EXP_CAP;
+  return N * D + m < Z0 ? Z0 : sqDn(16, ediv(N * D + m, N));
+}
+
+function expHi(x: bigint): bigint | null {
+  return EXP_CAP < x ? null : sqUp(16, cdiv(N * D * D, N * D - x));
+}
+
+const lnLo = (x: bigint) => D - cdiv(D * D, x);
+const lnHi = (x: bigint) => x - D;
+
+function bExp(b: Box): Box | null {
+  if (b.il !== Z0 || b.ih !== Z0) return null;
+  const h = expHi(b.rh);
+  return h === null ? null : { rl: expLo(b.rl), rh: h, il: Z0, ih: Z0 };
+}
+
+function bLn(b: Box): Box | null {
+  if (b.il !== Z0 || b.ih !== Z0) return null;
+  if (Z0 < b.rl) return { rl: lnLo(b.rl), rh: lnHi(b.rh), il: Z0, ih: Z0 };
+  if (b.rh < Z0) return { rl: lnLo(-b.rh), rh: lnHi(-b.rl), il: -PI_HI, ih: -PI_LO };
+  return null;
+}
+
+/** Fixed-point box of `s` (`n` stands for `n / 2^48`), as `Eml.Cert.bnd`. Exported for checks. */
+export function leanSymBox(s: LeanSym): Box | null {
+  return bnd(s);
+}
+
+export const LEAN_BOX_SCALE = D;
+
+function bnd(s: LeanSym): Box | null {
+  switch (s.kind) {
+    case "int":
+      return { rl: s.n * D, rh: s.n * D, il: Z0, ih: Z0 };
+    case "e":
+      return { rl: E_LO, rh: E_HI, il: Z0, ih: Z0 };
+    case "ipi":
+      return Z0 <= s.k
+        ? { rl: Z0, rh: Z0, il: s.k * PI_LO, ih: s.k * PI_HI }
+        : { rl: Z0, rh: Z0, il: s.k * PI_HI, ih: s.k * PI_LO };
+    case "exp": {
+      const b = bnd(s.a);
+      return b ? bExp(b) : null;
+    }
+    case "ln": {
+      const b = bnd(s.a);
+      return b ? bLn(b) : null;
+    }
+    case "neg": {
+      const b = bnd(s.a);
+      return b ? { rl: -b.rh, rh: -b.rl, il: -b.ih, ih: -b.il } : null;
+    }
+    case "add": {
+      const x = bnd(s.a);
+      const y = bnd(s.b);
+      return x && y ? { rl: x.rl + y.rl, rh: x.rh + y.rh, il: x.il + y.il, ih: x.ih + y.ih } : null;
+    }
+    case "sub": {
+      const x = bnd(s.a);
+      const y = bnd(s.b);
+      return x && y ? { rl: x.rl - y.rh, rh: x.rh - y.rl, il: x.il - y.ih, ih: x.ih - y.il } : null;
+    }
+  }
+}
+
+function boxNz(s: LeanSym): boolean {
+  const b = bnd(s);
+  return !!b && (Z0 < b.rl || b.rh < Z0 || Z0 < b.il || b.ih < Z0);
+}
+
+function boxPos(s: LeanSym): boolean {
+  const b = bnd(s);
+  return !!b && b.il === Z0 && b.ih === Z0 && Z0 < b.rl;
+}
+
+function boxNeg(s: LeanSym): boolean {
+  const b = bnd(s);
+  return !!b && b.il === Z0 && b.ih === Z0 && b.rh < Z0;
+}
+
+function boxStrip(s: LeanSym): boolean {
+  const b = bnd(s);
+  return !!b && -PI_LO <= b.il && b.ih < PI_LO;
+}
+
 /** `e − n` for any integer `n`: never 0, since 2 < e < 3 (Cert.lean eSubInt). */
 function eSubInt(a: LeanSym, b: LeanSym): boolean {
   return a.kind === "e" && b.kind === "int";
 }
 
+/** Provably nonzero: structurally, or by the value's box (Cert.lean nz). */
 function nz(s: LeanSym): boolean {
+  return nz0(s) || boxNz(s);
+}
+
+function nz0(s: LeanSym): boolean {
   switch (s.kind) {
     case "int":
       return s.n !== Z0;
@@ -97,7 +219,7 @@ function nz(s: LeanSym): boolean {
     case "ln":
       return false;
     case "neg":
-      return nz(s.a);
+      return nz0(s.a);
     case "add":
       return false;
     case "sub":
@@ -108,6 +230,13 @@ function nz(s: LeanSym): boolean {
 /** `exp (ln u) = u` needs only `u ≠ 0` (Cert.lean lnInvOk). */
 function lnInvOk(u: LeanSym): boolean {
   return cls(u) === 2 || nz(u);
+}
+
+function negOf(v: LeanSym): LeanSym {
+  if (v.kind === "int") return { kind: "int", n: -v.n };
+  if (v.kind === "ipi") return { kind: "ipi", k: -v.k };
+  if (v.kind === "neg") return v.a;
+  return { kind: "neg", a: v };
 }
 
 function rExp(a: LeanSym): LeanSym {
@@ -122,14 +251,12 @@ function rExp(a: LeanSym): LeanSym {
   if (a.kind === "ln") {
     return lnInvOk(a.a) ? a.a : { kind: "exp", a };
   }
+  if ((a.kind === "sub" || a.kind === "add") && a.b.kind === "ipi") {
+    // exp(a ± kiπ) = ±exp a
+    const r = rExp(a.a);
+    return a.b.k % Z2 === Z0 ? r : negOf(r);
+  }
   return { kind: "exp", a };
-}
-
-function negOf(v: LeanSym): LeanSym {
-  if (v.kind === "int") return { kind: "int", n: -v.n };
-  if (v.kind === "ipi") return { kind: "ipi", k: -v.k };
-  if (v.kind === "neg") return v.a;
-  return { kind: "neg", a: v };
 }
 
 function rSub(a: LeanSym, b: LeanSym): LeanSym {
@@ -151,12 +278,21 @@ function rSub(a: LeanSym, b: LeanSym): LeanSym {
     return t === Z0 ? a.a : { kind: "sub", a: a.a, b: { kind: "int", n: t } };
   }
   if (a.kind === "sub" && symEq(a.a, b)) return negOf(a.b);
+  // r14 / r15: keep iπ multiples outermost.
+  if (b.kind === "sub" && b.b.kind === "ipi") return { kind: "add", a: { kind: "sub", a, b: b.a }, b: b.b };
+  if (a.kind === "sub" && a.b.kind === "ipi") return { kind: "sub", a: { kind: "sub", a: a.a, b }, b: a.b };
   return { kind: "sub", a, b };
 }
 
 function inStrip(u: LeanSym): boolean {
   if (cls(u) >= 1) return true;
-  return u.kind === "ipi" && u.k >= ZM1 && u.k < Z1;
+  if (u.kind === "ipi" && u.k >= ZM1 && u.k < Z1) return true;
+  return boxStrip(u);
+}
+
+/** `ln a` with no structural rule: `ln(−a) − iπ` on the negative real axis (Cert.lean lnRest). */
+function lnRest(a: LeanSym): LeanSym {
+  return boxNeg(a) ? rSub({ kind: "ln", a: negOf(a) }, { kind: "ipi", k: Z1 }) : { kind: "ln", a };
 }
 
 function rLn(a: LeanSym): LeanSym | null {
@@ -164,11 +300,11 @@ function rLn(a: LeanSym): LeanSym | null {
     if (a.n === Z1) return { kind: "int", n: Z0 };
     if (a.n === Z0) return null;
     if (a.n === ZM1) return { kind: "ipi", k: ZM1 };
-    return { kind: "ln", a };
+    return lnRest(a);
   }
   if (a.kind === "e") return { kind: "int", n: Z1 };
   if (a.kind === "neg") {
-    if (cls(a.a) === 2) {
+    if (cls(a.a) === 2 || boxPos(a.a)) {
       const inner = rLn(a.a);
       return inner ? rSub(inner, { kind: "ipi", k: Z1 }) : null;
     }
@@ -177,7 +313,7 @@ function rLn(a: LeanSym): LeanSym | null {
   if (a.kind === "exp") {
     return inStrip(a.a) ? a.a : { kind: "ln", a };
   }
-  return { kind: "ln", a };
+  return lnRest(a);
 }
 
 function gate(a: LeanSym, b: LeanSym): LeanSym | null {

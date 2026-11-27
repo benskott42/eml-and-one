@@ -16,6 +16,10 @@
   `eml` gate's right operand is proved nonzero, so `ln 0` is never used and the
   `ℂ` and `EmlExt` evaluations agree.
 
+  Besides its structural rules, the checker asks `Eml.CertBox` for proved
+  fixed-point bounds on a value's real and imaginary parts, to show it nonzero,
+  positive or negative real, or inside the strip `−π ≤ Im < π`.
+
   The TypeScript port in `lib/eml/leanCert.ts` is checked against this file on
   every program with K ≤ 13 plus every closed stored word (237 programs) by the generated
   `formal/lean/.lake/UiCrossCheck.lean` (`scripts/lean-bridge-check.ts`).
@@ -26,35 +30,11 @@ import Mathlib.Analysis.Complex.ExponentialBounds
 import Eml.Basic
 import Eml.Binary
 import Eml.Extended
+import Eml.CertBox
 
 namespace Eml.Cert
 
 open Eml Eml.Binary Eml.Extended
-
-/-- Symbolic closed values produced by the certificate checker. -/
-inductive Sym where
-  | int (n : Int)
-  | e
-  /-- `k · iπ` -/
-  | ipi (k : Int)
-  | exp (a : Sym)
-  /-- Lower-cut logarithm (`lowerLog`, `Im ∈ [−π, π)`). -/
-  | ln (a : Sym)
-  | neg (a : Sym)
-  | add (a b : Sym)
-  | sub (a b : Sym)
-  deriving DecidableEq, Repr
-
-/-- Complex value of a symbolic expression. -/
-noncomputable def Sym.denote : Sym → ℂ
-  | .int n => (n : ℂ)
-  | .e => Complex.exp 1
-  | .ipi k => (k : ℂ) * (Real.pi * Complex.I)
-  | .exp a => Complex.exp a.denote
-  | .ln a => lowerLog a.denote
-  | .neg a => -a.denote
-  | .add a b => a.denote + b.denote
-  | .sub a b => a.denote - b.denote
 
 /-! ### Real / positive classification -/
 
@@ -171,27 +151,38 @@ theorem eSubInt_ne_zero {a b : Sym} (h : eSubInt a b = true) : a.denote - b.deno
   have : n < (3 : ℤ) := by exact_mod_cast h3
   omega
 
-def nz : Sym → Bool
+/-- Structural nonzero test. -/
+def nz0 : Sym → Bool
   | .int n => n != 0
   | .e => true
   | .ipi k => k != 0
   | .exp _ => true
   | .ln _ => false
-  | .neg a => nz a
+  | .neg a => nz0 a
   | .add _ _ => false
   | .sub a b => eSubInt a b
 
-theorem nz_sound : ∀ s : Sym, nz s = true → s.denote ≠ 0
-  | .int n, h => by simpa [nz, Sym.denote] using h
+theorem nz0_sound : ∀ s : Sym, nz0 s = true → s.denote ≠ 0
+  | .int n, h => by simpa [nz0, Sym.denote] using h
   | .e, _ => Complex.exp_ne_zero _
   | .ipi k, h => by
-      simp only [nz, bne_iff_ne, ne_eq] at h
+      simp only [nz0, bne_iff_ne, ne_eq] at h
       simp [Sym.denote, h, Real.pi_ne_zero, Complex.I_ne_zero]
   | .exp _, _ => Complex.exp_ne_zero _
-  | .ln _, h => by simp [nz] at h
-  | .neg a, h => by simpa [Sym.denote] using nz_sound a h
-  | .add _ _, h => by simp [nz] at h
-  | .sub a b, h => by simpa [Sym.denote] using eSubInt_ne_zero (by simpa [nz] using h)
+  | .ln _, h => by simp [nz0] at h
+  | .neg a, h => by simpa [Sym.denote] using nz0_sound a h
+  | .add _ _, h => by simp [nz0] at h
+  | .sub a b, h => by simpa [Sym.denote] using eSubInt_ne_zero (by simpa [nz0] using h)
+
+/-- Provably nonzero: structurally, or because the value's box excludes `0` (`CertBox`). -/
+def nz (s : Sym) : Bool := nz0 s || boxNz s
+
+theorem nz_sound (s : Sym) (h : nz s = true) : s.denote ≠ 0 := by
+  unfold nz at h
+  simp only [Bool.or_eq_true] at h
+  rcases h with h | h
+  · exact nz0_sound s h
+  · exact boxNz_sound h
 
 /-! ### `exp` rules -/
 
@@ -206,10 +197,29 @@ theorem lnInvOk_sound {u : Sym} (h : lnInvOk u = true) : u.denote ≠ 0 := by
   · exact cls_pos_ne_zero h
   · exact nz_sound u h
 
+def negOf : Sym → Sym
+  | .int n => .int (-n)
+  | .ipi k => .ipi (-k)
+  | .neg u => u
+  | v => .neg v
+
+theorem negOf_sound (v : Sym) : (negOf v).denote = -v.denote := by
+  cases v <;> simp [negOf, Sym.denote]
+
+/-- `exp`, simplified: `exp 0`, `exp 1`, `exp(kiπ) = ±1`, `exp(ln u) = u`, and
+    `exp(a ± kiπ) = ±exp a`. -/
 def rExp : Sym → Sym
   | .int n => if n = 0 then .int 1 else if n = 1 then .e else .exp (.int n)
   | .ipi k => .int (if k % 2 = 0 then 1 else -1)
   | .ln u => if lnInvOk u = true then u else .exp (.ln u)
+  | .sub a b =>
+    match b with
+    | .ipi k => if k % 2 = 0 then rExp a else negOf (rExp a)
+    | _ => .exp (.sub a b)
+  | .add a b =>
+    match b with
+    | .ipi k => if k % 2 = 0 then rExp a else negOf (rExp a)
+    | _ => .exp (.add a b)
   | a => .exp a
 
 theorem exp_ipi (k : Int) :
@@ -245,19 +255,22 @@ theorem rExp_sound : ∀ a : Sym, (rExp a).denote = Complex.exp a.denote
   | .e => rfl
   | .exp _ => rfl
   | .neg _ => rfl
-  | .add _ _ => rfl
-  | .sub _ _ => rfl
+  | .sub a b => by
+    cases b with
+    | ipi k =>
+      simp only [rExp, Sym.denote]
+      rw [Complex.exp_sub, exp_ipi k, ← rExp_sound a]
+      split_ifs <;> simp [negOf_sound, div_neg]
+    | _ => rfl
+  | .add a b => by
+    cases b with
+    | ipi k =>
+      simp only [rExp, Sym.denote]
+      rw [Complex.exp_add, exp_ipi k, ← rExp_sound a]
+      split_ifs <;> simp [negOf_sound]
+    | _ => rfl
 
 /-! ### Subtraction rules (each proved sound separately) -/
-
-def negOf : Sym → Sym
-  | .int n => .int (-n)
-  | .ipi k => .ipi (-k)
-  | .neg u => u
-  | v => .neg v
-
-theorem negOf_sound (v : Sym) : (negOf v).denote = -v.denote := by
-  cases v <;> simp [negOf, Sym.denote]
 
 abbrev Rule := Sym → Sym → Option Sym
 
@@ -298,6 +311,17 @@ def r12 : Rule := fun a b =>
 def r13 : Rule := fun a b =>
   match a with
   | .sub u v => if u = b then some (negOf v) else none
+  | _ => none
+
+/-- `a − (c − kiπ) = (a − c) + kiπ`: keep `iπ` multiples outermost, for `rExp`. -/
+def r14 : Rule := fun a b =>
+  match b with
+  | .sub c (.ipi k) => some (.add (.sub a c) (.ipi k))
+  | _ => none
+/-- `(c − kiπ) − b = (c − b) − kiπ`. -/
+def r15 : Rule := fun a b =>
+  match a with
+  | .sub c (.ipi k) => some (.sub (.sub c b) (.ipi k))
   | _ => none
 
 theorem r2_sound : RuleSound r2 := by
@@ -397,15 +421,29 @@ theorem r13_sound : RuleSound r13 := by
     · simp [hu] at h
   next => cases h
 
-/-- Subtraction rules, tried in order (the same order as `lib/eml/proof.ts`). -/
-def subRules : List Rule := [r2, r3, r4, r5, r6, r8, r9, r10, r11, r12, r13]
+theorem r14_sound : RuleSound r14 := by
+  intro a b c h
+  simp only [r14] at h
+  split at h
+  next c' k => cases h; simp only [Sym.denote]; ring
+  next => cases h
+
+theorem r15_sound : RuleSound r15 := by
+  intro a b c h
+  simp only [r15] at h
+  split at h
+  next c' k => cases h; simp only [Sym.denote]; ring
+  next => cases h
+
+/-- Subtraction rules, tried in order (`lib/eml/proof.ts` order, then `r14`, `r15`). -/
+def subRules : List Rule := [r2, r3, r4, r5, r6, r8, r9, r10, r11, r12, r13, r14, r15]
 
 theorem subRules_sound : ∀ r ∈ subRules, RuleSound r := by
   intro r hr
   simp only [subRules, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   exacts [r2_sound, r3_sound, r4_sound, r5_sound, r6_sound, r8_sound, r9_sound,
-    r10_sound, r11_sound, r12_sound, r13_sound]
+    r10_sound, r11_sound, r12_sound, r13_sound, r14_sound, r15_sound]
 
 def rSub (a b : Sym) : Sym :=
   (subRules.findSome? (fun r => r a b)).getD (.sub a b)
@@ -424,13 +462,13 @@ def ipiStrip : Sym → Bool
   | .ipi k => decide (-1 ≤ k) && decide (k < 1)
   | _ => false
 
-def inStrip (u : Sym) : Bool := decide (1 ≤ cls u) || ipiStrip u
+def inStrip (u : Sym) : Bool := decide (1 ≤ cls u) || ipiStrip u || boxStrip u
 
 theorem inStrip_sound {u : Sym} (h : inStrip u = true) :
     -Real.pi ≤ u.denote.im ∧ u.denote.im < Real.pi := by
   unfold inStrip at h
   simp only [Bool.or_eq_true, decide_eq_true_eq] at h
-  rcases h with h | h
+  rcases h with (h | h) | h
   · obtain ⟨r, hr⟩ := (cls_sound u).1 h
     rw [hr, Complex.ofReal_im]
     constructor <;> linarith [Real.pi_pos]
@@ -442,17 +480,47 @@ theorem inStrip_sound {u : Sym} (h : inStrip u = true) :
       · simp [Sym.denote]; linarith [Real.pi_pos]
       · simp [Sym.denote]; exact ⟨Real.pi_pos.le, Real.pi_pos⟩
     | _ => simp [ipiStrip] at h
+  · exact boxStrip_sound h
+
+/-- Provably a positive real: by `cls`, or by the value's box. -/
+def posOk (u : Sym) : Bool := decide (cls u = 2) || boxPos u
+
+theorem posOk_sound {u : Sym} (h : posOk u = true) : ∃ r : ℝ, 0 < r ∧ u.denote = r := by
+  unfold posOk at h
+  simp only [Bool.or_eq_true, decide_eq_true_eq] at h
+  rcases h with h | h
+  · exact (cls_sound u).2 h
+  · exact boxPos_sound h
+
+/-- `ln a` with no structural rule: on the negative real axis (by box),
+    `ln a = ln(−a) − iπ` (lower cut). -/
+def lnRest (a : Sym) : Sym :=
+  if boxNeg a = true then rSub (.ln (negOf a)) (.ipi 1) else .ln a
+
+theorem lnRest_sound (a : Sym) : (lnRest a).denote = lowerLog a.denote := by
+  unfold lnRest
+  by_cases h : boxNeg a = true
+  · simp only [h, ↓reduceIte]
+    obtain ⟨r, hr0, hr⟩ := boxNeg_sound h
+    rw [rSub_sound]
+    show lowerLog (negOf a).denote - ((1 : Int) : ℂ) * (Real.pi * Complex.I) = lowerLog a.denote
+    rw [negOf_sound, hr, lowerLog_ofReal_neg hr0]
+    have hneg : -(r : ℂ) = ((-r : ℝ) : ℂ) := by push_cast; ring
+    rw [hneg, lowerLog_ofReal_pos (by linarith)]
+    simp
+  · simp only [h, Bool.false_eq_true, ↓reduceIte]
+    rfl
 
 def rLn : Sym → Option Sym
   | .int n =>
     if n = 1 then some (.int 0)
     else if n = 0 then none
     else if n = -1 then some (.ipi (-1))
-    else some (.ln (.int n))
+    else some (lnRest (.int n))
   | .e => some (.int 1)
-  | .neg u => if cls u = 2 then (rLn u).map (fun v => rSub v (.ipi 1)) else some (.ln (.neg u))
+  | .neg u => if posOk u = true then (rLn u).map (fun v => rSub v (.ipi 1)) else some (.ln (.neg u))
   | .exp u => if inStrip u = true then some u else some (.ln (.exp u))
-  | a => some (.ln a)
+  | a => some (lnRest a)
 
 theorem rLn_sound : ∀ (a : Sym) {b : Sym}, rLn a = some b → b.denote = lowerLog a.denote
   | .int n, b, h => by
@@ -466,24 +534,25 @@ theorem rLn_sound : ∀ (a : Sym) {b : Sym}, rLn a = some b → b.denote = lower
           have hc : ((-1 : Int) : ℂ) = ((-1 : ℝ) : ℂ) := by norm_num
           rw [hc, lowerLog_ofReal_neg (by norm_num : (-1 : ℝ) < 0)]
           simp
-        · simp [rLn, h1, h0, hm] at h; subst h; rfl
+        · simp [rLn, h1, h0, hm] at h; subst h; exact lnRest_sound _
   | .e, b, h => by
     simp [rLn] at h; subst h
     show ((1 : Int) : ℂ) = lowerLog (Complex.exp 1)
     rw [lowerLog_exp_of_im_zero (by simp)]; simp
   | .neg u, b, h => by
-    by_cases hu : cls u = 2
+    by_cases hu : posOk u = true
     · simp only [rLn, hu, ↓reduceIte, Option.map_eq_some_iff] at h
       obtain ⟨v, hv, rfl⟩ := h
       have hv' := rLn_sound u hv
-      obtain ⟨r, hr0, hr⟩ := (cls_sound u).2 hu
+      obtain ⟨r, hr0, hr⟩ := posOk_sound hu
       rw [rSub_sound, hv']
       show lowerLog u.denote - ((1 : Int) : ℂ) * (Real.pi * Complex.I) = lowerLog (-u.denote)
       rw [hr, lowerLog_ofReal_pos hr0]
       have hneg : -(r : ℂ) = ((-r : ℝ) : ℂ) := by push_cast; ring
       rw [hneg, lowerLog_ofReal_neg (by linarith), neg_neg]
       simp
-    · simp [rLn, hu] at h; subst h; rfl
+    · simp only [rLn, hu, Bool.false_eq_true, ↓reduceIte, Option.some.injEq] at h
+      subst h; rfl
   | .exp u, b, h => by
     by_cases hs : inStrip u = true
     · simp only [rLn, hs, ↓reduceIte, Option.some.injEq] at h
@@ -491,10 +560,10 @@ theorem rLn_sound : ∀ (a : Sym) {b : Sym}, rLn a = some b → b.denote = lower
       have hst := inStrip_sound hs
       exact (lowerLog_exp hst.1 hst.2).symm
     · simp [rLn, hs] at h; subst h; rfl
-  | .ipi _, b, h => by simp [rLn] at h; subst h; rfl
-  | .ln _, b, h => by simp [rLn] at h; subst h; rfl
-  | .add _ _, b, h => by simp [rLn] at h; subst h; rfl
-  | .sub _ _, b, h => by simp [rLn] at h; subst h; rfl
+  | .ipi _, b, h => by simp only [rLn, Option.some.injEq] at h; subst h; exact lnRest_sound _
+  | .ln _, b, h => by simp only [rLn, Option.some.injEq] at h; subst h; exact lnRest_sound _
+  | .add _ _, b, h => by simp only [rLn, Option.some.injEq] at h; subst h; exact lnRest_sound _
+  | .sub _ _, b, h => by simp only [rLn, Option.some.injEq] at h; subst h; exact lnRest_sound _
 
 /-! ### One `eml` gate and the RPN certificate checker -/
 

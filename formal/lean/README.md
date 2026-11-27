@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 15 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 17 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -68,6 +68,15 @@ The words the compiler substitutes for closed constants, proved from their prove
 - Over `ℂ`, the `±2πi` words (K = 31, lower cut): `evalRpn_twoPiI` → `2πi` and `evalRpn_negTwoPiI` → `−2πi`. The `−2πi` proof bounds `Im(e^e / P) ∈ [−3π, −π)` from `11 < e^e < 20.1` and `3 < π < 3.15`.
 - `−ln 2`, `−2/3`, `−5/3` via two general lemmas, `eml_one_scaledEE` (`eml 1 (c·e^e) = −ln c`) and `eml_one_negScaledEE` (`eml 1 (−c·e^e) = −ln c + iπ`) for real `c > 0`: `evalRpn_negLn2` (K = 27, `EmlExt`), `evalRpn_negTwoThirds` (K = 37, `EmlExt`), `evalRpn_negTwoThirds_strict` (K = 39, `ℂ`), `evalRpn_negFiveThirds` (K = 41, `EmlExt`).
 - Over `EmlExt` (`ln 0 = -∞`): `evalRpn_invE` (K = 17) → `exp (-1)`, `evalRpn_negE` (K = 17) → `-e`, `evalRpn_threeHalves` (K = 39) → `3/2`, `evalRpn_negThreeHalves` (K = 31) → `-3/2`, `evalRpn_fiveHalves` (K = 41) → `5/2`, `evalRpn_negFiveHalves` (K = 41) → `-5/2`.
+
+### Proof-carrying certificates ([`Eml/Cert.lean`](Eml/Cert.lean), [`Eml/CertSym.lean`](Eml/CertSym.lean), [`Eml/CertBox.lean`](Eml/CertBox.lean))
+
+`Eml.Cert.certify : List Bool → Option Sym` evaluates a constant program symbolically, and `certify_sound` (proved once) gives both `evalRpn (1 : ℂ) eml bits [] = some [s.denote]` and the same finite value in `EmlExt`, with every `ln` argument proved nonzero. A circuit is then certified by `certify_sound (by decide)`, with no per-circuit proof.
+
+- Structural rules: integer and `kiπ` arithmetic, `exp(ln u) = u` for provably nonzero `u`, `exp(a ± kiπ) = ±exp a`, `ln(exp u) = u` in the strip, `ln(−u) = ln u − iπ` for positive real `u`, and subtraction rules that keep `iπ` multiples outermost.
+- `Eml.CertBox`: `bnd s` gives integer fixed-point bounds (scale `2^48`) on the real and imaginary parts, proved by `bnd_sound`. `e` and `π` come from Mathlib's decimal bounds, `exp` on real boxes from `(1 ± x/2^16)^(±2^16)` with outward-rounded squarings, and `ln` from `1 − 1/x ≤ log x ≤ x − 1`. The checker uses boxes to prove values nonzero (`e − exp e`, `exp(e − ln 2) − exp e`), positive or negative real, or inside the strip. All of it is `Int` arithmetic, so the kernel evaluates it.
+- Coverage: 23 of the 43 closed stored words certify this way (check 114). The rest use `ln 0`, except `-ipi-strict`, which needs bounds for `exp` of a complex box.
+- `lib/eml/leanCert.ts` is an exact port; the bridge has the kernel re-decide `certify` on 237 programs (every program with K ≤ 13 plus every closed stored word) and compares.
 
 ### Genuine `eml`-word transcendental, circular, hyperbolic & logistic functions ([`Eml/Transcendental.lean`](Eml/Transcendental.lean))
 

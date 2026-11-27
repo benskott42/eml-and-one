@@ -172,7 +172,9 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
               rel="noreferrer"
               title={`Kernel-checked certificate in Eml.Cert (both ℂ and EmlExt, no ln 0): ${exports.leanCert.display}`}
             >
-              Lean 4 (ℂ · cert): {exports.leanCert.display}
+              Lean 4 (ℂ · cert)
+              {/* Box-certified values can be long symbolic terms; those stay in the tooltip. */}
+              {exports.leanCert.display.length <= 40 ? `: ${exports.leanCert.display}` : ""}
             </a>
           ) : null}
         </div>
