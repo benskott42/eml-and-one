@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "formal/lean/**"
+      - "lib/eml/export.ts"
+      - "lib/eml/leanCert.ts"
+      - "scripts/lean-bridge-check.ts"
       - ".github/workflows/lean.yml"
   pull_request:
     paths:
       - "formal/lean/**"
+      - "lib/eml/export.ts"
+      - "lib/eml/leanCert.ts"
+      - "scripts/lean-bridge-check.ts"
       - ".github/workflows/lean.yml"
   workflow_dispatch:
 
@@ -33,12 +39,15 @@ jobs:
       - name: Build Lean 4 proofs
         working-directory: formal/lean
         run: lake build
-      - name: Audit axioms (no sorryAx or custom axioms)
+      - name: Audit axioms (all Eml.* declarations)
         working-directory: formal/lean
-        run: |
-          out=$(lake env lean AxiomCheck.lean)
-          printf '%s\n' "$out"
-          if printf '%s\n' "$out" | grep -vE "^'[^']+' (depends on axioms: \[(propext|Classical\.choice|Quot\.sound)(, (propext|Classical\.choice|Quot\.sound))*\]|does not depend on any axioms)$"; then
-            echo "Unexpected axiom detected!" >&2
-            exit 1
-          fi
+        run: lake env lean AxiomCheck.lean
+      - name: Setup Node.js for UI-Lean bridge check
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install JS dependencies
+        run: npm ci --ignore-scripts
+      - name: Cross-check UI theorem links, Cert.certify, and snippets in Lean 4
+        run: npx tsx scripts/lean-bridge-check.ts

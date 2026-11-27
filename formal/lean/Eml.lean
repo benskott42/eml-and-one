@@ -11,3 +11,4 @@ import Eml.DirectedInf
 import Eml.Transcendental
 import Eml.InverseTrig
 import Eml.MinimalityZero
+import Eml.Cert

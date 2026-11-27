@@ -8,6 +8,7 @@ import {
   nodeToLean4Snippet,
   traceRpnSteps,
 } from "@/lib/eml/export";
+import { certifyRpnForLean } from "@/lib/eml/leanCert";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { deriveProof } from "@/lib/eml/proof";
@@ -61,6 +62,7 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
       latex: nodeToLatex(node),
       lean: nodeToLean4Snippet(node),
       leanTheorem: pureBits ? leanTheoremForRpn(pureBits) : null,
+      leanCert: pureBits ? certifyRpnForLean(pureBits) : null,
     };
   }, [node, pureBits]);
 
@@ -157,9 +159,20 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
               href={`https://github.com/benskott42/eml-and-one/blob/main/formal/lean/Eml/${exports.leanTheorem.file}`}
               target="_blank"
               rel="noreferrer"
-              title={`Machine-checked in Lean 4 + Mathlib: ${exports.leanTheorem.theorem} (${exports.leanTheorem.value})`}
+              title={`Machine-checked in Lean 4 + Mathlib (${exports.leanTheorem.model === "C" ? "plain ℂ, no ln 0" : "EmlExt, uses ln 0 = −∞"}): ${exports.leanTheorem.theorem} (${exports.leanTheorem.value})`}
             >
-              Lean 4: {exports.leanTheorem.theorem}
+              Lean 4 ({exports.leanTheorem.model === "C" ? "ℂ" : "EmlExt · ln 0 = −∞"}):{" "}
+              {exports.leanTheorem.theorem}
+            </a>
+          ) : exports.leanCert ? (
+            <a
+              className="ti-chip"
+              href="https://github.com/benskott42/eml-and-one/blob/main/formal/lean/Eml/Cert.lean"
+              target="_blank"
+              rel="noreferrer"
+              title={`Kernel-checked certificate in Eml.Cert (both ℂ and EmlExt, no ln 0): ${exports.leanCert.display}`}
+            >
+              Lean 4 (ℂ · cert): {exports.leanCert.display}
             </a>
           ) : null}
         </div>

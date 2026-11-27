@@ -27,10 +27,27 @@ const checkModule: CheckModule = {
     assert("nodeToLean4(0)", nodeToLean4(zeroNode) === "eml 1 (eml (eml 1 1) 1)");
     assert(
       "nodeToLean4Snippet(0)",
-      Boolean(nodeToLean4Snippet(zeroNode)?.includes("import Eml.Basic") && nodeToLean4Snippet(zeroNode)?.includes("eml 1 (eml (eml 1 1) 1)")),
+      Boolean(
+        nodeToLean4Snippet(zeroNode)?.includes("import Eml.Cert") &&
+          nodeToLean4Snippet(zeroNode)?.includes("certify_sound (by decide)"),
+      ),
     );
-    assert("leanTheoremForRpn(0)", leanTheoremForRpn("111E1EE")?.theorem === "Eml.RpnSoundness.evalRpn_0x74");
-    assert("leanTheoremForRpn(2)", leanTheoremForRpn("111111EEE1EE11EE1EE")?.theorem === "Eml.Records.evalRpn_two");
+    assert(
+      "leanTheoremForRpn(0)",
+      leanTheoremForRpn("111E1EE")?.theorem === "Eml.RpnSoundness.evalRpn_0x74" &&
+        leanTheoremForRpn("111E1EE")?.model === "C",
+    );
+    assert(
+      "leanTheoremForRpn(2)",
+      leanTheoremForRpn("111111EEE1EE11EE1EE")?.theorem === "Eml.Records.evalRpn_two" &&
+        leanTheoremForRpn("111111EEE1EE11EE1EE")?.model === "C",
+    );
+    assert(
+      "leanTheoremForRpn(pi)",
+      leanTheoremForRpn(
+        "1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E",
+      )?.model === "EmlExt",
+    );
     assert("leanTheoremForRpn(unknown)", leanTheoremForRpn("111EE") === null);
     assert("nodeToLatex(0)", typeof nodeToLatex(zeroNode) === "string" && nodeToLatex(zeroNode)!.includes("\\ln"));
 

@@ -1,6 +1,7 @@
 import { eml, type C } from "./complex";
 import { binaryToRpn } from "./binary";
 import { formatC } from "./format";
+import { certifyRpnForLean, rpnToLeanBits } from "./leanCert";
 import { type Node } from "./node";
 import { isProgram } from "./programIndex";
 
@@ -95,49 +96,136 @@ export function nodeToLean4(node: Node, maxNodes = MAX_EXPORT_NODES): string | n
 }
 
 /**
+ * Extract the pure RPN string (`1` and `E`) for a compact pure circuit,
+ * or `null` if it contains variables/inputs or exceeds `maxNodes`.
+ */
+function pureRpnFromNode(node: Node, maxNodes = MAX_EXPORT_NODES): string | null {
+  if (countTreeNodes(node, maxNodes + 1) > maxNodes) return null;
+  let pure = true;
+  const out: string[] = [];
+  const go = (n: Node) => {
+    if (!pure) return;
+    if (n.type === "one") {
+      out.push("1");
+      return;
+    }
+    if (n.type === "eml" && n.a && n.b) {
+      go(n.a);
+      go(n.b);
+      out.push("E");
+      return;
+    }
+    pure = false;
+  };
+  go(node);
+  return pure ? out.join("") : null;
+}
+
+/** Collect distinct variable names (`var` nodes) in a compact circuit. */
+function freeVarsFromNode(node: Node, maxNodes = MAX_EXPORT_NODES): string[] {
+  if (countTreeNodes(node, maxNodes + 1) > maxNodes) return [];
+  const vars = new Set<string>();
+  const stack: Node[] = [node];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (!cur) break;
+    if (cur.type === "var") vars.add(cur.name);
+    else if (cur.type === "eml" && cur.a && cur.b) stack.push(cur.b, cur.a);
+  }
+  return [...vars].sort();
+}
+
+/**
  * Format a compact circuit as a ready-to-compile Lean 4 + Mathlib snippet
- * against `formal/lean/Eml/Basic.lean`.
+ * against `formal/lean/Eml/`.
+ *
+ * - If the circuit is pure and certified by `Eml.Cert.certify`, emits a
+ *   kernel-checked `theorem circuit_eval` proved in one line by `certify_sound (by decide)`.
+ * - Else if it matches a pre-proved record in `LEAN_VERIFIED_THEOREMS`, emits a
+ *   compiling check against that theorem.
+ * - Otherwise emits a compiling `noncomputable def circuit : ℂ` (binding any
+ *   free variables as parameters).
  */
 export function nodeToLean4Snippet(node: Node, maxNodes = MAX_EXPORT_NODES): string | null {
   const term = nodeToLean4(node, maxNodes);
   if (!term) return null;
-  return `import Eml.Basic\n\nopen Eml\n\nnoncomputable def circuit : ℂ :=\n  ${term}\n`;
+
+  const rpn = pureRpnFromNode(node, maxNodes);
+  if (rpn) {
+    const cert = certifyRpnForLean(rpn, maxNodes);
+    if (cert) {
+      const bits = rpnToLeanBits(rpn);
+      return [
+        "import Eml.Cert",
+        "",
+        "open Eml Eml.Binary Eml.Extended Eml.Cert",
+        "",
+        `def circuitBits : List Bool := ${bits}`,
+        "",
+        `/-- Kernel-checked value: \`${cert.display}\` (both \`ℂ\` and \`EmlExt\`, zero \`ln 0\`). -/`,
+        "theorem circuit_eval :",
+        `    evalRpn (1 : ℂ) eml circuitBits [] = some [(${cert.leanSym} : Sym).denote] ∧`,
+        `    evalRpn (EmlExt.finite 1) extEml circuitBits [] = some [.finite (${cert.leanSym} : Sym).denote] :=`,
+        "  certify_sound (by decide)",
+        "",
+      ].join("\n");
+    }
+
+    const ref = leanTheoremForRpn(rpn);
+    if (ref) {
+      return [
+        "import Eml",
+        "",
+        "open Eml Eml.Binary Eml.Extended",
+        "",
+        `-- Machine-checked (${ref.model === "C" ? "ℂ" : "EmlExt, uses ln 0 = −∞"}): ${ref.value}`,
+        `#check @${ref.theorem}`,
+        "",
+      ].join("\n");
+    }
+  }
+
+  const vars = freeVarsFromNode(node, maxNodes);
+  const binders = vars.length > 0 ? ` (${vars.join(" ")} : ℂ)` : "";
+  return `import Eml.Basic\n\nopen Eml\n\nnoncomputable def circuit${binders} : ℂ :=\n  ${term}\n`;
 }
 
 export type LeanTheoremRef = {
   theorem: string;
   file: string;
   value: string;
+  /** `"C"` = proved over plain `ℂ` (no `ln 0`); `"EmlExt"` = proved in `EmlExt` (uses `ln 0 = −∞`). */
+  model: "C" | "EmlExt";
 };
 
 /** Exact RPN words with machine-checked Lean 4 + Mathlib `evalRpn` proofs in `formal/lean/Eml/`. */
 export const LEAN_VERIFIED_THEOREMS: Record<string, LeanTheoremRef> = {
-  "1": { theorem: "Eml.RpnSoundness.evalRpn_0x1", file: "RpnSoundness.lean", value: "1" },
-  "11E": { theorem: "Eml.RpnSoundness.evalRpn_0x6", file: "RpnSoundness.lean", value: "e" },
-  "111E1EE": { theorem: "Eml.RpnSoundness.evalRpn_0x74", file: "RpnSoundness.lean", value: "0 (minimal K=7: Eml.MinimalityZero.zero_minimal_k7)" },
-  "11111E1EEEE": { theorem: "Eml.Extended.evalRpn_0x7d0", file: "Extended.lean", value: "−∞" },
-  "11111E1EEEE11EE": { theorem: "Eml.Extended.evalRpn_0x7d0c", file: "Extended.lean", value: "−1" },
-  "11111EEE1EE11E1EE": { theorem: "Eml.Records.evalRpn_negOne_strict", file: "Records.lean", value: "−1 (no ln 0)" },
-  "111111EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_two", file: "Records.lean", value: "2" },
-  "111111E1EEEE11E1E1EEE": { theorem: "Eml.Extended.evalRpn_0x1fa1a8", file: "Extended.lean", value: "+iπ (lower cut)" },
-  "111111E1E1EEE1EE11E1EEE": { theorem: "Eml.Records.evalRpn_ipi_strict", file: "Records.lean", value: "+iπ (no ln 0)" },
-  "111111E1EEEE11E1E1EEE11EE": { theorem: "Eml.Extended.evalRpn_0x1fa1a8c", file: "Extended.lean", value: "−2" },
-  "11111111EEE1EE11EE1EEE1EE": { theorem: "Eml.Records.evalRpn_ln2", file: "Records.lean", value: "ln 2" },
-  "11111111EEE1EE11EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_three", file: "Records.lean", value: "3" },
-  "111E11111E1EEEE11E1E1EE1EEE1E": { theorem: "Eml.Extended.evalRpn_half", file: "Extended.lean", value: "1/2" },
-  "1111111E1EEEE11EEE11E1E1EEE1E": { theorem: "Eml.Extended.evalRpn_negHalf", file: "Extended.lean", value: "−1/2" },
-  "111E111111EEE1EE11E1EEE1E1EEE1E": { theorem: "Eml.Records.evalRpn_half_strict", file: "Records.lean", value: "1/2 (no ln 0)" },
-  "1111111EEE1EE11E1EEE11E1E1EEE1E": { theorem: "Eml.Records.evalRpn_negHalf_strict", file: "Records.lean", value: "−1/2 (no ln 0)" },
-  "1111111E1E1EEE1EE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_half_alt", file: "Records.lean", value: "1/2 (alt, no ln 0)" },
-  "111E111111E1EEEE11EEE11E1E1EE1EEE1E": { theorem: "Eml.Extended.evalRpn_third", file: "Extended.lean", value: "1/3" },
-  "111E111111EEE1EE11E1EEE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_third_strict", file: "Records.lean", value: "1/3 (no ln 0)" },
-  "11111111EEE1EE11EE1EEE11E1E1EEE11EE": { theorem: "Eml.Records.evalRpn_negThree", file: "Records.lean", value: "−3" },
-  "1111111111EEE1EE11EEE1EE11EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_four", file: "Records.lean", value: "4" },
-  "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_twoThirds", file: "Records.lean", value: "2/3" },
-  "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE": { theorem: "Eml.Records.evalRpn_negThird", file: "Records.lean", value: "−1/3" },
-  "111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1E": { theorem: "Eml.Extended.evalRpn_i", file: "Extended.lean", value: "i" },
-  "111111111EEE1EE11EE1EEEE1EE111111111EEE1EE11EE1EEE1EEE1EE1E1E": { theorem: "Eml.Records.evalRpn_sqrt2", file: "Records.lean", value: "√2" },
-  "1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E": { theorem: "Eml.Extended.evalRpn_pi", file: "Extended.lean", value: "π" },
+  "1": { theorem: "Eml.RpnSoundness.evalRpn_0x1", file: "RpnSoundness.lean", value: "1", model: "C" },
+  "11E": { theorem: "Eml.RpnSoundness.evalRpn_0x6", file: "RpnSoundness.lean", value: "e", model: "C" },
+  "111E1EE": { theorem: "Eml.RpnSoundness.evalRpn_0x74", file: "RpnSoundness.lean", value: "0 (minimal K=7: Eml.MinimalityZero.zero_minimal_k7)", model: "C" },
+  "11111E1EEEE": { theorem: "Eml.Extended.evalRpn_0x7d0", file: "Extended.lean", value: "−∞", model: "EmlExt" },
+  "11111E1EEEE11EE": { theorem: "Eml.Extended.evalRpn_0x7d0c", file: "Extended.lean", value: "−1", model: "EmlExt" },
+  "11111EEE1EE11E1EE": { theorem: "Eml.Records.evalRpn_negOne_strict", file: "Records.lean", value: "−1 (no ln 0)", model: "C" },
+  "111111EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_two", file: "Records.lean", value: "2", model: "C" },
+  "111111E1EEEE11E1E1EEE": { theorem: "Eml.Extended.evalRpn_0x1fa1a8", file: "Extended.lean", value: "+iπ (lower cut)", model: "EmlExt" },
+  "111111E1E1EEE1EE11E1EEE": { theorem: "Eml.Records.evalRpn_ipi_strict", file: "Records.lean", value: "+iπ (no ln 0)", model: "C" },
+  "111111E1EEEE11E1E1EEE11EE": { theorem: "Eml.Extended.evalRpn_0x1fa1a8c", file: "Extended.lean", value: "−2", model: "EmlExt" },
+  "11111111EEE1EE11EE1EEE1EE": { theorem: "Eml.Records.evalRpn_ln2", file: "Records.lean", value: "ln 2", model: "C" },
+  "11111111EEE1EE11EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_three", file: "Records.lean", value: "3", model: "C" },
+  "111E11111E1EEEE11E1E1EE1EEE1E": { theorem: "Eml.Extended.evalRpn_half", file: "Extended.lean", value: "1/2", model: "EmlExt" },
+  "1111111E1EEEE11EEE11E1E1EEE1E": { theorem: "Eml.Extended.evalRpn_negHalf", file: "Extended.lean", value: "−1/2", model: "EmlExt" },
+  "111E111111EEE1EE11E1EEE1E1EEE1E": { theorem: "Eml.Records.evalRpn_half_strict", file: "Records.lean", value: "1/2 (no ln 0)", model: "C" },
+  "1111111EEE1EE11E1EEE11E1E1EEE1E": { theorem: "Eml.Records.evalRpn_negHalf_strict", file: "Records.lean", value: "−1/2 (no ln 0)", model: "C" },
+  "1111111E1E1EEE1EE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_half_alt", file: "Records.lean", value: "1/2 (alt, no ln 0)", model: "C" },
+  "111E111111E1EEEE11EEE11E1E1EE1EEE1E": { theorem: "Eml.Extended.evalRpn_third", file: "Extended.lean", value: "1/3", model: "EmlExt" },
+  "111E111111EEE1EE11E1EEE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_third_strict", file: "Records.lean", value: "1/3 (no ln 0)", model: "C" },
+  "11111111EEE1EE11EE1EEE11E1E1EEE11EE": { theorem: "Eml.Records.evalRpn_negThree", file: "Records.lean", value: "−3", model: "C" },
+  "1111111111EEE1EE11EEE1EE11EEE1EE11EE1EE": { theorem: "Eml.Records.evalRpn_four", file: "Records.lean", value: "4", model: "C" },
+  "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE1E": { theorem: "Eml.Records.evalRpn_twoThirds", file: "Records.lean", value: "2/3", model: "C" },
+  "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE": { theorem: "Eml.Records.evalRpn_negThird", file: "Records.lean", value: "−1/3", model: "C" },
+  "111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1E": { theorem: "Eml.Extended.evalRpn_i", file: "Extended.lean", value: "i", model: "EmlExt" },
+  "111111111EEE1EE11EE1EEEE1EE111111111EEE1EE11EE1EEE1EEE1EE1E1E": { theorem: "Eml.Records.evalRpn_sqrt2", file: "Records.lean", value: "√2", model: "C" },
+  "1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E": { theorem: "Eml.Extended.evalRpn_pi", file: "Extended.lean", value: "π", model: "EmlExt" },
 };
 
 /** Look up the machine-checked Lean 4 theorem for an exact RPN program, if one exists. */

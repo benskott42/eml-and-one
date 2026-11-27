@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added proof-carrying circuit certificates: [`formal/lean/Eml/Cert.lean`](formal/lean/Eml/Cert.lean) proves `certify_sound` once and for all over both `ℂ` and `EmlExt` (zero `ln 0`), mirrored in `lib/eml/leanCert.ts` so `Copy Lean 4` emits a kernel-checked `theorem circuit_eval := certify_sound (by decide)` for certifiable pure circuits.
+- Hardened the UI–Lean bridge and CI: labeled `CircuitInspector` badges explicitly as `ℂ` vs `EmlExt · ln 0 = −∞` (plus `ℂ · cert`), replaced the hand-maintained `AxiomCheck.lean` list with an automatic walk over all 696 `Eml.*` declarations, and added `scripts/lean-bridge-check.ts` in `.github/workflows/lean.yml` to typecheck all 26 UI theorem links, 26 `Cert.certify` cross-checks, and 5 compiled snippets.
+
 ## 1.0.12 — 2026-11-26
 
 - Expanded `formal/lean/` to 13 modules and 87 audited theorems: added `Eml.InverseTrig` (genuine `eml`-word `artanh`, `arctan`, `arsinh`, `arcosh`, `arcsin`, `arccos` + `artanh(x > 1)`, `arctan(−2i)`, and `arccos(2)` branch-cut proofs), `Eml.CycleLemma` (Raney's Cycle Lemma and Catalan enumeration `catalan n`), `Eml.MinimalityZero` (unconditional machine-checked minimality of `0` at K = 7 over `ℂ` and `EmlExt`), and 5 more `ln 0`-free `best-known.json` records (`1/2-strict`, `−1/2-strict`, `1/2-alt`, `1/3-strict`, `√2` K 61).
