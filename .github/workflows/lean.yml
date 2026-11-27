@@ -6,6 +6,7 @@ on:
     paths:
       - "formal/lean/**"
       - "lib/eml/export.ts"
+      - "lib/eml/best-known.json"
       - "lib/eml/leanCert.ts"
       - "scripts/lean-bridge-check.ts"
       - ".github/workflows/lean.yml"
@@ -13,6 +14,7 @@ on:
     paths:
       - "formal/lean/**"
       - "lib/eml/export.ts"
+      - "lib/eml/best-known.json"
       - "lib/eml/leanCert.ts"
       - "scripts/lean-bridge-check.ts"
       - ".github/workflows/lean.yml"

@@ -228,6 +228,17 @@ export const LEAN_VERIFIED_THEOREMS: Record<string, LeanTheoremRef> = {
   "11111E1E1EEEE11111E1EEEE11111E1E1EEEE1E1E1EEE": { theorem: "Eml.Extended.evalRpn_negIpi", file: "Extended.lean", value: "−iπ (lower cut)", model: "EmlExt" },
   "11111E1E1EEEE11111111E1E1EEEE1E1E1EEE1EE11E1EEE": { theorem: "Eml.Records.evalRpn_negIpi_strict", file: "Records.lean", value: "−iπ (lower cut, no ln 0)", model: "C" },
   "1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E": { theorem: "Eml.Extended.evalRpn_pi", file: "Extended.lean", value: "π", model: "EmlExt" },
+  "111111EEE1EE11EE1EE1E": { theorem: "Eml.MoreRecords.evalRpn_eSq", file: "MoreRecords.lean", value: "e²", model: "C" },
+  "11111EEE1EE11E1EE1E": { theorem: "Eml.MoreRecords.evalRpn_invE_strict", file: "MoreRecords.lean", value: "1/e (no ln 0)", model: "C" },
+  "1111E11E1EEE1EE11E1E1EE": { theorem: "Eml.MoreRecords.evalRpn_negE_strict", file: "MoreRecords.lean", value: "−e (no ln 0)", model: "C" },
+  "111E1EE1111111EEE1EE11E1EEE11E1E1EEE1E1EE": { theorem: "Eml.MoreRecords.evalRpn_threeHalves_strict", file: "MoreRecords.lean", value: "3/2 (no ln 0)", model: "C" },
+  "1111111EEE1EE11E1EEE11E1E1EEE11EE": { theorem: "Eml.MoreRecords.evalRpn_negThreeHalves_strict", file: "MoreRecords.lean", value: "−3/2 (no ln 0)", model: "C" },
+  "11111E1EEEE11EE1E": { theorem: "Eml.MoreRecords.evalRpn_invE", file: "MoreRecords.lean", value: "1/e", model: "EmlExt" },
+  "11111E1EEEE11E1EE": { theorem: "Eml.MoreRecords.evalRpn_negE", file: "MoreRecords.lean", value: "−e", model: "EmlExt" },
+  "111E1EE1111111E1EEEE11EEE11E1E1EEE1E1EE": { theorem: "Eml.MoreRecords.evalRpn_threeHalves", file: "MoreRecords.lean", value: "3/2", model: "EmlExt" },
+  "1111111E1EEEE11EEE11E1E1EEE11EE": { theorem: "Eml.MoreRecords.evalRpn_negThreeHalves", file: "MoreRecords.lean", value: "−3/2", model: "EmlExt" },
+  "111E1EE1111111E1EEEE11EEE11E1E1EEE11EE1EE": { theorem: "Eml.MoreRecords.evalRpn_fiveHalves", file: "MoreRecords.lean", value: "5/2", model: "EmlExt" },
+  "111111111E1EEEE11EEE11E1E1EEE11EEE1EE11EE": { theorem: "Eml.MoreRecords.evalRpn_negFiveHalves", file: "MoreRecords.lean", value: "−5/2", model: "EmlExt" },
 };
 
 /** Look up the machine-checked Lean 4 theorem for an exact RPN program, if one exists. */

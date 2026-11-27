@@ -1,7 +1,7 @@
 # Next Steps Plan (Post-1.0.12 / 2026-11-26)
 
 Every engineering item in [architecture-plan.md](architecture-plan.md) is done:
-- `formal/lean/` is built on Lean 4.28.0 + Mathlib over `ℂ`, `EmlExt`, and `EmlDir` across 14 modules with automatic axiom auditing over all `Eml.*` declarations, proof-carrying circuit certificates (`Eml.Cert`), 100% coverage of all 28 constant records in `lib/eml/best-known.json` (including `-ipi` K 45 and `-ipi-strict` K 47), general inverse-trig branch-cut theorems, Raney's Cycle Lemma + Catalan enumeration, unconditional minimality of `0` at K 7, and CI cross-checking of UI theorem links and compiled snippets (`scripts/lean-bridge-check.ts`).
+- `formal/lean/` is built on Lean 4.28.0 + Mathlib over `ℂ`, `EmlExt`, and `EmlDir` across 15 modules with automatic axiom auditing over all `Eml.*` declarations, proof-carrying circuit certificates (`Eml.Cert`), 100% coverage of all 39 constant records in `lib/eml/best-known.json` (including `-ipi` K 45 and `-ipi-strict` K 47, and the 11 substitution words in `Eml.MoreRecords`; check 112 fails if a stored word has no theorem link), general inverse-trig branch-cut theorems, Raney's Cycle Lemma + Catalan enumeration, unconditional minimality of `0` at K 7, and CI cross-checking of UI theorem links and compiled snippets (`scripts/lean-bridge-check.ts`).
 - `tools/minimality/decide.py 13` runs automatically in `.github/workflows/ci.yml`.
 - Structural precision/pole/large-angle notes in `lib/eml/node.ts` persist across fresh browser sessions via `localStorage` (`exportPrecisionRegistry` / `importPrecisionRegistry`).
 
