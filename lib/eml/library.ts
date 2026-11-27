@@ -463,6 +463,9 @@ function foldSmallInts(op: "add" | "sub" | "mul", a: Node, b: Node, generic: Nod
   const ia = provenInteger(a);
   const ib = provenInteger(b);
   if (ia === undefined || ib === undefined) return generic;
+  // A product of two nonzero integers with either past ±64 is past ±64: do not multiply huge ones to see that.
+  const big = (v: bigint) => v > BigInt(64) || v < BigInt(-64);
+  if (op === "mul" && ia !== BigInt(0) && ib !== BigInt(0) && (big(ia) || big(ib))) return generic;
   const value = op === "add" ? ia + ib : op === "sub" ? ia - ib : ia * ib;
   if (value === BigInt(0) || value < BigInt(-64) || value > BigInt(64)) return generic;
   return preferShorter(generic, integerNode(Number(value)));

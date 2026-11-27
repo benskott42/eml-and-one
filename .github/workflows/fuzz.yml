@@ -51,3 +51,7 @@ jobs:
         run: npx tsx tools/fuzz/fuzz.ts --count "${{ github.event.inputs.count || '1000' }}" --seed "${{ steps.seed.outputs.seed }}" --json fuzz.json
       - name: Check certified values against mpmath
         run: python3 tools/fuzz/oracle.py fuzz.json
+      - name: Input robustness (parse fuzz)
+        # Random and mangled text into the expression, x/y and program fields: every input
+        # must work or fail with the calculator's own error, within the time limit.
+        run: npx tsx tools/fuzz/parse-fuzz.ts --count 20000 --seed "${{ steps.seed.outputs.seed }}" --slow-ms 8000

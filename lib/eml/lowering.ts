@@ -1,6 +1,6 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, learn, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBesideSum, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
+import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, intDecade, intProductFits, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, learn, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBesideSum, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
 
 export { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isTwoScaled, markInfiniteSource, markMaybeInfinite, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteNonfinite, noteOverflow, noteScaledShell };
 
@@ -352,12 +352,23 @@ function ivMul(a: Range, b: Range): Range {
 
 type CombinedRange = { range: Range; int?: bigint };
 
+/**
+ * The largest exact integer product a circuit keeps: twice the largest literal
+ * (1e1000000), so a literal and its square stay exact and a chain of products stops.
+ * Uncapped, x·x·…·x with x = 1e1000000 multiplied ever larger integers, and counting
+ * their digits took 32 s on the page's main thread (parse fuzz, seed 3).
+ */
+const CIRCUIT_INT_DIGITS_MAX = 2_100_000;
+
 function combine(a: Node, b: Node, op: "add" | "sub" | "mul" | "div"): CombinedRange {
   const ra = rangeOf(a);
   const rb = rangeOf(b);
   const ia = provenInteger(a);
   const ib = provenInteger(b);
-  if (op !== "div" && ia !== undefined && ib !== undefined && (op === "add" || op === "sub" || op === "mul")) {
+  // A product past CIRCUIT_INT_DIGITS_MAX is tracked by its range, not as an integer.
+  const exactInt =
+    op === "add" || op === "sub" || (op === "mul" && ia !== undefined && ib !== undefined && intProductFits(ia, ib, CIRCUIT_INT_DIGITS_MAX));
+  if (ia !== undefined && ib !== undefined && exactInt) {
     const value = op === "add" ? ia + ib : op === "sub" ? ia - ib : ia * ib;
     return { range: intRange(value), int: value };
   }
@@ -1072,8 +1083,7 @@ function magnitudeDecade(node: Node): number | null {
   }
   const n = provenInteger(node);
   if (n === undefined || n === BigInt(0)) return null;
-  const digits = (n < BigInt(0) ? -n : n).toString();
-  return digits.length - 1;
+  return intDecade(n < BigInt(0) ? -n : n);
 }
 
 /**

@@ -887,6 +887,35 @@ export function derivePow(out: Node, a: Node, b: Node): Node {
 
 const PROVEN_INT_DIGITS_MAX = 12_000;
 
+/**
+ * Whether a product of two proven integers stays within `maxDigits` decimal digits,
+ * judged from the hex lengths (linear time) before multiplying.
+ */
+export function intProductFits(ia: bigint, ib: bigint, maxDigits = PROVEN_INT_DIGITS_MAX): boolean {
+  const ha = (ia < BigInt(0) ? -ia : ia).toString(16).length;
+  const hb = (ib < BigInt(0) ? -ib : ib).toString(16).length;
+  return (ha + hb - 2) * 1204 <= maxDigits * 1000;
+}
+
+/**
+ * floor(log10 n) for n > 0. Past about 1900 digits it reads the bit length and the
+ * top 53 bits instead of a decimal conversion (a million-digit toString is ~90 ms,
+ * and it ran on every product); only a value within ~10^(−8) of a power of 10 pays
+ * for one exact comparison.
+ */
+export function intDecade(n: bigint): number {
+  const hex = n.toString(16);
+  if (hex.length <= 1600) return n.toString().length - 1;
+  const lead = parseInt(hex[0] ?? "1", 16);
+  const bits = (hex.length - 1) * 4 + Math.floor(Math.log2(lead)) + 1;
+  const top = Number(n >> BigInt(bits - 53));
+  const estimate = Math.log10(top) + (bits - 53) * Math.LOG10E * Math.LN2;
+  const k = Math.floor(estimate);
+  if (estimate - k > 1e-8 && k + 1 - estimate > 1e-8) return k;
+  const near = Math.round(estimate);
+  return n >= BigInt(10) ** BigInt(near) ? near : near - 1;
+}
+
 function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
   const ia = provenInteger(a);
   if (ia === undefined) return undefined;
@@ -902,10 +931,7 @@ function intOf(op: Op, a: Node, b: Node | undefined): bigint | undefined {
     const out = ia - ib;
     return exceedsDigits(out, PROVEN_INT_DIGITS_MAX) ? undefined : out;
   }
-  // Fast upper bound on product digit count before multiplying huge BigInts.
-  const ha = (ia < BigInt(0) ? -ia : ia).toString(16).length;
-  const hb = (ib < BigInt(0) ? -ib : ib).toString(16).length;
-  if ((ha + hb - 2) * 1204 > PROVEN_INT_DIGITS_MAX * 1000) return undefined;
+  if (!intProductFits(ia, ib)) return undefined;
   const out = ia * ib;
   return exceedsDigits(out, PROVEN_INT_DIGITS_MAX) ? undefined : out;
 }
