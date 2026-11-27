@@ -347,14 +347,19 @@ const checks: CheckModule[] = [
         const rows = JSON.parse(hugeWire.stdout) as Array<{ source: string; text: string; unverified: boolean; singular: string | null; close?: boolean; ms: number }>;
         for (const row of rows) {
           const text = row.text.replace(/\u200b/g, "");
-          const wantFlag = flagRows.includes(row.source) || bareRows.includes(row.source);
-          const freshOk = wantFlag
+          const wantFlag = flagRows.includes(row.source);
+          // A bare remembered sum crosses the wire with its record (wire.ts bsH/bsO), so the
+          // fresh worker prints the same value as in-process (the π row raises to 448 digits).
+          const bare = bareRows.includes(row.source);
+          const freshOk = bare
+            ? row.unverified !== true && text === bareWant[row.source] && row.ms < 5000
+            : wantFlag
             ? row.unverified === true && row.ms < 200
             : row.unverified !== true && row.singular === null && row.close === true && row.ms < 200 && (row.source === intSource ? text === twoPlus : text === "0");
           if (!freshOk) {
             ctx.fail("FAIL fresh huge pair", row.source, `${row.ms}ms`, row.unverified ? "unverified" : text, row.singular, row.close);
           } else {
-            console.log("fresh", row.source, wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
+            console.log("fresh", row.source, bare ? text : wantFlag ? "unverified" : text === twoPlus ? "2×10^400+2" : "exact 0", `${row.ms}ms`);
           }
         }
       }
