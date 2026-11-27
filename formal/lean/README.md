@@ -66,6 +66,7 @@ The words the compiler substitutes for closed constants, proved from their prove
 
 - Over `ℂ` (no `ln 0`): `evalRpn_eSq` (K = 21) → `e²`, `evalRpn_invE_strict` (K = 19) → `exp (-1)`, `evalRpn_negE_strict` (K = 23) → `-e`, `evalRpn_threeHalves_strict` (K = 41) → `3/2`, `evalRpn_negThreeHalves_strict` (K = 33) → `-3/2`.
 - Over `ℂ`, the `±2πi` words (K = 31, lower cut): `evalRpn_twoPiI` → `2πi` and `evalRpn_negTwoPiI` → `−2πi`. The `−2πi` proof bounds `Im(e^e / P) ∈ [−3π, −π)` from `11 < e^e < 20.1` and `3 < π < 3.15`.
+- `−ln 2`, `−2/3`, `−5/3` via two general lemmas, `eml_one_scaledEE` (`eml 1 (c·e^e) = −ln c`) and `eml_one_negScaledEE` (`eml 1 (−c·e^e) = −ln c + iπ`) for real `c > 0`: `evalRpn_negLn2` (K = 27, `EmlExt`), `evalRpn_negTwoThirds` (K = 37, `EmlExt`), `evalRpn_negTwoThirds_strict` (K = 39, `ℂ`), `evalRpn_negFiveThirds` (K = 41, `EmlExt`).
 - Over `EmlExt` (`ln 0 = -∞`): `evalRpn_invE` (K = 17) → `exp (-1)`, `evalRpn_negE` (K = 17) → `-e`, `evalRpn_threeHalves` (K = 39) → `3/2`, `evalRpn_negThreeHalves` (K = 31) → `-3/2`, `evalRpn_fiveHalves` (K = 41) → `5/2`, `evalRpn_negFiveHalves` (K = 41) → `-5/2`.
 
 ### Genuine `eml`-word transcendental, circular, hyperbolic & logistic functions ([`Eml/Transcendental.lean`](Eml/Transcendental.lean))
@@ -95,7 +96,7 @@ Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 
 - **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
-- *(All 41 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link or if a link's stored `lean` value disagrees with the exact engine, `scripts/lean-bridge-check.ts` proves each link's word evaluates to exactly that stored value, and `lean.yml` runs when `best-known.json` changes.)*
+- *(All 45 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link or if a link's stored `lean` value disagrees with the exact engine, `scripts/lean-bridge-check.ts` proves each link's word evaluates to exactly that stored value, and `lean.yml` runs when `best-known.json` changes.)*
 
 ## Building and auditing locally
 

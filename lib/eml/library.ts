@@ -40,7 +40,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -479,6 +479,8 @@ const QUOTIENT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "-3/2": ["-3/2", "-3/2-strict"],
   "5/2": ["5/2"],
   "-5/2": ["-5/2"],
+  "-2/3": ["-2/3", "-2/3-strict"],
+  "-5/3": ["-5/3"],
 };
 
 function gcd(x: bigint, y: bigint): bigint {
@@ -511,24 +513,49 @@ function quotientWord(a: Node, b: Node, generic: Node): Node {
   return word ? derive("div", tagReal(word, Number(n) / Number(d)), a, b) : generic;
 }
 
+/** ±iπ and ±2πi words, by the recorded multiple of πi. */
+const ANGLE_WORDS: Readonly<Record<string, readonly string[]>> = {
+  "1": ["ipi", "ipi-strict"],
+  "-1": ["-ipi", "-ipi-strict"],
+  "2": ["2ipi"],
+  "-2": ["-2ipi"],
+};
+
 /**
- * ±2πi has a K 31 word without ln 0 (formal/lean/Eml/MoreRecords.lean). The value is
- * known from the recorded angle fact (q·π·i), however it was spelled: 2*pi*i was K 199.
+ * A value the compiler has recorded exactly, as a multiple of πi (angle fact) or as a
+ * rational (rational or decimal fact), takes its stored word under the preferShorter
+ * policy, however it was spelled: 2*pi*i was K 199, pi*i K 165, 1/3−1 K 47.
+ * The word carries the same exact fact, so later rules still see the value.
+ * The parser applies it to each subexpression the user wrote (parse.ts foldAst), never
+ * inside a library builder: tan(π/2) builds exp(2i·π/2), and swapping that iπ for its
+ * word turned "near a pole" into an indeterminate form.
  */
-function angleWord(generic: Node): Node {
+export function constantWord(generic: Node): Node {
   if (isUnverified(generic) || isExactUnsure(generic) || maxSeriesErrorExp(generic) !== undefined) return generic;
+  // A recognized result (cos((2/3)·π) is −1/2) keeps its own node: the word is shared,
+  // and the "recognized exactly" note belongs to this circuit.
+  if (isRecognized(generic)) return generic;
   const angle = factsOf(generic).angle;
-  if (!angle || angle.unit !== "imag" || angle.q.d !== BigInt(1)) return generic;
-  const id = angle.q.n === BigInt(2) ? "2ipi" : angle.q.n === BigInt(-2) ? "-2ipi" : null;
-  if (!id) return generic;
-  const word = shortestWord(generic, [id]);
-  if (!word) return generic;
-  tagValue(word, { re: 0, im: Number(angle.q.n) * Math.PI });
-  return learn(word, { angle });
+  if (angle && angle.unit === "imag" && angle.q.d === BigInt(1)) {
+    const ids = ANGLE_WORDS[angle.q.n.toString()];
+    const word = ids ? shortestWord(generic, ids) : null;
+    if (!word) return generic;
+    tagValue(word, { re: 0, im: Number(angle.q.n) * Math.PI });
+    return learn(word, { angle });
+  }
+  const rational = exactRationalOf(generic);
+  if (rational && rational.d !== BigInt(1)) {
+    const ids = QUOTIENT_WORDS[`${rational.n}/${rational.d}`];
+    const word = ids ? shortestWord(generic, ids) : null;
+    if (!word) return generic;
+    tagReal(word, Number(rational.n) / Number(rational.d));
+    return learn(word, { rational });
+  }
+  return generic;
 }
 
 export function tSub(a: Node, b: Node): Node {
-  return angleWord(foldSmallInts("sub", a, b, tSubBuild(a, b)));
+  return foldSmallInts("sub", a, b, tSubBuild(a, b));
 }
 
 function tSubBuild(a: Node, b: Node): Node {
@@ -547,12 +574,17 @@ export function tNeg(b: Node): Node {
     const word = shortestWord(generic, ["-e", "-e-strict"]);
     return word ? tagReal(word, -Math.E) : generic;
   }
+  // −ln 2 is a K 27 word; negating the ln 2 word is K 39.
+  if (b === programNode("ln2")) {
+    const word = shortestWord(generic, ["-ln2"]);
+    return word ? tagReal(word, -Math.LN2) : generic;
+  }
   // −2 and −3 are words (K 25, K 35); negating 2 or 3 is K 33 and K 43.
   if (!buildingInteger() && closedConstant(b)) {
     const int = provenInteger(b);
     if (int !== undefined && int !== BigInt(0) && int >= BigInt(-64) && int <= BigInt(64)) return preferShorter(generic, integerNode(-Number(int)));
   }
-  return angleWord(generic);
+  return generic;
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -567,7 +599,7 @@ function largeRealSum(a: Node, b: Node): Node | null {
 }
 
 export function tAdd(a: Node, b: Node): Node {
-  return angleWord(foldSmallInts("add", a, b, tAddBuild(a, b)));
+  return foldSmallInts("add", a, b, tAddBuild(a, b));
 }
 
 function tAddBuild(a: Node, b: Node): Node {
@@ -881,7 +913,7 @@ function offAxis(node: Node): boolean {
 }
 
 export function tMul(a: Node, b: Node): Node {
-  return angleWord(foldSmallInts("mul", a, b, tMulBuild(a, b)));
+  return foldSmallInts("mul", a, b, tMulBuild(a, b));
 }
 
 function tMulBuild(a: Node, b: Node): Node {
@@ -984,7 +1016,7 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
-  return angleWord(quotientWord(a, b, tDivBuild(a, b)));
+  return quotientWord(a, b, tDivBuild(a, b));
 }
 
 function tDivBuild(a: Node, b: Node): Node {

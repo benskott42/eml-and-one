@@ -248,6 +248,10 @@ export const LEAN_VERIFIED_THEOREMS: Record<string, LeanTheoremRef> = {
   "111111111E1EEEE11EEE11E1E1EEE11EEE1EE11EE": { theorem: "Eml.MoreRecords.evalRpn_negFiveHalves", file: "MoreRecords.lean", value: "−5/2", model: "EmlExt", lean: "EmlExt.finite (-(5 : ℂ) / 2)" },
   "111111E1E1EEEE1EE1111E1E1EEE1EE": { theorem: "Eml.MoreRecords.evalRpn_twoPiI", file: "MoreRecords.lean", value: "+2πi (lower cut, no ln 0)", model: "C", lean: "(2 * Real.pi * Complex.I : ℂ)" },
   "11111E1E1EEEE11111E1E1EEEE1E1EE": { theorem: "Eml.MoreRecords.evalRpn_negTwoPiI", file: "MoreRecords.lean", value: "−2πi (lower cut, no ln 0)", model: "C", lean: "(-(2 * Real.pi * Complex.I) : ℂ)" },
+  "111E111111E1EEEE11EEE1E1EEE": { theorem: "Eml.MoreRecords.evalRpn_negLn2", file: "MoreRecords.lean", value: "−ln 2", model: "EmlExt", lean: "EmlExt.finite (-Complex.log 2)" },
+  "111E111111E1EEEE11EEE11E1E1EE1EEE11EE": { theorem: "Eml.MoreRecords.evalRpn_negTwoThirds", file: "MoreRecords.lean", value: "−2/3", model: "EmlExt", lean: "EmlExt.finite (-(2 : ℂ) / 3)" },
+  "111E111111EEE1EE11E1EEE11E1E1EE1EEE11EE": { theorem: "Eml.MoreRecords.evalRpn_negTwoThirds_strict", file: "MoreRecords.lean", value: "−2/3 (no ln 0)", model: "C", lean: "(-(2 : ℂ) / 3 : ℂ)" },
+  "11111111E1EEEE11E1E1EEE11EEE11E1E1EEE11EE": { theorem: "Eml.MoreRecords.evalRpn_negFiveThirds", file: "MoreRecords.lean", value: "−5/3", model: "EmlExt", lean: "EmlExt.finite (-(5 : ℂ) / 3)" },
 };
 
 /** Look up the machine-checked Lean 4 theorem for an exact RPN program, if one exists. */
