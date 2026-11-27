@@ -12,4 +12,6 @@ import Eml.Transcendental
 import Eml.InverseTrig
 import Eml.MinimalityZero
 import Eml.Cert
+import Eml.CertExt
+import Eml.AppSub
 import Eml.MoreRecords

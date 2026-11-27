@@ -409,3 +409,88 @@ export function certifyRpnForLean(program: string, maxLen = 201): LeanCert | nul
     display: formatLeanSymDisplay(sym),
   };
 }
+
+// ---- EmlExt certificates (formal/lean/Eml/CertExt.lean): ln 0 = −∞ ----
+
+export type LeanXSym = { kind: "fin"; s: LeanSym } | { kind: "posInf" } | { kind: "negInf" };
+
+export type LeanExtCert = {
+  rpn: string;
+  xsym: LeanXSym;
+  /** Lean term of type `Eml.Cert.XSym`, e.g. `XSym.negInf` or `XSym.fin (Sym.int (-1))`. */
+  leanXSym: string;
+  display: string;
+};
+
+function xExp(a: LeanXSym): LeanXSym {
+  if (a.kind === "fin") return { kind: "fin", s: rExp(a.s) };
+  if (a.kind === "posInf") return a;
+  return { kind: "fin", s: { kind: "int", n: Z0 } };
+}
+
+function xLn(b: LeanXSym): LeanXSym | null {
+  if (b.kind === "fin") {
+    if (b.s.kind === "int" && b.s.n === Z0) return { kind: "negInf" };
+    if (!nz(b.s)) return null;
+    const l = rLn(b.s);
+    return l ? { kind: "fin", s: l } : null;
+  }
+  if (b.kind === "posInf") return b;
+  return null;
+}
+
+function xSub(a: LeanXSym, b: LeanXSym): LeanXSym | null {
+  if (a.kind === "fin") {
+    if (b.kind === "fin") return { kind: "fin", s: rSub(a.s, b.s) };
+    return { kind: b.kind === "negInf" ? "posInf" : "negInf" };
+  }
+  if (b.kind === "fin") return a;
+  if (a.kind === "posInf" && b.kind === "negInf") return a;
+  if (a.kind === "negInf" && b.kind === "posInf") return a;
+  return null;
+}
+
+function xGate(a: LeanXSym, b: LeanXSym): LeanXSym | null {
+  const l = xLn(b);
+  return l ? xSub(xExp(a), l) : null;
+}
+
+export function formatLeanXSymTerm(x: LeanXSym): string {
+  if (x.kind === "posInf") return "XSym.posInf";
+  if (x.kind === "negInf") return "XSym.negInf";
+  return `XSym.fin ${formatLeanSymTerm(x.s, true)}`;
+}
+
+export function formatLeanXSymDisplay(x: LeanXSym): string {
+  if (x.kind === "posInf") return "+∞";
+  if (x.kind === "negInf") return "−∞";
+  return formatLeanSymDisplay(x.s);
+}
+
+/**
+ * Run the exact mirror of `Eml.Cert.certifyExt` (EmlExt, `ln 0 = −∞`) on a pure
+ * RPN or binary program. Returns `null` if the program is invalid or not
+ * certifiable. Agrees with `certifyRpnForLean` whenever that succeeds.
+ */
+export function certifyRpnForLeanExt(program: string, maxLen = 201): LeanExtCert | null {
+  const trimmed = program.trim();
+  if (!trimmed || trimmed.length > maxLen) return null;
+  const rpn = /^[01]+$/.test(trimmed) ? binaryToRpn(trimmed) : trimmed;
+  if (!/^[1E]+$/.test(rpn) || !isProgram(rpn)) return null;
+
+  const stack: Array<LeanXSym | null> = [];
+  for (let i = 0; i < rpn.length; i += 1) {
+    if (rpn[i] === "1") {
+      stack.push({ kind: "fin", s: { kind: "int", n: Z1 } });
+    } else {
+      if (stack.length < 2) return null;
+      const b = stack.pop()!;
+      const a = stack.pop()!;
+      stack.push(a && b ? xGate(a, b) : null);
+    }
+  }
+  if (stack.length !== 1 || !stack[0]) return null;
+  const xsym = stack[0];
+  return { rpn, xsym, leanXSym: formatLeanXSymTerm(xsym), display: formatLeanXSymDisplay(xsym) };
+}
+

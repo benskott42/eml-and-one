@@ -8,7 +8,7 @@ import {
   nodeToLean4Snippet,
   traceRpnSteps,
 } from "@/lib/eml/export";
-import { certifyRpnForLean } from "@/lib/eml/leanCert";
+import { certifyRpnForLean, certifyRpnForLeanExt } from "@/lib/eml/leanCert";
 import { type Node } from "@/lib/eml/node";
 import { pressPreviewForNode } from "@/lib/eml/presses";
 import { deriveProof } from "@/lib/eml/proof";
@@ -63,6 +63,7 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
       lean: nodeToLean4Snippet(node),
       leanTheorem: pureBits ? leanTheoremForRpn(pureBits) : null,
       leanCert: pureBits ? certifyRpnForLean(pureBits) : null,
+      leanCertExt: pureBits ? certifyRpnForLeanExt(pureBits) : null,
     };
   }, [node, pureBits]);
 
@@ -175,6 +176,17 @@ function CircuitInspectorBody({ node }: { node: Node | null }) {
               Lean 4 (ℂ · cert)
               {/* Box-certified values can be long symbolic terms; those stay in the tooltip. */}
               {exports.leanCert.display.length <= 40 ? `: ${exports.leanCert.display}` : ""}
+            </a>
+          ) : exports.leanCertExt ? (
+            <a
+              className="ti-chip"
+              href="https://github.com/benskott42/eml-and-one/blob/main/formal/lean/Eml/CertExt.lean"
+              target="_blank"
+              rel="noreferrer"
+              title={`Kernel-checked certificate in Eml.CertExt (EmlExt, uses ln 0 = −∞): ${exports.leanCertExt.display}`}
+            >
+              Lean 4 (EmlExt · cert)
+              {exports.leanCertExt.display.length <= 40 ? `: ${exports.leanCertExt.display}` : ""}
             </a>
           ) : null}
         </div>

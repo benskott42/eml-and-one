@@ -1,7 +1,7 @@
 import { eml, type C } from "./complex";
 import { binaryToRpn } from "./binary";
 import { formatC } from "./format";
-import { certifyRpnForLean, rpnToLeanBits } from "./leanCert";
+import { certifyRpnForLean, certifyRpnForLeanExt, rpnToLeanBits } from "./leanCert";
 import { type Node } from "./node";
 import { isProgram } from "./programIndex";
 
@@ -96,6 +96,44 @@ export function nodeToLean4(node: Node, maxNodes = MAX_EXPORT_NODES): string | n
 }
 
 /**
+ * What the compiler emits for `x − y` with variable operands (lowering.ts `scaledRot`):
+ * `k · rotSub(x/k, y/k)` with `k = √(y²) − (−1)` and the K 21 iπ word, 565 tokens.
+ * `Eml.AppSub.appSub_correct` (formal/lean/Eml/AppSub.lean) proves that this exact word
+ * evaluates to `a − b` in `EmlDir` for every `a b : ℂ`, `b = 0` included. Check 115 fails
+ * if the compiler stops emitting it; the Lean bridge compares it with `appSubToks`.
+ */
+export const APP_SUB_WORD =
+  "1111111111111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEE" +
+  "E1EE111111111E1EEEE11E1E1EEEEE1EE11111111111E1EEEE11E1E1EEEEE1EE111111111111EEE1" +
+  "EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1xE1EE1111111" +
+  "11111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1yE1" +
+  "EE1E1EEE1EE1111111111E1EEEE11E1E1EEEEE1EE111111111111EEE1EE11EE1EEEE1EE1111111yE" +
+  "E1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1yE1EE111111111111EEE1EE11EE1EEEE1EE" +
+  "1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1yE1EE1E1EEE1EE1E1EEE1EE1EE" +
+  "1EE1E";
+
+/**
+ * RPN of a circuit whose leaves are `1` or variables, with each variable as its
+ * name (`1`, `x`, `y`, `E`), or `null` for any other leaf or past `maxNodes`.
+ */
+export function variableRpnFromNode(node: Node, maxNodes = 4096): string | null {
+  if (countTreeNodes(node, maxNodes + 1) > maxNodes) return null;
+  const out: string[] = [];
+  const stack: { n: Node; seen: boolean }[] = [{ n: node, seen: false }];
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    const n = frame.n;
+    if (n.type === "one") out.push("1");
+    else if (n.type === "var") out.push(n.name);
+    else if (n.type === "eml" && n.a && n.b) {
+      if (frame.seen) out.push("E");
+      else stack.push({ n, seen: true }, { n: n.b, seen: false }, { n: n.a, seen: false });
+    } else return null;
+  }
+  return out.join("");
+}
+
+/**
  * Extract the pure RPN string (`1` and `E`) for a compact pure circuit,
  * or `null` if it contains variables/inputs or exceeds `maxNodes`.
  */
@@ -143,6 +181,8 @@ function freeVarsFromNode(node: Node, maxNodes = MAX_EXPORT_NODES): string[] {
  *   kernel-checked `theorem circuit_eval` proved in one line by `certify_sound (by decide)`.
  * - Else if it matches a pre-proved record in `LEAN_VERIFIED_THEOREMS`, emits a
  *   compiling check against that theorem.
+ * - Else if `Eml.Cert.certifyExt` certifies it in `EmlExt` (`ln 0 = −∞`), emits a
+ *   theorem proved by `certifyExt_sound (by decide)`.
  * - Otherwise emits a compiling `noncomputable def circuit : ℂ` (binding any
  *   free variables as parameters).
  */
@@ -180,6 +220,23 @@ export function nodeToLean4Snippet(node: Node, maxNodes = MAX_EXPORT_NODES): str
         "",
         `-- Machine-checked (${ref.model === "C" ? "ℂ" : "EmlExt, uses ln 0 = −∞"}): ${ref.value}`,
         `#check @${ref.theorem}`,
+        "",
+      ].join("\n");
+    }
+
+    const ext = certifyRpnForLeanExt(rpn, maxNodes);
+    if (ext) {
+      return [
+        "import Eml.CertExt",
+        "",
+        "open Eml Eml.Binary Eml.Extended Eml.Cert",
+        "",
+        `def circuitBits : List Bool := ${rpnToLeanBits(rpn)}`,
+        "",
+        `/-- Kernel-checked value in \`EmlExt\` (uses \`ln 0 = −∞\`): \`${ext.display}\`. -/`,
+        "theorem circuit_eval :",
+        `    evalRpn (EmlExt.finite 1) extEml circuitBits [] = some [(${ext.leanXSym} : XSym).denote] :=`,
+        "  certifyExt_sound (by decide)",
         "",
       ].join("\n");
     }

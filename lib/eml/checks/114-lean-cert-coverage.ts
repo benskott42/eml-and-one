@@ -1,5 +1,12 @@
 import { exactReport, exactToFloat } from "../exact";
-import { LEAN_BOX_SCALE, certifyRpnForLean, leanSymBox, type LeanSym } from "../leanCert";
+import {
+  LEAN_BOX_SCALE,
+  certifyRpnForLean,
+  certifyRpnForLeanExt,
+  formatLeanXSymTerm,
+  leanSymBox,
+  type LeanSym,
+} from "../leanCert";
 import { SHORT_PROGRAMS, nodeFromCompact } from "../programs";
 import type { CheckModule } from "./_types";
 
@@ -12,12 +19,19 @@ import type { CheckModule } from "./_types";
  * For every certificate: its symbolic value agrees with the exact engine, and the
  * TypeScript box of every subterm contains the subterm's numeric value (the Lean
  * boxes are proved sound; this catches a transcription slip in the port).
- * The remaining words all use ln 0 except -ipi-strict, which needs complex exp bounds.
+ * The EmlExt checker (`Eml.Cert.certifyExt`, `ln 0 = −∞`) certifies EXT_ONLY as
+ * well, and agrees with `certify` wherever that succeeds. pi, -ipi and -ipi-strict
+ * need bounds for exp and ln of genuinely complex values.
  */
 const CERTIFIED = [
   "0", "2", "3", "4", "e", "ln2", "sqrt2", "1/2-strict", "-1/2-strict", "1/2-alt", "2/3", "-1/3",
   "-3", "1/3-strict", "e^2", "3/2-strict", "-3/2-strict", "1/e-strict", "-e-strict", "2ipi", "-2ipi",
   "ipi-strict", "-2/3-strict",
+];
+
+const EXT_ONLY = [
+  "-inf", "-1", "-2", "1/2", "-1/2", "ipi", "i", "1/3", "3/2", "-3/2", "5/2", "-5/2", "1/e", "-e",
+  "-ln2", "-2/3", "-5/3",
 ];
 
 type Cx = { re: number; im: number };
@@ -72,10 +86,30 @@ const checkModule: CheckModule = {
   weight: 2000,
   run(ctx) {
     const got: string[] = [];
+    const gotExt: string[] = [];
     let boxes = 0;
     for (const [name, word] of Object.entries(SHORT_PROGRAMS)) {
       if (/[xy]/.test(word)) continue;
       const cert = certifyRpnForLean(word, 100000);
+      const ext = certifyRpnForLeanExt(word, 100000);
+      if (cert && (!ext || ext.xsym.kind !== "fin" || ext.leanXSym !== formatLeanXSymTerm({ kind: "fin", s: cert.sym }))) {
+        ctx.fail(`FAIL lean certifyExt ${name}: ${ext?.leanXSym ?? "none"}, certify gives ${cert.leanSym}`);
+      }
+      if (!cert && ext) {
+        gotExt.push(name);
+        const exact = exactReport(nodeFromCompact(word));
+        const w = exact.unverified ? null : exactToFloat(exact.value);
+        if (ext.xsym.kind !== "fin") {
+          const want = ext.xsym.kind === "negInf" ? -Infinity : Infinity;
+          if (!w || w.re !== want) ctx.fail(`FAIL lean certifyExt ${name}: ${ext.display}, exact ${w?.re}`);
+        } else {
+          const v = value(ext.xsym.s);
+          const tol = w ? 1e-9 * Math.max(1, Math.hypot(w.re, w.im)) : 0;
+          if (!w || Math.abs(v.re - w.re) > tol || Math.abs(v.im - w.im) > tol) {
+            ctx.fail(`FAIL lean certifyExt ${name}: ${ext.display} = ${v.re}+${v.im}i, exact ${w?.re}+${w?.im}i`);
+          }
+        }
+      }
       if (!cert) continue;
       got.push(name);
       const v = value(cert.sym);
@@ -103,7 +137,14 @@ const checkModule: CheckModule = {
     const extra = got.filter((n) => !CERTIFIED.includes(n));
     if (missing.length) ctx.fail(`FAIL lean cert coverage lost: ${missing.join(", ")}`);
     if (extra.length) ctx.fail(`FAIL lean cert coverage gained (update CERTIFIED): ${extra.join(", ")}`);
-    console.log("lean cert coverage", `${got.length} words certified, ${boxes} subterm boxes checked`);
+    const missingExt = EXT_ONLY.filter((n) => !gotExt.includes(n));
+    const extraExt = gotExt.filter((n) => !EXT_ONLY.includes(n));
+    if (missingExt.length) ctx.fail(`FAIL lean EmlExt cert coverage lost: ${missingExt.join(", ")}`);
+    if (extraExt.length) ctx.fail(`FAIL lean EmlExt cert coverage gained (update EXT_ONLY): ${extraExt.join(", ")}`);
+    console.log(
+      "lean cert coverage",
+      `${got.length} words in ℂ, ${gotExt.length} more in EmlExt, ${boxes} subterm boxes checked`,
+    );
   },
 };
 
