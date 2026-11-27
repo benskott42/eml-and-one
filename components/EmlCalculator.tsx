@@ -685,8 +685,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
         return;
       }
       const from = parsed.rotatedFrom;
-      const to = from && from.includes("0") ? parsed.word.replace(/E/g, "0") : parsed.word;
-      const notice = from ? `Rotated ${from} to ${to}.` : null;
+      const rotated = from ? `Rotated ${from} to ${parsed.word}.` : null;
+      // A bare string of 0 and 1 is presses, not a program number: say which one was read.
+      const raw = source.trim();
+      const asBits = /^[01\s]+$/.test(raw) ? `Read ${raw} as presses ${parsed.word}. Program number ${raw.replace(/\s+/g, "")} is #${raw.replace(/\s+/g, "")}.` : null;
+      const notice = [asBits, rotated].filter(Boolean).join(" ") || null;
       // A word of x and y reads the fields as they are now, keeping the parsed circuits for exact mode.
       const numbers: Record<string, C> = {};
       const varNodes: Record<string, Node> = {};
@@ -965,11 +968,11 @@ export function EmlCalculator({ initialKeys }: { initialKeys?: KeyTables } = {})
             }}
           >
             <label className="ti-label">
-              Program number (#110), presses, or a word of 1 and E
+              Program number (#110) or a word of 1 and E (11E); binary as 0b110
               <input
                 value={programField}
                 onChange={(event) => setProgramField(event.target.value)}
-                placeholder="#110, 110, or 11E"
+                placeholder="#110 or 11E"
                 className="ti-field"
                 spellCheck={false}
                 autoComplete="off"

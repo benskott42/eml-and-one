@@ -49,13 +49,13 @@ export function PressLine({ node }: { node: Node | null }) {
   return (
     <div>
       <p className="ti-press">
-        {view.preview} ({view.presses.toString()} presses)
+        {pressWord(view.preview)} ({view.presses.toString()} presses)
       </p>
       <div className="ti-press-meta">
-        <span>1 = 1 key, 0 = EML. Within one length, a higher program number is a lower binary value, because 1 comes before E.</span>
+        <span>1 is the 1 key and E is the EML key. In binary, 1 is 1 and E is 0, so within one length a higher program number is a lower binary value.</span>
         {binInfo ? (
           <span>
-            Binary value: {binInfo.hex}
+            Binary: 0b{view.preview} · {binInfo.hex}
             {binInfo.decimal ? ` (${binInfo.decimal})` : ""}
             {metrics ? ` · max stack ${metrics.maxStack}` : ""}
           </span>
@@ -79,12 +79,12 @@ export function PressLine({ node }: { node: Node | null }) {
           <button
             type="button"
             className="ti-lcd-btn"
-            aria-label="Copy press string"
+            aria-label="Copy word"
             onClick={() => {
               // No clipboard outside a secure context; that must not throw.
               const clip = navigator.clipboard;
               if (!clip) return;
-              void clip.writeText(view.full).then(() => setCopied(true)).catch(() => undefined);
+              void clip.writeText(pressWord(view.full)).then(() => setCopied(true)).catch(() => undefined);
             }}
           >
             {copied ? "Copied" : "Copy"}
@@ -93,6 +93,11 @@ export function PressLine({ node }: { node: Node | null }) {
       </div>
     </div>
   );
+}
+
+/** Press bits as the key word: 0 is the EML key, written E. x and y stay. */
+function pressWord(bits: string): string {
+  return bits.replace(/0/g, "E");
 }
 
 function golfLabel(id: string): string {

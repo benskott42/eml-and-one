@@ -206,7 +206,7 @@ async function main() {
       clear.click();
     });
   }
-  const program = view.document.querySelector("input[placeholder='#110, 110, or 11E']");
+  const program = view.document.querySelector("input[placeholder='#110 or 11E']");
   const setProgram = async (value: string) => {
     if (!(program instanceof view.HTMLInputElement)) {
       console.error("missing program field");
@@ -255,6 +255,19 @@ async function main() {
   await clickNamed("Load");
   if (!screenText().includes("Rotated E11 to 11E.")) {
     console.error("a rotated word was silent", screenText());
+    failed = true;
+  }
+  // A bare 0/1 string is presses; the screen says so and names the program number spelling.
+  await setProgram("110");
+  await clickNamed("Load");
+  await waitResult();
+  if (!resultText().includes("2.718") || !screenText().includes("Read 110 as presses 11E. Program number 110 is #110.")) {
+    console.error("bare 110 did not say it was read as presses", resultText(), screenText());
+    failed = true;
+  }
+  // The note spells the word as on the keys, 11E, not 1 1 E or 110.
+  if (!screenText().includes("11E · K 3") || !screenText().includes("Binary: 0b110")) {
+    console.error("program notation is not the 11E word with labelled binary", screenText());
     failed = true;
   }
   await setProgram("xE");
@@ -628,7 +641,7 @@ async function main() {
   };
   await rotClick("hardware");
   await rotWait(40);
-  const progInput = rotView.document.querySelector("input[placeholder='#110, 110, or 11E']");
+  const progInput = rotView.document.querySelector("input[placeholder='#110 or 11E']");
   const loadBtn = rotBtn("Load");
   if (!(progInput instanceof rotView.HTMLInputElement) || !(loadBtn instanceof rotView.HTMLButtonElement)) {
     console.error("missing program input or Load button in rot test");
