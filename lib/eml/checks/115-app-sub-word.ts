@@ -36,6 +36,26 @@ const expected: Record<string, (x: Cx, y: Cx) => Cx | null> = {
   },
   exp: (x) => ({ re: Math.exp(x.re) * Math.cos(x.im), im: Math.exp(x.re) * Math.sin(x.im) }),
   ln: (x) => (x.re === 0 && x.im === 0 ? null : { re: Math.log(Math.hypot(x.re, x.im)), im: Math.atan2(x.im, x.re) }),
+  subOne: (x) => ({ re: x.re - 1, im: x.im }),
+  addOne: (x) => ({ re: x.re + 1, im: x.im }),
+  subTwo: (x) => ({ re: x.re - 2, im: x.im }),
+  pow: (x, y) => {
+    // principal x^y = exp(y · log x), for x ≠ 0
+    if (x.re === 0 && x.im === 0) return null;
+    const lr = Math.log(Math.hypot(x.re, x.im));
+    const li = Math.atan2(x.im, x.re);
+    const re = y.re * lr - y.im * li;
+    const im = y.re * li + y.im * lr;
+    return { re: Math.exp(re) * Math.cos(im), im: Math.exp(re) * Math.sin(im) };
+  },
+  expE: (x) => ({ re: Math.exp(x.re) * Math.cos(x.im), im: Math.exp(x.re) * Math.sin(x.im) }),
+  mulTwo: (x) => ({ re: 2 * x.re, im: 2 * x.im }),
+  divTwo: (x) => ({ re: x.re / 2, im: x.im / 2 }),
+  cube: (x) => {
+    const re2 = x.re * x.re - x.im * x.im;
+    const im2 = 2 * x.re * x.im;
+    return { re: re2 * x.re - im2 * x.im, im: re2 * x.im + im2 * x.re };
+  },
 };
 
 const points: [Cx, Cx][] = [

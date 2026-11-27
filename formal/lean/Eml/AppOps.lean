@@ -12,12 +12,17 @@
     1/x                                           `dirEmlDiv 1 x`
     √x      the stored `sqrt` word                `dirEmlSqrt x`
     exp x   `x1E`;   ln x   `11xE1EE`
+    x − 1, x + 1, x − 2   the unscaled rotation `rotSub(x, c)` (`appRot`)
+    x ^ y   `exp(y·ln x)`;  e ^ x  `exp(x·ln e)`;  x ^ 3  `exp(3·ln x)` with the `3` word
+    x · 2, x / 2                                  `dirEmlMul x dirCTwo`, `dirEmlDiv x dirCTwo`
 
   Each token list below is the compiler's word for that operator (`APP_WORDS` in
   `lib/eml/export.ts`; check 115 and the Lean bridge compare them), and unfolds by `rfl`
   to the Lean circuit. Values, in `EmlDir`:
 
-  * `x + y`, `2·x`, `x²`, `√x`, `exp x`: exactly the value, for all inputs.
+  * `x + y`, `2·x`, `x²`, `√x`, `exp x`, `x ± 1`, `x − 2`, `e^x`, `x·2`, `x/2`, `x³`: exactly
+    the value, for all inputs.
+  * `x ^ y`: exactly the principal `a ^ b` for `a ≠ 0`.
   * `x · y` and `−x`: the value up to the sign of zero (`(−1)·0 = −0`, as in IEEE).
   * `x / y` and `1/x` for a nonzero divisor, up to the sign of a zero quotient.
   * `ln x`: the principal `Complex.log x` for `x ≠ 0`, and `−∞` at `0`.
@@ -27,10 +32,11 @@
   Zero `sorry`, zero custom axioms.
 -/
 import Eml.AppSub
+import Eml.CertDir
 
 namespace Eml.AppOps
 
-open Eml Eml.DirectedInf Eml.AppSub
+open Eml Eml.DirectedInf Eml.AppSub Eml.Cert
 
 /-! ### Reading a result -/
 
@@ -290,6 +296,119 @@ theorem appAdd_finite (a b : ℂ) : appAdd (.finite a) (.finite b) = .finite (a 
   congr 1
   ring
 
+/-! ### `x − c` for a constant `c`: the unscaled rotation -/
+
+/-- The compiler's `x − b` for a constant `b` inside the float strip (`rotSub`, no scale):
+    `(c·(x − b) − c·(b − b)) / c`, with the `subOfExp` shortcut on the outer subtraction. -/
+noncomputable def appRot (x b : EmlDir) : EmlDir :=
+  dirEmlDiv (shortSub (mulBody dirCIpi (dirRawSub x b)) (dirEmlMul dirCIpi (dirRawSub b b)))
+    dirCIpi
+
+/-- The unscaled rotation is `a − v` for all finite `a`, `v`. -/
+theorem appRot_finite (a v : ℂ) : appRot (.finite a) (.finite v) = .finite (a - v) := by
+  set c : ℂ := Real.pi * Complex.I with hc
+  have hc_re : c.re = 0 := by simp [c]
+  have hc_ne : c ≠ 0 := by simp [c, Real.pi_ne_zero, Complex.I_ne_zero]
+  unfold appRot
+  rw [dirCIpi_eq]
+  have hm : dirExp (mulBody (.finite c) (dirRawSub (.finite a) (.finite v))) =
+      .finite (c * (a - v + 2 * Real.pi * Complex.I * (lowerUnwind v : ℂ))) := by
+    rw [← dirEmlExp_eq]
+    show dirEmlMul (.finite c) (dirRawSub (.finite a) (.finite v)) = _
+    rw [dirRawSub_eq, dirEmlMul_eq hc_ne (le_of_eq hc_re.symm)]
+  rw [shortSub_eq hm]
+  exact dirRotSub_eq_sub hc_re hc_ne a v
+
+/-! ### Powers, `e^x`, and scaling by `2` -/
+
+theorem dirExp_of_toC {z : EmlDir} {w : ℂ} (h : toC z = some w) :
+    dirExp z = .finite (Complex.exp w) := by
+  cases z with
+  | finite u =>
+    simp only [toC, Option.some.injEq] at h
+    subst h
+    rfl
+  | negZero =>
+    simp only [toC, Option.some.injEq] at h
+    subst h
+    simp [dirExp]
+  | posInf _ => simp [toC] at h
+  | negInf _ => simp [toC] at h
+  | dirInf _ => simp [toC] at h
+  | nan => simp [toC] at h
+
+/-- `x ^ y`, compiled as `exp(y · ln x)`, is exactly the principal `a ^ b` for `a ≠ 0`. -/
+theorem dirEmlPow {a : ℂ} (ha : a ≠ 0) (b : ℂ) :
+    dirEmlExp (dirEmlMul (.finite b) (dirEmlLn (.finite a))) = .finite (a ^ b) := by
+  rw [dirEmlLn_finite_ne_zero ha, dirEmlExp_eq, dirExp_of_toC (toC_dirEmlMul b (Complex.log a)),
+    Complex.cpow_def_of_ne_zero ha, mul_comm]
+
+/-- `r · (−∞) = ∞·e^{iπ}` for a positive real `r ≠ e^e`. -/
+theorem dirEmlMul_pos_negInf {r : ℝ} (hr : 0 < r) (hre : r ≠ Real.exp (Real.exp 1)) :
+    dirEmlMul (.finite (r : ℂ)) (.negInf 0) = .dirInf Real.pi := by
+  have hr_ne : (r : ℂ) ≠ 0 := by exact_mod_cast hr.ne'
+  have hne : eml 1 (r : ℂ) ≠ 0 := by
+    intro h
+    have hsub : Complex.exp 1 = lowerLog (r : ℂ) := sub_eq_zero.mp h
+    rw [lowerLog_ofReal_pos hr] at hsub
+    have hre' : Real.exp 1 = Real.log r := by
+      have := congrArg Complex.re hsub
+      simpa [← Complex.ofReal_one, ← Complex.ofReal_exp] using this
+    apply hre
+    rw [hre', Real.exp_log hr]
+  have him : (Complex.exp (Complex.log (eml 1 (r : ℂ)))).im = 0 := by
+    rw [Complex.exp_log hne]
+    unfold eml
+    rw [lowerLog_ofReal_pos hr, Complex.sub_im, exp_one_im, Complex.ofReal_im, sub_zero]
+  unfold dirEmlMul
+  rw [dirEml_finite hr_ne, dirEmlLn_finite_ne_zero hne]
+  simp [dirEmlExp_eq, dirEml, dirExp, dirLowerLog, dirSub, exp_one_im, him]
+
+/-- `x ^ r` for a positive real constant `r ≠ e^e` is exactly `a ^ r`, `0` included. -/
+theorem dirEmlPowReal {r : ℝ} (hr : 0 < r) (hre : r ≠ Real.exp (Real.exp 1)) (a : ℂ) :
+    dirEmlExp (dirEmlMul (.finite (r : ℂ)) (dirEmlLn (.finite a))) = .finite (a ^ (r : ℂ)) := by
+  by_cases ha : a = 0
+  · subst ha
+    have hr0 : (r : ℂ) ≠ 0 := by exact_mod_cast hr.ne'
+    rw [dirEmlLn_zero, dirEmlMul_pos_negInf hr hre, dirEmlExp_eq, Complex.zero_cpow hr0]
+    simp [dirExp]
+  exact dirEmlPow ha (r : ℂ)
+
+/-- `e^x`, compiled as `exp(x · ln e)`, is exactly `exp a`. -/
+theorem dirEmlExpE (a : ℂ) :
+    dirEmlExp (dirEmlMul (.finite a) (dirEmlLn (dirEml (.finite 1) (.finite 1)))) =
+      .finite (Complex.exp a) := by
+  have he : dirEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [dirEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  have hlog : Complex.log (Complex.exp 1) = 1 := by
+    rw [Complex.log_exp]
+    · simp [Real.pi_pos]
+    · simp [Real.pi_pos.le]
+  rw [he, dirEmlLn_finite_ne_zero (Complex.exp_ne_zero _), hlog, dirEmlExp_eq,
+    dirExp_of_toC (toC_dirEmlMul a 1), mul_one]
+
+theorem dirEmlMulTwo (a : ℂ) : dirEmlMul (.finite a) dirCTwo = .finite (a * 2) := by
+  rw [dirCTwo_eq_two]
+  by_cases ha : a = 0
+  · subst ha
+    rw [dirEmlMul_zero_left two_ne_zero, zero_mul]
+  · exact dirEmlMul_eq_of_ne_zero ha two_ne_zero
+
+theorem dirEmlDivTwo (a : ℂ) : dirEmlDiv (.finite a) dirCTwo = .finite (a / 2) := by
+  rw [dirCTwo_eq_two]
+  exact dirEmlDiv_eq a two_ne_zero (by norm_num)
+
+/-- The stored `3` word, in `EmlDir`, by its certificate (`certify_sound_dir`). -/
+theorem dirConst_three : dirConst Eml.Records.bits_three = .finite ((3 : ℝ) : ℂ) := by
+  rw [dirConst_eq (s := .int 3) (by decide)]
+  simp [Sym.denote]
+
+theorem three_ne_exp_exp : (3 : ℝ) ≠ Real.exp (Real.exp 1) := by
+  have h1 := Real.exp_one_gt_d9
+  have h2 := Real.add_one_le_exp (Real.exp 1)
+  intro h
+  linarith
+
 /-! ### The compiled words, token for token -/
 
 /-- `x+y` (655 tokens): `1111111111111EEE1EE11EE1EEEE…EE1E1EEE1EE1E1EEE1EE1EE1EE1E`. -/
@@ -440,6 +559,124 @@ theorem lnToks_eval (x y : EmlDir) :
     evalTok (.finite 1) x y dirEml lnToks [] = some [dirEmlLn x] := by
   rfl
 
+/-- `x-1` (131 tokens): `111111111E1EEEE11E1E1EEEEE1E…EE111E1EE11EEE1EE1E1EEE1EE1E`. -/
+def subOneToks : List Tok :=
+  [.one, .one, .one, .one, .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one,
+    .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .one, .gate, .one, .gate, .gate, .gate, .gate, .gate, .one, .gate, .gate,
+    .one, .one, .x, .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one, .one, .one,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one, .gate, .one, .gate,
+    .one, .gate, .gate, .gate, .gate, .gate, .one, .gate, .gate, .one, .one, .one,
+    .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .gate, .one, .gate, .gate,
+    .one, .gate, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .gate]
+
+set_option maxRecDepth 100000 in
+theorem subOneToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml subOneToks [] = some [appRot x (.finite 1)] := by
+  rfl
+
+/-- `x+1` (173 tokens): `111111111E1EEEE11E1E1EEEEE1E…E1EEEE11EE1EEE1EE1E1EEE1EE1E`. -/
+def addOneToks : List Tok :=
+  [.one, .one, .one, .one, .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one,
+    .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .one, .gate, .one, .gate, .gate, .gate, .gate, .gate, .one, .gate, .gate,
+    .one, .one, .x, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one,
+    .gate, .one, .gate, .gate, .gate, .gate, .one, .one, .gate, .gate, .one, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one,
+    .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one, .gate,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .gate, .one, .gate, .gate, .one,
+    .one, .one, .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .one, .one, .one,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one, .gate, .gate, .one,
+    .gate, .gate, .gate, .one, .gate, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .gate]
+
+set_option maxRecDepth 100000 in
+theorem addOneToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml addOneToks [] = some [appRot x dirCNegOne] := by
+  rfl
+
+/-- `x-2` (185 tokens): `111111111E1EEEE11E1E1EEEEE1E…1EE11EE1EE1EEE1EE1E1EEE1EE1E`. -/
+def subTwoToks : List Tok :=
+  [.one, .one, .one, .one, .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one,
+    .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .one, .gate, .one, .gate, .gate, .gate, .gate, .gate, .one, .gate, .gate,
+    .one, .one, .x, .gate, .one, .gate, .gate, .one, .one, .one, .one, .one,
+    .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .one,
+    .gate, .gate, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .one, .one,
+    .one, .one, .one, .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .one, .one, .gate, .one, .gate, .one, .gate, .gate, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .one, .one, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .one, .gate, .gate,
+    .gate, .one, .gate, .gate, .one, .one, .one, .one, .one, .one, .gate, .gate,
+    .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .one, .gate, .gate, .one,
+    .gate, .gate, .gate, .one, .gate, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .gate]
+
+set_option maxRecDepth 100000 in
+theorem subTwoToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml subTwoToks [] = some [appRot x dirCTwo] := by
+  rfl
+
+/-- `x^y` (25 tokens): `1111yEE1EE11xE1EEE1EE1E1E`. -/
+def powToks : List Tok :=
+  [.one, .one, .one, .one, .y, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .x, .gate, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .gate, .one,
+    .gate]
+
+theorem powToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml powToks [] = some [dirEmlExp (dirEmlMul y (dirEmlLn x))] := by
+  rfl
+
+/-- `e^x` (27 tokens): `1111xEE1EE1111EE1EEE1EE1E1E`. -/
+def expEToks : List Tok :=
+  [.one, .one, .one, .one, .x, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .one, .one, .gate, .gate, .one, .gate, .gate, .gate, .one, .gate, .gate, .one,
+    .gate, .one, .gate]
+
+theorem expEToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml expEToks [] = some [dirEmlExp (dirEmlMul x (dirEmlLn (dirEml (.finite 1) (.finite 1))))] := by
+  rfl
+
+/-- `x*2` (35 tokens): `1111xEE1EE111111EEE1EE11EE1EEE1EE1E`. -/
+def mulTwoToks : List Tok :=
+  [.one, .one, .one, .one, .x, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .one, .one, .one, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .gate, .gate, .one, .gate, .gate, .gate, .one, .gate, .gate, .one, .gate]
+
+theorem mulTwoToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml mulTwoToks [] = some [dirEmlMul x dirCTwo] := by
+  rfl
+
+/-- `x/2` (35 tokens): `111111111EEE1EE11EE1EEEE1EE1xE1EE1E`. -/
+def divTwoToks : List Tok :=
+  [.one, .one, .one, .one, .one, .one, .one, .one, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .gate, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .x, .gate, .one, .gate, .gate, .one, .gate]
+
+theorem divTwoToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml divTwoToks [] = some [dirEmlDiv x dirCTwo] := by
+  rfl
+
+/-- `x^3` (53 tokens): `111111111111EEE1EE11EEE1EE11EE1EEEE1EE11xE1EEE1EE1E1E`. -/
+def cubeToks : List Tok :=
+  [.one, .one, .one, .one, .one, .one, .one, .one, .one, .one, .one, .one,
+    .gate, .gate, .gate, .one, .gate, .gate, .one, .one, .gate, .gate, .gate, .one,
+    .gate, .gate, .one, .one, .gate, .gate, .one, .gate, .gate, .gate, .gate, .one,
+    .gate, .gate, .one, .one, .x, .gate, .one, .gate, .gate, .gate, .one, .gate,
+    .gate, .one, .gate, .one, .gate]
+
+theorem cubeToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml cubeToks [] = some [dirEmlExp (dirEmlMul (dirConst Eml.Records.bits_three) (dirEmlLn x))] := by
+  rfl
+
 /-! ### What each compiled word computes -/
 
 /-- **`x + y`** is exactly `a + b`. -/
@@ -505,5 +742,47 @@ theorem ln_correct {a : ℂ} (ha : a ≠ 0) (y : ℂ) :
 theorem ln_zero_correct (y : ℂ) :
     evalTok (.finite 1) (.finite 0) (.finite y) dirEml lnToks [] = some [.negInf 0] := by
   rw [lnToks_eval, dirEmlLn_zero]
+
+/-- **`x − 1`** is exactly `a − 1`. -/
+theorem subOne_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml subOneToks [] = some [.finite (a - 1)] := by
+  rw [subOneToks_eval, appRot_finite]
+
+/-- **`x + 1`** is exactly `a + 1`. -/
+theorem addOne_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml addOneToks [] = some [.finite (a + 1)] := by
+  rw [addOneToks_eval, dirCNegOne_eq_negOne, appRot_finite, sub_neg_eq_add]
+
+/-- **`x − 2`** is exactly `a − 2`. -/
+theorem subTwo_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml subTwoToks [] = some [.finite (a - 2)] := by
+  rw [subTwoToks_eval, dirCTwo_eq_two, appRot_finite]
+
+/-- **`x ^ y`** is exactly the principal `a ^ b` for `a ≠ 0`. -/
+theorem pow_correct {a : ℂ} (ha : a ≠ 0) (b : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite b) dirEml powToks [] = some [.finite (a ^ b)] := by
+  rw [powToks_eval, dirEmlPow ha]
+
+/-- **`e ^ x`** is exactly `exp a`. -/
+theorem expE_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml expEToks [] =
+      some [.finite (Complex.exp a)] := by
+  rw [expEToks_eval, dirEmlExpE]
+
+/-- **`x · 2`** is exactly `2a`. -/
+theorem mulTwo_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml mulTwoToks [] = some [.finite (a * 2)] := by
+  rw [mulTwoToks_eval, dirEmlMulTwo]
+
+/-- **`x / 2`** is exactly `a / 2`. -/
+theorem divTwo_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml divTwoToks [] = some [.finite (a / 2)] := by
+  rw [divTwoToks_eval, dirEmlDivTwo]
+
+/-- **`x ^ 3`** is exactly `a³`, `0` included (the `3` word by its certificate). -/
+theorem cube_correct (a y : ℂ) :
+    evalTok (.finite 1) (.finite a) (.finite y) dirEml cubeToks [] = some [.finite (a ^ 3)] := by
+  rw [cubeToks_eval, dirConst_three, dirEmlPowReal (by norm_num) three_ne_exp_exp,
+    show ((3 : ℝ) : ℂ) = ((3 : ℕ) : ℂ) by norm_num, Complex.cpow_natCast]
 
 end Eml.AppOps
