@@ -490,6 +490,16 @@ function noteSeen(v: Z): void {
   if (parts.re < passState.tinyRe) passState.tinyRe = parts.re;
   if (parts.im < passState.tinyIm) passState.tinyIm = parts.im;
 }
+/**
+ * A refinement that runs out of budget (time or nodes) must not fall back to the
+ * reading it was refining: with a deadline, (−5 − 10^(−300) i) − (10^(−236) + 10^(−236) i)
+ * timed out inside the tiny-part recovery and was certified as −5. The limit error
+ * goes up to the caller, which says the evaluation timed out or was too large.
+ */
+function rethrowBudget(err: unknown): void {
+  if (err instanceof EmlLimitError) throw err;
+}
+
 /** Working precision is never raised past this. A value that still needs more is not certified. */
 const PRECISION_CAP = 480;
 
@@ -996,7 +1006,9 @@ function confirmDust(report: ExactReport, root: Node, env: Record<string, C | Z>
   let again: Decimal;
   try {
     again = atPrecision(fits, root, env, budget).value[which];
-  } catch {
+  } catch (err) {
+    // Out of budget is never a certificate: see rethrowBudget.
+    rethrowBudget(err);
     return report;
   }
   if (again.isFinite() && part.sub(again).abs().lte(part.abs().mul("1e-6"))) return report;
@@ -1039,7 +1051,9 @@ function recoverTinyPart(report: ExactReport, root: Node, env: Record<string, C 
     // sin(2/exp(300)) kept −5.3×10^(−261) i at 179 and 203 digits, and it is 0.
     const fits = (first.workExp ?? 0) - first.value[which].e + 36;
     second = atPrecision(Math.min(PRECISION_CAP, Math.max(readAt + 24, fits)), root, env, budget, false);
-  } catch {
+  } catch (err) {
+    // Out of budget is never a certificate: see rethrowBudget.
+    rethrowBudget(err);
     return null;
   }
   // A part under the noise of the terms that cancelled at that precision is a
@@ -1158,7 +1172,9 @@ function settleResidue(
     let again: ExactReport;
     try {
       again = atPrecision(next, root, env, budget);
-    } catch {
+    } catch (err) {
+      // Out of budget is never a certificate: see rethrowBudget.
+      rethrowBudget(err);
       return certifyZero(current);
     }
     const changed = which.some((name) => residueMoved(current.value[name], again.value[name]));
@@ -1520,7 +1536,9 @@ function squaredTinyPart(root: Node, env: Record<string, C | Z>, budget: EvalBud
     probe = { limit, low: 0, follows: new WeakSet() };
     seen = exactReportOnce(root, env, budget).value;
     low = probe.low;
-  } catch {
+  } catch (err) {
+    // Out of budget is never a certificate: see rethrowBudget.
+    rethrowBudget(err);
     seen = null;
   } finally {
     probe = null;
@@ -1556,7 +1574,9 @@ function squaredTinyPart(root: Node, env: Record<string, C | Z>, budget: EvalBud
     const work = which === "re" ? a.workRe : a.workIm;
     const fits = (work !== undefined && Number.isFinite(work) ? work : 0) - a.value[which].e + 36;
     b = atPrecision(Math.min(PRECISION_CAP, Math.max(first + 24, fits)), root, env, budget, false);
-  } catch {
+  } catch (err) {
+    // Out of budget is never a certificate: see rethrowBudget.
+    rethrowBudget(err);
     // Out of budget: a part the probe saw is not certified as 0.
     return dependent ? { ...out, unverified: true } : out;
   }
@@ -1812,7 +1832,9 @@ function exactReportCore(
       let second: ExactReport;
       try {
         second = atPrecision(next, root, env, budget, false);
-      } catch {
+      } catch (err) {
+        // Out of budget is never a certificate: see rethrowBudget.
+        rethrowBudget(err);
         return certifyZero(first);
       }
       if (second.unverified || hidden.some((name) => residueMoved(first.value[name], second.value[name]))) return certifyZero(first);
