@@ -40,6 +40,10 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run eml:smoke
+      - name: Minimality verifier regression (K <= 13)
+        run: |
+          python3 -m pip install --quiet mpmath
+          python3 tools/minimality/decide.py 13
 
   check:
     runs-on: ubuntu-latest

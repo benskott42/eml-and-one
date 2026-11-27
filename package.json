@@ -11,7 +11,8 @@
     "eml:golden": "tsx lib/eml/golden/harness.ts",
     "eml:smoke": "tsx scripts/calculator-smoke.tsx",
     "eml:site": "node scripts/site-check.mjs",
-    "eml:golf": "tsx scripts/eml-golf-slow.ts"
+    "eml:golf": "tsx scripts/eml-golf-slow.ts",
+    "lean:bridge": "tsx scripts/lean-bridge-check.ts"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

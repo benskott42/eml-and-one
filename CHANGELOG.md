@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Added proof-carrying circuit certificates: [`formal/lean/Eml/Cert.lean`](formal/lean/Eml/Cert.lean) proves `certify_sound` once and for all over both `ℂ` and `EmlExt` (zero `ln 0`), mirrored in `lib/eml/leanCert.ts` so `Copy Lean 4` emits a kernel-checked `theorem circuit_eval := certify_sound (by decide)` for certifiable pure circuits.
-- Hardened the UI–Lean bridge and CI: labeled `CircuitInspector` badges explicitly as `ℂ` vs `EmlExt · ln 0 = −∞` (plus `ℂ · cert`), replaced the hand-maintained `AxiomCheck.lean` list with an automatic walk over all 696 `Eml.*` declarations, and added `scripts/lean-bridge-check.ts` in `.github/workflows/lean.yml` to typecheck all 26 UI theorem links, 26 `Cert.certify` cross-checks, and 5 compiled snippets.
+- Proved the last two `best-known.json` constant records in Lean 4 (`Eml.Extended.evalRpn_negIpi` K 45 and `Eml.Records.evalRpn_negIpi_strict` K 47 → **28/28 constant records** verified) and added general inverse-trig branch-cut theorems in `Eml.InverseTrig` (`artanh` for `x < -1`, `arctan` for `|Im| > 1`, `arcsin`/`arccos` for `x > 1`).
+- Hardened the UI–Lean bridge and CI: labeled `CircuitInspector` badges explicitly as `ℂ` vs `EmlExt · ln 0 = −∞` (plus `ℂ · cert`), replaced the hand-maintained `AxiomCheck.lean` list with an automatic walk over all `Eml.*` declarations, added `scripts/lean-bridge-check.ts` (`npm run lean:bridge`) in `.github/workflows/lean.yml` to typecheck all 28 UI theorem links, 26 `Cert.certify` cross-checks, and 5 compiled snippets, and added `tools/minimality/decide.py 13` to `.github/workflows/ci.yml`.
+- Persisted the structural precision-note registry (`lib/eml/node.ts`) to `localStorage` (`exportPrecisionRegistry` / `importPrecisionRegistry`) so rebuilding a pure circuit from its press string preserves low-precision, pole, and large-angle flags across fresh browser sessions.
 
 ## 1.0.12 — 2026-11-26
 

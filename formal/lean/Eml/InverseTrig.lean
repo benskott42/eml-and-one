@@ -379,4 +379,217 @@ theorem extEmlArccos_two :
   rw [hinv, Real.log_inv]
   push_cast; ring
 
+/-! ### General branch-cut theorems across the cuts -/
+
+/-- Branch cut of `artanh` for all real `x < -1`:
+    `artanh(x) = ½ ln((1 + x)/(x - 1)) + iπ/2`, matching `mpmath.atanh`. -/
+theorem extEmlArtanh_ofReal_lt_neg_one {x : ℝ} (hx : x < -1) :
+    extEmlArtanh (.finite (x : ℂ)) =
+      .finite ((Real.log ((1 + x) / (x - 1)) / 2 : ℝ) + (Real.pi / 2 : ℂ) * Complex.I) := by
+  have hp : (1 : ℂ) + (x : ℂ) ≠ 0 := by
+    rw [show (1 : ℂ) + (x : ℂ) = ((1 + x : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  have hm : (1 : ℂ) - (x : ℂ) ≠ 0 := by
+    rw [show (1 : ℂ) - (x : ℂ) = ((1 - x : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  rw [extEmlArtanh_eq hp hm]
+  congr 1
+  have h1 : ((1 : ℂ) + (x : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (-(1 + x)) : ℂ) * Complex.I := by
+    rw [show (1 : ℂ) + (x : ℂ) = ((1 + x : ℝ) : ℂ) by push_cast; ring]
+    exact cpow_half_ofReal_neg (by linarith)
+  have h2 : ((1 : ℂ) - (x : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (1 - x) : ℂ) := by
+    rw [show (1 : ℂ) - (x : ℂ) = ((1 - x : ℝ) : ℂ) by push_cast; ring]
+    exact cpow_half_ofReal_pos (by linarith)
+  rw [h1, h2]
+  set r : ℝ := Real.sqrt (-(1 + x)) / Real.sqrt (1 - x)
+  have hr_pos : 0 < r := div_pos (Real.sqrt_pos.mpr (by linarith)) (Real.sqrt_pos.mpr (by linarith))
+  have hquot : (Real.sqrt (-(1 + x)) : ℂ) * Complex.I / (Real.sqrt (1 - x) : ℂ) =
+      (r : ℂ) * Complex.I := by
+    simp only [r]; push_cast; ring
+  rw [hquot]
+  have hexp : Complex.exp ((Real.log r : ℂ) + (Real.pi / 2 : ℂ) * Complex.I) =
+      (r : ℂ) * Complex.I := by
+    rw [Complex.exp_add, ← Complex.ofReal_exp, Real.exp_log hr_pos, Complex.exp_pi_div_two_mul_I]
+  rw [← hexp, Complex.log_exp (by simp; linarith [Real.pi_pos]) (by simp; linarith [Real.pi_pos])]
+  have hr2 : r ^ 2 = (1 + x) / (x - 1) := by
+    simp only [r, div_pow, Real.sq_sqrt (show (0 : ℝ) ≤ -(1 + x) by linarith),
+      Real.sq_sqrt (show (0 : ℝ) ≤ 1 - x by linarith)]
+    rw [div_eq_div_iff (by linarith) (by linarith)]
+    ring
+  have hlogr : Real.log r = Real.log ((1 + x) / (x - 1)) / 2 := by
+    have h := Real.log_pow r 2
+    rw [hr2] at h
+    push_cast at h
+    linarith
+  rw [hlogr]
+
+/-- Branch cut of `arctan` on the upper imaginary axis `y > 1`:
+    `arctan(y·i) = π/2 + (½ ln((y + 1)/(y - 1)))·i`, matching `mpmath.atan`. -/
+theorem extEmlArctan_ofImag_gt_one {y : ℝ} (hy : 1 < y) :
+    extEmlArctan (.finite ((y : ℂ) * Complex.I)) =
+      .finite ((Real.pi / 2 : ℂ) + ((Real.log ((y + 1) / (y - 1)) / 2 : ℝ) : ℂ) * Complex.I) := by
+  have hIy : Complex.I * ((y : ℂ) * Complex.I) = (-(y : ℝ) : ℂ) := by
+    calc Complex.I * ((y : ℂ) * Complex.I) = (y : ℂ) * (Complex.I * Complex.I) := by ring
+      _ = (-(y : ℝ) : ℂ) := by rw [Complex.I_mul_I]; ring
+  have hp : (1 : ℂ) + Complex.I * ((y : ℂ) * Complex.I) ≠ 0 := by
+    rw [hIy, show (1 : ℂ) + (-(y : ℝ) : ℂ) = ((1 - y : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  have hm : (1 : ℂ) - Complex.I * ((y : ℂ) * Complex.I) ≠ 0 := by
+    rw [hIy, show (1 : ℂ) - (-(y : ℝ) : ℂ) = ((1 + y : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  rw [extEmlArctan_eq hp hm]
+  congr 1
+  rw [hIy]
+  have h1 : ((1 : ℂ) + (-(y : ℝ) : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (y - 1) : ℂ) * Complex.I := by
+    rw [show (1 : ℂ) + (-(y : ℝ) : ℂ) = ((1 - y : ℝ) : ℂ) by push_cast; ring,
+      cpow_half_ofReal_neg (by linarith), show -(1 - y) = y - 1 by ring]
+  have h2 : ((1 : ℂ) - (-(y : ℝ) : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (y + 1) : ℂ) := by
+    rw [show (1 : ℂ) - (-(y : ℝ) : ℂ) = ((y + 1 : ℝ) : ℂ) by push_cast; ring]
+    exact cpow_half_ofReal_pos (by linarith)
+  rw [h1, h2]
+  set r : ℝ := Real.sqrt (y - 1) / Real.sqrt (y + 1)
+  have hr_pos : 0 < r := div_pos (Real.sqrt_pos.mpr (by linarith)) (Real.sqrt_pos.mpr (by linarith))
+  have hquot : (Real.sqrt (y - 1) : ℂ) * Complex.I / (Real.sqrt (y + 1) : ℂ) = (r : ℂ) * Complex.I := by
+    simp only [r]; push_cast; ring
+  rw [hquot]
+  have hexp : Complex.exp ((Real.log r : ℂ) + (Real.pi / 2 : ℂ) * Complex.I) = (r : ℂ) * Complex.I := by
+    rw [Complex.exp_add, ← Complex.ofReal_exp, Real.exp_log hr_pos, Complex.exp_pi_div_two_mul_I]
+  rw [← hexp, Complex.log_exp (by simp; linarith [Real.pi_pos]) (by simp; linarith [Real.pi_pos])]
+  have hr2 : r ^ 2 = ((y + 1) / (y - 1))⁻¹ := by
+    simp only [r, div_pow, Real.sq_sqrt (show (0 : ℝ) ≤ y - 1 by linarith),
+      Real.sq_sqrt (show (0 : ℝ) ≤ y + 1 by linarith), inv_div]
+  have hlogr : Real.log r = -(Real.log ((y + 1) / (y - 1)) / 2) := by
+    have h := Real.log_pow r 2
+    rw [hr2, Real.log_inv] at h
+    push_cast at h
+    linarith
+  rw [hlogr]
+  push_cast
+  linear_combination -(Real.pi / 2 : ℂ) * Complex.I_mul_I
+
+/-- Branch cut of `arctan` on the lower imaginary axis `y < -1`:
+    `arctan(y·i) = -π/2 - (½ ln((1 - y)/(-1 - y)))·i`, generalizing `extEmlArctan_neg_two_I`. -/
+theorem extEmlArctan_ofImag_lt_neg_one {y : ℝ} (hy : y < -1) :
+    extEmlArctan (.finite ((y : ℂ) * Complex.I)) =
+      .finite (-(Real.pi / 2 : ℂ) - ((Real.log ((1 - y) / (-1 - y)) / 2 : ℝ) : ℂ) * Complex.I) := by
+  have hIy : Complex.I * ((y : ℂ) * Complex.I) = (-(y : ℝ) : ℂ) := by
+    calc Complex.I * ((y : ℂ) * Complex.I) = (y : ℂ) * (Complex.I * Complex.I) := by ring
+      _ = (-(y : ℝ) : ℂ) := by rw [Complex.I_mul_I]; ring
+  have hp : (1 : ℂ) + Complex.I * ((y : ℂ) * Complex.I) ≠ 0 := by
+    rw [hIy, show (1 : ℂ) + (-(y : ℝ) : ℂ) = ((1 - y : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  have hm : (1 : ℂ) - Complex.I * ((y : ℂ) * Complex.I) ≠ 0 := by
+    rw [hIy, show (1 : ℂ) - (-(y : ℝ) : ℂ) = ((1 + y : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  rw [extEmlArctan_eq hp hm]
+  congr 1
+  rw [hIy]
+  have h1 : ((1 : ℂ) + (-(y : ℝ) : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (1 - y) : ℂ) := by
+    rw [show (1 : ℂ) + (-(y : ℝ) : ℂ) = ((1 - y : ℝ) : ℂ) by push_cast; ring]
+    exact cpow_half_ofReal_pos (by linarith)
+  have h2 : ((1 : ℂ) - (-(y : ℝ) : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (-1 - y) : ℂ) * Complex.I := by
+    rw [show (1 : ℂ) - (-(y : ℝ) : ℂ) = ((1 + y : ℝ) : ℂ) by push_cast; ring,
+      cpow_half_ofReal_neg (by linarith), show -(1 + y) = -1 - y by ring]
+  rw [h1, h2]
+  set r : ℝ := Real.sqrt (1 - y) / Real.sqrt (-1 - y)
+  have hr_pos : 0 < r := div_pos (Real.sqrt_pos.mpr (by linarith)) (Real.sqrt_pos.mpr (by linarith))
+  have hquot : (Real.sqrt (1 - y) : ℂ) / ((Real.sqrt (-1 - y) : ℂ) * Complex.I) =
+      -((r : ℂ) * Complex.I) := by
+    have hsqrt_ne : (Real.sqrt (-1 - y) : ℂ) ≠ 0 :=
+      Complex.ofReal_ne_zero.mpr (ne_of_gt (Real.sqrt_pos.mpr (by linarith)))
+    simp only [r]
+    rw [div_eq_iff (mul_ne_zero hsqrt_ne Complex.I_ne_zero)]
+    push_cast
+    calc (Real.sqrt (1 - y) : ℂ)
+        = (Real.sqrt (1 - y) : ℂ) / (Real.sqrt (-1 - y) : ℂ) * (Real.sqrt (-1 - y) : ℂ) * (-(Complex.I * Complex.I)) := by
+            rw [Complex.I_mul_I]; field_simp
+      _ = -(↑(Real.sqrt (1 - y)) / ↑(Real.sqrt (-1 - y)) * Complex.I) * (↑(Real.sqrt (-1 - y)) * Complex.I) := by ring
+  rw [hquot]
+  have hexp : Complex.exp ((Real.log r : ℂ) - (Real.pi / 2 : ℂ) * Complex.I) = -((r : ℂ) * Complex.I) := by
+    rw [Complex.exp_sub, ← Complex.ofReal_exp, Real.exp_log hr_pos, Complex.exp_pi_div_two_mul_I]
+    rw [div_eq_iff Complex.I_ne_zero]
+    linear_combination (r : ℂ) * Complex.I_mul_I
+  rw [← hexp, Complex.log_exp (by simp; linarith [Real.pi_pos]) (by simp; linarith [Real.pi_pos])]
+  have hr2 : r ^ 2 = (1 - y) / (-1 - y) := by
+    simp only [r, div_pow, Real.sq_sqrt (show (0 : ℝ) ≤ 1 - y by linarith),
+      Real.sq_sqrt (show (0 : ℝ) ≤ -1 - y by linarith)]
+  have hlogr : Real.log r = Real.log ((1 - y) / (-1 - y)) / 2 := by
+    have h := Real.log_pow r 2
+    rw [hr2] at h
+    push_cast at h
+    linarith
+  rw [hlogr]
+  push_cast
+  linear_combination (Real.pi / 2 : ℂ) * Complex.I_mul_I
+
+/-- Branch cut of `arccos` for all real `x > 1`:
+    `arccos(x) = +i · ln(x + √(x² - 1))`, generalizing `extEmlArccos_two`. -/
+theorem extEmlArccos_ofReal_gt_one {x : ℝ} (hx : 1 < x) :
+    extEmlArccos (.finite (x : ℂ)) =
+      .finite (Complex.I * (Real.log (x + Real.sqrt (x * x - 1)) : ℂ)) := by
+  have hm : (1 : ℂ) - (x : ℂ) ≠ 0 := by
+    rw [show (1 : ℂ) - (x : ℂ) = ((1 - x : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  have hp : (1 : ℂ) + (x : ℂ) ≠ 0 := by
+    rw [show (1 : ℂ) + (x : ℂ) = ((1 + x : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by linarith)
+  have h1 : ((1 : ℂ) - (x : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (x - 1) : ℂ) * Complex.I := by
+    rw [show (1 : ℂ) - (x : ℂ) = ((1 - x : ℝ) : ℂ) by push_cast; ring,
+      cpow_half_ofReal_neg (by linarith), show -(1 - x) = x - 1 by ring]
+  have h2 : ((1 : ℂ) + (x : ℂ)) ^ ((1 : ℂ) / 2) = (Real.sqrt (x + 1) : ℂ) := by
+    rw [show (1 : ℂ) + (x : ℂ) = ((x + 1 : ℝ) : ℂ) by push_cast; ring]
+    exact cpow_half_ofReal_pos (by linarith)
+  have hsqrt_mul : Real.sqrt (x - 1) * Real.sqrt (x + 1) = Real.sqrt (x * x - 1) := by
+    rw [← Real.sqrt_mul (by linarith)]; congr 1; ring
+  have harg : (x : ℂ) + Complex.I * (((1 : ℂ) - (x : ℂ)) ^ ((1 : ℂ) / 2) *
+      ((1 : ℂ) + (x : ℂ)) ^ ((1 : ℂ) / 2)) =
+      ((x - Real.sqrt (x * x - 1) : ℝ) : ℂ) := by
+    rw [h1, h2]
+    have hmul : (Real.sqrt (x - 1) : ℂ) * (Real.sqrt (x + 1) : ℂ) = (Real.sqrt (x * x - 1) : ℂ) := by
+      exact_mod_cast hsqrt_mul
+    push_cast
+    calc (x : ℂ) + Complex.I * ((Real.sqrt (x - 1) : ℂ) * Complex.I * (Real.sqrt (x + 1) : ℂ))
+        = (x : ℂ) + (Complex.I * Complex.I) * ((Real.sqrt (x - 1) : ℂ) * (Real.sqrt (x + 1) : ℂ)) := by ring
+      _ = (x : ℂ) - (Real.sqrt (x * x - 1) : ℂ) := by rw [Complex.I_mul_I, hmul]; ring
+  have hpos_sub : 0 < x - Real.sqrt (x * x - 1) := by
+    have : Real.sqrt (x * x - 1) < x := by
+      rw [Real.sqrt_lt' (by linarith)]; nlinarith
+    linarith
+  have hsum : (x : ℂ) + Complex.I * (((1 : ℂ) - (x : ℂ)) ^ ((1 : ℂ) / 2) *
+      ((1 : ℂ) + (x : ℂ)) ^ ((1 : ℂ) / 2)) ≠ 0 := by
+    rw [harg]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt hpos_sub)
+  rw [extEmlArccos_eq hm hp hsum, harg, ← Complex.ofReal_log (le_of_lt hpos_sub)]
+  congr 1
+  have hinv : x - Real.sqrt (x * x - 1) = (x + Real.sqrt (x * x - 1))⁻¹ := by
+    apply eq_inv_of_mul_eq_one_left
+    nlinarith [Real.sq_sqrt (show (0 : ℝ) ≤ x * x - 1 by nlinarith)]
+  rw [hinv, Real.log_inv]
+  push_cast; ring
+
+/-- Branch cut of `arcsin` for all real `x > 1`:
+    `arcsin(x) = π/2 - i · ln(x + √(x² - 1))`, matching `mpmath.asin`. -/
+theorem extEmlArcsin_ofReal_gt_one {x : ℝ} (hx : 1 < x) :
+    extEmlArcsin (.finite (x : ℂ)) =
+      .finite ((Real.pi / 2 : ℂ) - Complex.I * (Real.log (x + Real.sqrt (x * x - 1)) : ℂ)) := by
+  have h1 : (1 : ℂ) - (x : ℂ) * (x : ℂ) ≠ 0 := by
+    rw [show (1 : ℂ) - (x : ℂ) * (x : ℂ) = ((1 - x * x : ℝ) : ℂ) by push_cast; ring]
+    exact Complex.ofReal_ne_zero.mpr (by nlinarith)
+  have hsq : ((1 : ℂ) - (x : ℂ) * (x : ℂ)) ^ ((1 : ℂ) / 2) =
+      (Real.sqrt (x * x - 1) : ℂ) * Complex.I := by
+    rw [show (1 : ℂ) - (x : ℂ) * (x : ℂ) = ((1 - x * x : ℝ) : ℂ) by push_cast; ring,
+      cpow_half_ofReal_neg (by nlinarith), show -(1 - x * x) = x * x - 1 by ring]
+  set r : ℝ := x + Real.sqrt (x * x - 1)
+  have hr_pos : 0 < r := by positivity
+  have harg : Complex.I * (x : ℂ) + ((1 : ℂ) - (x : ℂ) * (x : ℂ)) ^ ((1 : ℂ) / 2) =
+      (r : ℂ) * Complex.I := by
+    rw [hsq]; simp only [r]; push_cast; ring
+  have h2 : Complex.I * (x : ℂ) + ((1 : ℂ) - (x : ℂ) * (x : ℂ)) ^ ((1 : ℂ) / 2) ≠ 0 := by
+    rw [harg]; exact mul_ne_zero (Complex.ofReal_ne_zero.mpr (ne_of_gt hr_pos)) Complex.I_ne_zero
+  rw [extEmlArcsin_eq h1 h2, harg]
+  congr 1
+  have hexp : Complex.exp ((Real.log r : ℂ) + (Real.pi / 2 : ℂ) * Complex.I) = (r : ℂ) * Complex.I := by
+    rw [Complex.exp_add, ← Complex.ofReal_exp, Real.exp_log hr_pos, Complex.exp_pi_div_two_mul_I]
+  rw [← hexp, Complex.log_exp (by simp; linarith [Real.pi_pos]) (by simp; linarith [Real.pi_pos])]
+  linear_combination -(Real.pi / 2 : ℂ) * Complex.I_mul_I
+
 end Eml.InverseTrig

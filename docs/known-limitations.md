@@ -41,7 +41,7 @@ Of the expressions that became refused under the stricter absorbed-term checks, 
 
 ## Circuits and search
 
-- Rebuilding a circuit from its press string in the same session preserves low-precision, pole, and large-angle flags via the structural precision-note registry in `lib/eml/node.ts`. A fresh session that loads an uncompiled raw press string still has only the gates.
+- Rebuilding a circuit from its press string preserves low-precision, pole, and large-angle flags across `isolateCircuit` clears and fresh browser sessions via the persisted structural precision-note registry in `lib/eml/node.ts` (`localStorage`). A brand-new device with an empty storage that loads an uncompiled raw press string sees only the gates.
 - The fast suite stops at the K = 21 table (K 23 without ln 0). `npm run eml:golf` runs K = 35 in about 75 s and is not part of the publish check; its last run is in [docs/golf-k35.md](golf-k35.md).
 - The constant search does not merge circuits by value. Its pool is every float-finite circuit that did not overflow or underflow, 88 M through K 35 with ln 0, so K 37 and past are left to tools/emlsearch.
 - 0, −1, and 2 tie the lengths in arXiv:2603.21852. ±iπ at K 21 was posted publicly before this project. 3 at K 29 ties an earlier code-golf answer. Those are not claimed as first discoveries. The citations are in the EML and One README.

@@ -225,6 +225,8 @@ export const LEAN_VERIFIED_THEOREMS: Record<string, LeanTheoremRef> = {
   "111E1111111EEE1EE11EE1EEE11E1E1EE1EEE11EE": { theorem: "Eml.Records.evalRpn_negThird", file: "Records.lean", value: "−1/3", model: "C" },
   "111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1E": { theorem: "Eml.Extended.evalRpn_i", file: "Extended.lean", value: "i", model: "EmlExt" },
   "111111111EEE1EE11EE1EEEE1EE111111111EEE1EE11EE1EEE1EEE1EE1E1E": { theorem: "Eml.Records.evalRpn_sqrt2", file: "Records.lean", value: "√2", model: "C" },
+  "11111E1E1EEEE11111E1EEEE11111E1E1EEEE1E1E1EEE": { theorem: "Eml.Extended.evalRpn_negIpi", file: "Extended.lean", value: "−iπ (lower cut)", model: "EmlExt" },
+  "11111E1E1EEEE11111111E1E1EEEE1E1E1EEE1EE11E1EEE": { theorem: "Eml.Records.evalRpn_negIpi_strict", file: "Records.lean", value: "−iπ (lower cut, no ln 0)", model: "C" },
   "1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E": { theorem: "Eml.Extended.evalRpn_pi", file: "Extended.lean", value: "π", model: "EmlExt" },
 };
 

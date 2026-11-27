@@ -5,8 +5,11 @@ import {
   SINGULAR_TRIG,
   V,
   evaluateReport,
+  exportPrecisionRegistry,
+  importPrecisionRegistry,
   isolateCircuit,
   nodeFromRpn,
+  resetPrecisionRegistryForTests,
   rpnTokens,
 } from "../node";
 import { compileExpression } from "../parse";
@@ -76,6 +79,32 @@ const checkModule: CheckModule = {
         if (wireEx.singular !== tc.checkExact) {
           ctx.fail(`FAIL rebuild-wire-flag ${tc.label} got="${wireEx.singular}" want="${tc.checkExact}"`);
         }
+      }
+    }
+
+    // --- A2. Fresh-session persistence (export -> clear registry -> import -> rebuild) ---
+    {
+      const origPole = compileExpression("tan(pi/2)", {});
+      const origTrig = compileExpression("sin(1e7)", {});
+      const poleTokens = rpnTokens(origPole, 200_000)!;
+      const trigTokens = rpnTokens(origTrig, 200_000)!;
+      const snapshot = exportPrecisionRegistry();
+      resetPrecisionRegistryForTests();
+      const loaded = importPrecisionRegistry(snapshot);
+      if (loaded === 0) {
+        ctx.fail("FAIL fresh-session importPrecisionRegistry loaded 0 entries");
+      }
+      compileExpression("1 + 1", {});
+      const rebuiltPole = isolateCircuit(() => nodeFromRpn(poleTokens));
+      const rebuiltTrig = isolateCircuit(() => nodeFromRpn(trigTokens));
+      if (evaluateReport(rebuiltPole, {}, { maxNodes: 200_000 }).singular !== SINGULAR_POLE) {
+        ctx.fail("FAIL fresh-session tan(pi/2) float pole flag");
+      }
+      if (exactReport(rebuiltPole, {}, { maxNodes: 200_000 }).singular !== SINGULAR_POLE) {
+        ctx.fail("FAIL fresh-session tan(pi/2) exact pole flag");
+      }
+      if (evaluateReport(rebuiltTrig, {}, { maxNodes: 200_000 }).singular !== SINGULAR_TRIG) {
+        ctx.fail("FAIL fresh-session sin(1e7) float trig flag");
       }
     }
 

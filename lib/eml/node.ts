@@ -215,17 +215,103 @@ function structHash(root: Node): HashPair | null {
 }
 
 type StoredPrecisionNote =
-  | { kind: "asinh" | "pole" | "trig"; argKey: string | null; argFallback: Node }
-  | { kind: "add"; leftKey: string | null; leftFallback: Node; rightKey: string | null; rightFallback: Node };
+  | { kind: "asinh" | "pole" | "trig"; argKey: string | null; argFallback?: Node }
+  | { kind: "add"; leftKey: string | null; leftFallback?: Node; rightKey: string | null; rightFallback?: Node };
 
 const PRECISION_STRUCT_LIMIT = 512;
+const PRECISION_STORAGE_KEY = "eml:precisionByStruct:v1";
+
 /**
  * Bounded structural registry so rebuilding a pure circuit from its press string
  * (via nodeFromRpn) preserves low-precision, pole, and large-angle flags across
- * isolateCircuit clears. Pure gate-tree structure is immutable, so these entries
- * never leak stale per-expression state.
+ * isolateCircuit clears and fresh browser sessions (via localStorage). Pure
+ * gate-tree structure is immutable, so these entries never leak stale state.
  */
 const precisionByStruct = new Map<string, StoredPrecisionNote>();
+
+function readBrowserStorage(): Storage | null {
+  try {
+    if (typeof globalThis !== "undefined" && "localStorage" in globalThis && globalThis.localStorage) {
+      return globalThis.localStorage;
+    }
+  } catch {
+    // Ignore restricted storage contexts (private browsing / sandboxed iframes).
+  }
+  return null;
+}
+
+/** Serialize the structural precision-note registry to JSON (keys only, safe for fresh sessions). */
+export function exportPrecisionRegistry(): string {
+  const entries: Array<[string, Record<string, string | null>]> = [];
+  for (const [k, v] of precisionByStruct) {
+    if (v.kind === "add") {
+      if (v.leftKey && v.rightKey) {
+        entries.push([k, { kind: "add", leftKey: v.leftKey, rightKey: v.rightKey }]);
+      }
+    } else if (v.argKey) {
+      entries.push([k, { kind: v.kind, argKey: v.argKey }]);
+    }
+  }
+  return JSON.stringify(entries);
+}
+
+/** Hydrate the structural precision-note registry from JSON produced by `exportPrecisionRegistry`. */
+export function importPrecisionRegistry(raw: string): number {
+  let loaded = 0;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return 0;
+    for (const item of parsed) {
+      if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || !item[1] || typeof item[1] !== "object") {
+        continue;
+      }
+      const key = item[0];
+      const val = item[1] as Record<string, unknown>;
+      if (val.kind === "add" && typeof val.leftKey === "string" && typeof val.rightKey === "string") {
+        if (precisionByStruct.size >= PRECISION_STRUCT_LIMIT) break;
+        precisionByStruct.set(key, { kind: "add", leftKey: val.leftKey, rightKey: val.rightKey });
+        loaded += 1;
+      } else if (
+        (val.kind === "asinh" || val.kind === "pole" || val.kind === "trig") &&
+        typeof val.argKey === "string"
+      ) {
+        if (precisionByStruct.size >= PRECISION_STRUCT_LIMIT) break;
+        precisionByStruct.set(key, { kind: val.kind, argKey: val.argKey });
+        loaded += 1;
+      }
+    }
+  } catch {
+    return 0;
+  }
+  return loaded;
+}
+
+/** Clear the in-memory structural precision-note registry (for tests simulating a fresh session). */
+export function resetPrecisionRegistryForTests(): void {
+  precisionByStruct.clear();
+}
+
+function persistPrecisionRegistry(): void {
+  const storage = readBrowserStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(PRECISION_STORAGE_KEY, exportPrecisionRegistry());
+  } catch {
+    // Ignore storage quota errors.
+  }
+}
+
+// Hydrate once on module load in browser sessions.
+(() => {
+  const storage = readBrowserStorage();
+  if (!storage) return;
+  try {
+    const raw = storage.getItem(PRECISION_STORAGE_KEY);
+    if (raw) importPrecisionRegistry(raw);
+  } catch {
+    // Ignore storage read errors.
+  }
+})();
 
 /** Mark a circuit whose float value is untrustworthy for a small unknown input. Evaluation still returns the gates. */
 export function notePrecision(node: Node, note: PrecisionNote): void {
@@ -253,6 +339,7 @@ export function notePrecision(node: Node, note: PrecisionNote): void {
     if (oldest !== undefined) precisionByStruct.delete(oldest);
   }
   precisionByStruct.set(h.key, stored);
+  persistPrecisionRegistry();
 }
 
 export function precisionNoteOf(node: Node): PrecisionNote | undefined {
@@ -743,16 +830,16 @@ export function nodeFromRpn(tokens: readonly string[]): Node {
             const saved = precisionByStruct.get(h.key);
             if (saved) {
               if (saved.kind === "add") {
-                precisionNotes.set(node, {
-                  kind: "add",
-                  left: (saved.leftKey ? byKey?.get(saved.leftKey) : undefined) ?? saved.leftFallback,
-                  right: (saved.rightKey ? byKey?.get(saved.rightKey) : undefined) ?? saved.rightFallback,
-                });
+                const left = (saved.leftKey ? byKey?.get(saved.leftKey) : undefined) ?? saved.leftFallback;
+                const right = (saved.rightKey ? byKey?.get(saved.rightKey) : undefined) ?? saved.rightFallback;
+                if (left && right) {
+                  precisionNotes.set(node, { kind: "add", left, right });
+                }
               } else {
-                precisionNotes.set(node, {
-                  kind: saved.kind,
-                  arg: (saved.argKey ? byKey?.get(saved.argKey) : undefined) ?? saved.argFallback,
-                });
+                const arg = (saved.argKey ? byKey?.get(saved.argKey) : undefined) ?? saved.argFallback;
+                if (arg) {
+                  precisionNotes.set(node, { kind: saved.kind, arg });
+                }
               }
             }
           }

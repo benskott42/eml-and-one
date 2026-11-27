@@ -771,4 +771,101 @@ theorem evalRpn_pi :
       (Real.log Real.pi : ℂ) := by ring
   rw [hsub, ← Complex.ofReal_exp, Real.exp_log Real.pi_pos]
 
+/-- K = 45 word for `-iπ` on the lower cut using `ln 0 = -∞` (`-ipi` in `best-known.json`):
+    `11111E1E1EEEE11111E1EEEE11111E1E1EEEE1E1E1EEE`. -/
+def bits_negIpi : List Bool :=
+  Eml.Records.bits_negIpi_A ++ bits_0x7d0 ++ Eml.Records.bits_negIpi_A ++
+    [true, false, true, false, true, false, false, false]
+
+theorem evalRpn_negIpi_A_ext :
+    evalRpn (EmlExt.finite 1) extEml Eml.Records.bits_negIpi_A [] =
+      some [.finite Eml.Records.cNegIpiA] := by
+  change some [extEml (.finite 1) (extEml (.finite 1) (extEml (.finite 1)
+    (extEml (extEml (extEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1))))] =
+    some [.finite Eml.Records.cNegIpiA]
+  have h1 : extEml (.finite 1) (.finite 1) = .finite (eml 1 1) := extEml_finite one_ne_zero
+  have h2 : extEml (.finite (eml 1 1)) (.finite 1) = .finite (eml (eml 1 1) 1) :=
+    extEml_finite one_ne_zero
+  have h3 : extEml (.finite (eml (eml 1 1) 1)) (.finite 1) = .finite (eml (eml (eml 1 1) 1) 1) :=
+    extEml_finite one_ne_zero
+  have h3_eq : eml (eml (eml 1 1) 1) 1 = Complex.exp (Complex.exp (Complex.exp 1)) := by
+    simp [eml, lowerLog_one]
+  have h3_ne : eml (eml (eml 1 1) 1) 1 ≠ 0 := by rw [h3_eq]; exact Complex.exp_ne_zero _
+  have h4 : extEml (.finite 1) (.finite (eml (eml (eml 1 1) 1) 1)) =
+      .finite (eml 1 (eml (eml (eml 1 1) 1) 1)) := extEml_finite h3_ne
+  have h4_ne : eml 1 (eml (eml (eml 1 1) 1) 1) ≠ 0 := by
+    rw [h3_eq]
+    unfold eml
+    have him : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+      rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+    rw [lowerLog_exp_of_im_zero him]
+    intro h
+    have hre : Real.exp 1 - Real.exp (Real.exp 1) = 0 := by
+      have := congrArg Complex.re h
+      simpa [← Complex.ofReal_one, ← Complex.ofReal_exp] using this
+    have hgt : Real.exp 1 < Real.exp (Real.exp 1) := Real.exp_lt_exp.mpr (by linarith [Real.exp_one_gt_d9])
+    linarith
+  have h5 : extEml (.finite 1) (.finite (eml 1 (eml (eml (eml 1 1) 1) 1))) =
+      .finite (eml 1 (eml 1 (eml (eml (eml 1 1) 1) 1))) := extEml_finite h4_ne
+  have h5_ne : eml 1 (eml 1 (eml (eml (eml 1 1) 1) 1)) ≠ 0 := by
+    rw [h3_eq]
+    unfold eml
+    have him : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+      rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+    rw [lowerLog_exp_of_im_zero him]
+    have hsub_eq : Complex.exp 1 - Complex.exp (Complex.exp 1) =
+        ((Real.exp 1 - Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+      simp [← Complex.ofReal_one, ← Complex.ofReal_exp]
+    rw [hsub_eq, lowerLog_ofReal_neg (by linarith [Real.exp_one_gt_d9, Real.exp_lt_exp.mpr (show (1 : ℝ) < Real.exp 1 by linarith [Real.exp_one_gt_d9])])]
+    intro h
+    have him2 := congrArg Complex.im h
+    simp [← Complex.ofReal_one, ← Complex.ofReal_exp] at him2
+  rw [h1, h2, h3, h4, h5, extEml_finite h5_ne]
+  rfl
+
+theorem evalRpn_negIpi :
+    evalRpn (EmlExt.finite 1) extEml bits_negIpi [] = some [.finite (-(Real.pi * Complex.I))] := by
+  unfold bits_negIpi
+  have hA_st : ∀ st, evalRpn (EmlExt.finite 1) extEml Eml.Records.bits_negIpi_A st =
+      some (.finite Eml.Records.cNegIpiA :: st) := by
+    intro st
+    have := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+      (Eml.TreeBijection.fromRpn Eml.Records.bits_negIpi_A Eml.Records.valid_negIpi_A) st
+    rw [Eml.TreeBijection.toRpn_fromRpn] at this
+    have h0 := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+      (Eml.TreeBijection.fromRpn Eml.Records.bits_negIpi_A Eml.Records.valid_negIpi_A) []
+    rw [Eml.TreeBijection.toRpn_fromRpn, evalRpn_negIpi_A_ext] at h0
+    injection h0 with hcons; injection hcons with hv
+    rwa [← hv] at this
+  have hinf_st : ∀ st, evalRpn (EmlExt.finite 1) extEml bits_0x7d0 st = some (.negInf :: st) := by
+    intro st
+    have hvalid : IsValidProgram bits_0x7d0 := rfl
+    have := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+      (Eml.TreeBijection.fromRpn bits_0x7d0 hvalid) st
+    rw [Eml.TreeBijection.toRpn_fromRpn] at this
+    have h0 := Eml.TreeBijection.evalRpn_toRpn (EmlExt.finite 1) extEml
+      (Eml.TreeBijection.fromRpn bits_0x7d0 hvalid) []
+    rw [Eml.TreeBijection.toRpn_fromRpn, evalRpn_0x7d0] at h0
+    injection h0 with hcons; injection hcons with hv
+    rwa [← hv] at this
+  have hstep : evalRpn (EmlExt.finite 1) extEml
+      (Eml.Records.bits_negIpi_A ++ bits_0x7d0 ++ Eml.Records.bits_negIpi_A ++
+        [true, false, true, false, true, false, false, false]) [] =
+      some [extEml (.finite Eml.Records.cNegIpiA)
+        (extEml .negInf (extEmlExp (extEmlExp (extEmlExp (.finite Eml.Records.cNegIpiA)))))] := by
+    simp only [List.append_assoc]
+    rw [evalRpn_append, hA_st]; dsimp only
+    rw [evalRpn_append, hinf_st]; dsimp only
+    rw [evalRpn_append, hA_st]; dsimp only
+    rfl
+  rw [hstep, extEmlExp_eq, extEmlExp_eq, extEmlExp_eq]
+  simp only [extExp]
+  obtain ⟨him0, himpi⟩ := Eml.Records.cNegIpiA_exp_exp_im_bounds
+  have hmid : extEml .negInf (.finite (Complex.exp (Complex.exp (Complex.exp Eml.Records.cNegIpiA)))) =
+      .finite (-Complex.exp (Complex.exp Eml.Records.cNegIpiA)) := by
+    simp only [extEml, extExp, extLowerLog, Complex.exp_ne_zero, ↓reduceIte, extSub, zero_sub]
+    congr 2
+    exact lowerLog_exp (by linarith [Real.pi_pos]) himpi
+  rw [hmid, extEml_finite (neg_ne_zero.mpr (Complex.exp_ne_zero _)), Eml.Records.eml_cNegIpiA_neg_exp_exp]
+
 end Eml.Extended

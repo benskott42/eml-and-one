@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 14 modules (696 declarations) is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 14 modules (715 declarations) is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -71,9 +71,9 @@ Every function is built solely from `eml` / `extEml` and `1` (using `cTwo`/`extC
 
 Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 
-- `extEmlArtanh_eq`, `tanh_artanh`, and branch-cut theorem `extEmlArtanh_ofReal_gt_one` (`x > 1 → artanh(x) = ½ ln((x+1)/(x-1)) - iπ/2`, matching `mpmath` and `README.md`).
-- `extEmlArctan_eq`, `tan_arctan`, and `extEmlArctan_neg_two_I` (`arctan(-2i) = -π/2 - (½ ln 3)i`).
-- `extEmlArsinh_eq` / `sinh_arsinh`, `extEmlArcosh_eq` / `cosh_arcosh`, `extEmlArcsin_eq` / `sin_arcsin`, `extEmlArccos_eq` / `cos_arccos`, and `extEmlArccos_two` (`arccos(2) = i · ln(2 + √3)`).
+- `extEmlArtanh_eq`, `tanh_artanh`, and branch-cut theorems `extEmlArtanh_ofReal_gt_one` (`x > 1`) and `extEmlArtanh_ofReal_lt_neg_one` (`x < -1`), matching `mpmath` and `README.md`.
+- `extEmlArctan_eq`, `tan_arctan`, and branch-cut theorems `extEmlArctan_ofImag_gt_one` (`y > 1`), `extEmlArctan_ofImag_lt_neg_one` (`y < -1`), and `extEmlArctan_neg_two_I`.
+- `extEmlArsinh_eq` / `sinh_arsinh`, `extEmlArcosh_eq` / `cosh_arcosh`, `extEmlArcsin_eq` / `sin_arcsin` + `extEmlArcsin_ofReal_gt_one` (`x > 1`), `extEmlArccos_eq` / `cos_arccos` + `extEmlArccos_ofReal_gt_one` (`x > 1`) and `extEmlArccos_two`.
 
 ### Binary encoding, Raney's Cycle Lemma, Catalan counting & `0` minimality
 
@@ -86,8 +86,8 @@ Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 ## What is NOT formalized
 
 - **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
-- **Two `-iπ` words** (`-ipi` K 45 and `-ipi-strict` K 47): the remaining 26 `best-known.json` constant/RPN records are proved in `RpnSoundness.lean`, `Records.lean`, and `Extended.lean`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
+- *(All 28 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are now machine-checked in `RpnSoundness.lean`, `Records.lean`, and `Extended.lean`, and cross-checked against the UI in CI.)*
 
 ## Building and auditing locally
 
