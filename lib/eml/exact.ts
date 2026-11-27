@@ -13,7 +13,7 @@ import {
   precisionMessage,
   trigArg,
 } from "./node";
-import { decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
+import { besideSumOf, decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
 import { knownValue } from "./lowering";
 import { evaluate as floatEvaluate, precisionNoteOf } from "./node";
 import { ballConfirmsValue } from "./exact-ball";
@@ -720,7 +720,7 @@ export type ExactReport = {
   lossGap?: number;
   /** Largest non-snapped cancellation gap in any gate of the pass, in decades. */
   surviveLoss?: number;
-  /** Largest gap of a log taken just off the negative real axis (see cutGap). */
+  /** Largest gap of a log taken just off the negative real axis, or of a remembered huge sum (see cutGap). */
   cutGap?: number;
   /** True when the displayed value's imaginary part comes from the lower-cut convention on the negative real axis. */
   nearCut?: boolean;
@@ -858,7 +858,17 @@ function atPrecision(digits: number, root: Node, env: Record<string, C | Z>, bud
     // The retry can carry hundreds of extra digits. The suite compares the
     // working-precision value, so round back once the hidden component is recovered.
     D.set({ precision: saved });
-    const round = (part: Decimal) => (part.isFinite() ? new D(part.toSignificantDigits(saved).toString()) : part);
+    // Gates mix the parts, so each part is good to about 10^(top − digits) absolute, where
+    // top is the larger part's decade. A part far below the other keeps only the decades
+    // above that: (10^100 + i)·2 read at 148 digits has 2 + 8×10^(−49) i, and the 120-digit
+    // round kept that noise, so the screen revealed 2.000…0078i.
+    const top = Math.max(...[report.value.re, report.value.im].filter((x) => x.isFinite() && !x.isZero()).map((x) => x.e), Number.NEGATIVE_INFINITY);
+    const places = Number.isFinite(top) ? digits - 12 - top : Number.POSITIVE_INFINITY;
+    const round = (part: Decimal) => {
+      if (!part.isFinite()) return part;
+      const kept = Number.isFinite(places) && places >= 0 && part.e + places < saved ? part.toDecimalPlaces(places) : part;
+      return new D(kept.toSignificantDigits(saved).toString());
+    };
     const value = { re: round(report.value.re), im: round(report.value.im) };
     return { ...report, digits, value: scrub ? scrubDust(value) : value };
   } finally {
@@ -1139,6 +1149,13 @@ function hidesBeside(root: Node): boolean {
     const node = stack.pop();
     if (!node || seen.has(node)) continue;
     seen.add(node);
+    // A remembered sum this module evaluates itself (see the walk in exactReportOnce).
+    // Its operands are what count; the bare-integer gates under it are never read.
+    const beside = besideSumOf(node);
+    if (beside) {
+      stack.push(beside.huge, beside.other);
+      continue;
+    }
     if (node.type === "input") {
       if (node.label.startsWith("beside:") || node.label.startsWith("unverified:")) {
         found = true;
@@ -1972,6 +1989,89 @@ function exactReportOnce(
       continue;
     }
     if (!n.a || !n.b) throw new EmlError("Could not evaluate this circuit.");
+    // A huge integer kept beside a non-integer: its gates hold only the integer, so
+    // evaluate the remembered sum itself. (10^400 + i)/7 was refused for this.
+    // A rebuilt circuit has no such record and is still refused by hidesBeside.
+    const beside = besideSumOf(n);
+    if (beside) {
+      const kids = [beside.huge, beside.other];
+      if (!frame.seen) {
+        if (visiting.has(n)) throw new EmlError("Could not evaluate this circuit.");
+        visiting.add(n);
+        stack.push({ n, seen: true });
+        for (const kid of kids) stack.push({ n: kid, seen: false });
+        continue;
+      }
+      visiting.delete(n);
+      const h = memo.get(beside.huge);
+      const w = memo.get(beside.other);
+      if (!h || !w) throw new EmlError("Could not evaluate this circuit.");
+      const op = beside.op === "add" ? (x: Decimal, y: Decimal) => x.add(y) : (x: Decimal, y: Decimal) => x.sub(y);
+      const value = lifted({ re: op(h.re, w.re), im: op(h.im, w.im) }, h, w);
+      // A real part rounded away beside the integer is recorded like any other gate's.
+      const outerAbsorbRe = absorbRe;
+      const outerAbsorbReTerm = absorbReTerm;
+      const outerAbsorb = absorbIm;
+      absorbRe = 0;
+      absorbReTerm = Number.NEGATIVE_INFINITY;
+      absorbIm = 0;
+      // At the root the sum is the answer, rounded once; no later gate mixes its parts.
+      const atRoot = n === root;
+      if (!atRoot) {
+        noteAbsorbRe(h.re, w.re, value.re, false, false);
+        noteAbsorb(h.im, w.im, value.im);
+      }
+      const own = { absorbRe, absorbReTerm, absorbIm };
+      // The small operand sits far below the integer. A later exp or ln mixes the parts,
+      // and an angle of 10^(−400) beside ±π is gone at 120 or 240 digits: (10^400 + i)·2
+      // printed 2.000…00442i. Ask for digits that span the gap, as a log near the cut does
+      // (see cutGap), and past 480 digits the result is refused, as before.
+      let ownGap = 0;
+      const top = Math.max(...[value.re, value.im].filter((x) => x.isFinite() && !x.isZero()).map((x) => x.e), Number.NEGATIVE_INFINITY);
+      for (const part of [w.re, w.im]) {
+        if (atRoot || !part.isFinite() || part.isZero() || !Number.isFinite(top)) continue;
+        const gap = top - part.e;
+        if (gap > D.precision - 24 && gap > ownGap) ownGap = gap;
+      }
+      if (ownGap > cutGap) cutGap = ownGap;
+      absorbRe = Math.max(outerAbsorbRe, absorbRe);
+      absorbReTerm = Math.max(outerAbsorbReTerm, absorbReTerm);
+      absorbIm = Math.max(outerAbsorb, absorbIm);
+      const maxOf = (map: Map<Node, number>, own0: number) => Math.max(own0, ...kids.map((k) => map.get(k) ?? 0));
+      const anyOf = (map: Map<Node, boolean>) => kids.some((k) => map.get(k) === true);
+      lossOf.set(n, maxOf(lossOf, 0));
+      surviveLossOf.set(n, maxOf(surviveLossOf, 0));
+      absorbOf.set(n, maxOf(absorbOf, own.absorbIm));
+      absorbReOf.set(n, maxOf(absorbReOf, own.absorbRe));
+      absorb2Of.set(n, maxOf(absorb2Of, 0));
+      absorbReTermOf.set(n, Math.max(own.absorbReTerm, ...kids.map((k) => absorbReTermOf.get(k) ?? Number.NEGATIVE_INFINITY)));
+      absorbExposedOf.set(n, anyOf(absorbExposedOf));
+      cutOf.set(n, maxOf(cutOf, ownGap));
+      rangeLostOf.set(n, anyOf(rangeLostOf));
+      underflowLostOf.set(n, anyOf(underflowLostOf));
+      cutImOf.set(n, anyOf(cutImOf));
+      tinyOf.set(n, Math.min(exponentFloor(value), ...kids.map((k) => tinyOf.get(k) ?? exponentFloor(memo.get(k) as Z))));
+      tinyPartsOf.set(n, minParts(partsFloor(value), ...kids.map((k) => tinyPartsOf.get(k) ?? partsFloor(memo.get(k) as Z))));
+      leadOf.set(n, anyOf(leadOf));
+      bigOf.set(n, Math.max(exponentCeil(value), ...kids.map((k) => bigOf.get(k) ?? exponentCeil(memo.get(k) as Z))));
+      const kw = kids.map((k) => work.get(k));
+      work.set(n, {
+        all: Math.max(...kw.map((x) => x?.all ?? Number.NEGATIVE_INFINITY)),
+        re: Math.max(...kw.map((x) => x?.re ?? Number.NEGATIVE_INFINITY)),
+        im: Math.max(...kw.map((x) => x?.im ?? Number.NEGATIVE_INFINITY)),
+        hits: mergeHits(kw[0]?.hits, kw[1]?.hits, []),
+      });
+      const kidLog = kids.some((k) => logged.get(k) === true);
+      let singular: string | null = null;
+      if (value.re.isNaN() || value.im.isNaN()) singular = SINGULAR_INDET;
+      else if (!zFinite(value)) singular = why.get(beside.huge) || why.get(beside.other) || SINGULAR_NONFINITE;
+      memo.set(n, value);
+      noteSeen(value);
+      why.set(n, singular);
+      logged.set(n, kidLog);
+      hasVarOf.set(n, kids.some((k) => k.type === "var" || hasVarOf.get(k) === true));
+      continue;
+    }
     // A sin, cos, or tan node can be an intermediate of another function and
     // already be cached. The cache entry is the exp formula. Recompute so an
     // infinite argument stays undefined instead of that cached infinity.

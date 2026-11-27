@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Exact mode evaluates a huge integer kept beside a non-integer as that sum. (10^400+i)/7 is 1.428571428571×10^399 + 0.142857142857i, and (10^400+i)·2, 2·(10^400+π), 1/(10^400+i) and sqrt(10^400+i) are certified; each of these said could not verify. When such a sum feeds a later gate, exact mode reads it with enough digits to span the gap between its parts, and past 480 digits it still refuses. A circuit rebuilt from its tokens has no record of the sum and stays refused.
+- A part far below the other keeps only the decades its pass resolved. (10^100+i)·2 printed 2×10^100 + 2.000…0078i; it is 2×10^100 + 2i. A raised reading was rounded back to 120 significant digits per part, which kept noise from below that pass's accuracy.
+
 ## 1.0.13 — 2026-11-26
 
 - Added proof-carrying circuit certificates: [`formal/lean/Eml/Cert.lean`](formal/lean/Eml/Cert.lean) proves `certify_sound` once and for all over both `ℂ` and `EmlExt` (zero `ln 0`), mirrored in `lib/eml/leanCert.ts` so `Copy Lean 4` emits a kernel-checked `theorem circuit_eval := certify_sound (by decide)` for certifiable pure circuits.

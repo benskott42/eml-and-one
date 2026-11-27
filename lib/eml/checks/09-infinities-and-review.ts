@@ -255,6 +255,7 @@ const checks: CheckModule[] = [
         "(10^400+i)+(10^400+(-i))",
       ];
       const bareRows = ["10^400+pi", "10^400+i", "10^400-0.5"];
+      const bareWant: Record<string, string> = { "10^400+pi": "1×10^400", "10^400+i": "1×10^400 + i", "10^400-0.5": "1×10^400" };
       const hugeJobs: { source: string; tokens: ReturnType<typeof packCircuit>["tokens"]; root: number; re?: string; digits?: number }[] = [];
       const timeCancel = (source: string) => {
         const started = performance.now();
@@ -304,10 +305,12 @@ const checks: CheckModule[] = [
         const ms = performance.now() - started;
         const text = formatExact(ex.value).replace(/\u200b/g, "");
         const floatDropped = hw.unverified !== true && Number.isFinite(hw.value.re) && Number.isFinite(hw.value.im);
-        if (ms >= 200 || ex.unverified !== true || floatDropped) {
+        // Exact mode evaluates the remembered sum itself (check 110); float still drops the small part.
+        const want = bareWant[source];
+        if (ms >= 5000 || ex.unverified === true || text !== want || floatDropped) {
           ctx.fail("FAIL bare huge sum", source, `${ms.toFixed(1)}ms`, hw.unverified ? "unverified" : hw.value, ex.unverified ? "unverified" : text);
         } else {
-          console.log("bare", source, "unverified", `${ms.toFixed(1)}ms`);
+          console.log("bare", source, text, `${ms.toFixed(1)}ms`);
         }
         const packed = packCircuit(node);
         hugeJobs.push({ source, tokens: packed.tokens, root: packed.root });
