@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 15 modules (776 declarations) is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 15 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -65,6 +65,7 @@ Direct RPN stack evaluations `evalRpn (EmlExt.finite 1) extEml bits [] = some [v
 The words the compiler substitutes for closed constants, proved from their proved sub-words with a generic gate lemma (`evalRpn_nd`: the program `p ++ q ++ [false]` evaluates to `op a b`):
 
 - Over `ℂ` (no `ln 0`): `evalRpn_eSq` (K = 21) → `e²`, `evalRpn_invE_strict` (K = 19) → `exp (-1)`, `evalRpn_negE_strict` (K = 23) → `-e`, `evalRpn_threeHalves_strict` (K = 41) → `3/2`, `evalRpn_negThreeHalves_strict` (K = 33) → `-3/2`.
+- Over `ℂ`, the `±2πi` words (K = 31, lower cut): `evalRpn_twoPiI` → `2πi` and `evalRpn_negTwoPiI` → `−2πi`. The `−2πi` proof bounds `Im(e^e / P) ∈ [−3π, −π)` from `11 < e^e < 20.1` and `3 < π < 3.15`.
 - Over `EmlExt` (`ln 0 = -∞`): `evalRpn_invE` (K = 17) → `exp (-1)`, `evalRpn_negE` (K = 17) → `-e`, `evalRpn_threeHalves` (K = 39) → `3/2`, `evalRpn_negThreeHalves` (K = 31) → `-3/2`, `evalRpn_fiveHalves` (K = 41) → `5/2`, `evalRpn_negFiveHalves` (K = 41) → `-5/2`.
 
 ### Genuine `eml`-word transcendental, circular, hyperbolic & logistic functions ([`Eml/Transcendental.lean`](Eml/Transcendental.lean))
@@ -94,7 +95,7 @@ Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 
 - **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
-- *(All 39 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link, and `lean.yml` runs when `best-known.json` changes.)*
+- *(All 41 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link or if a link's stored `lean` value disagrees with the exact engine, `scripts/lean-bridge-check.ts` proves each link's word evaluates to exactly that stored value, and `lean.yml` runs when `best-known.json` changes.)*
 
 ## Building and auditing locally
 

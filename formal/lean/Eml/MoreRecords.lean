@@ -308,4 +308,207 @@ theorem evalRpn_negFiveHalves :
     Complex.exp_log hne]
   congr 2; ring_nf
 
+/-! ### `±2πi` without `ln 0` (K = 31)
+
+Both words pass through `P = x + iπ` with `x = e − ln(e^e − e)`, and through
+`R = exp(e − log P) = e^e / P`.
+- `+2πi`: `eml (eml 1 R) (exp P) = P − lowerLog (exp P) = 2πi`, since `exp P`
+  lies on the negative real axis and the lower cut sends it to `P − 2πi`.
+- `−2πi`: `eml Q (exp R) = R − lowerLog (exp R) = 2πi · κ_L(R)` with
+  `Im R = −e^e π / (x² + π²) ∈ [−3π, −π)`, so the unwinding number is `−1`.
+-/
+
+/-- `x = e − ln(e^e − e)`, the real part of `P`. -/
+noncomputable def twoPiX : ℝ := Real.exp 1 - Real.log (Real.exp (Real.exp 1) - Real.exp 1)
+
+/-- `P = x + iπ`. -/
+noncomputable def twoPiP : ℂ := (twoPiX : ℂ) + Real.pi * Complex.I
+
+private theorem e_lt_three : Real.exp 1 < 3 := by linarith [Real.exp_one_lt_d9]
+
+private theorem e_gt : (2.718 : ℝ) < Real.exp 1 := by linarith [Real.exp_one_gt_d9]
+
+/-- `e^e > 11`: `e^e > e^{2.5} = e² · e^{0.5} ≥ e² · 1.5`. -/
+private theorem ee_gt_eleven : (11 : ℝ) < Real.exp (Real.exp 1) := by
+  have h25 : Real.exp 2.5 < Real.exp (Real.exp 1) := Real.exp_lt_exp.mpr (by linarith [e_gt])
+  have hsplit : Real.exp 2.5 = Real.exp 1 * Real.exp 1 * Real.exp 0.5 := by
+    rw [← Real.exp_add, ← Real.exp_add]; norm_num
+  have hhalf : (1.5 : ℝ) ≤ Real.exp 0.5 := by
+    have := Real.add_one_le_exp (0.5 : ℝ); linarith
+  have he2 : (7.38 : ℝ) < Real.exp 1 * Real.exp 1 := by nlinarith [e_gt]
+  have : (11 : ℝ) < Real.exp 2.5 := by
+    rw [hsplit]; nlinarith [Real.exp_pos 0.5]
+  linarith
+
+/-- `e^e < 20.1`: `e^e < e³ < 2.7183³`. -/
+private theorem ee_lt : Real.exp (Real.exp 1) < 20.1 := by
+  have h3 : Real.exp (Real.exp 1) < Real.exp 3 := Real.exp_lt_exp.mpr e_lt_three
+  have hsplit : Real.exp 3 = Real.exp 1 * Real.exp 1 * Real.exp 1 := by
+    rw [← Real.exp_add, ← Real.exp_add]; norm_num
+  have hlt : Real.exp 1 < 2.7183 := by linarith [Real.exp_one_lt_d9]
+  have : Real.exp 3 < 20.1 := by
+    rw [hsplit]; nlinarith [Real.exp_pos 1]
+  linarith
+
+private theorem twoPiX_bounds : -0.29 < twoPiX ∧ twoPiX < 0.72 := by
+  have hpos : 0 < Real.exp (Real.exp 1) - Real.exp 1 := by linarith [ee_gt_eleven, e_lt_three]
+  have hlog_gt : 2 < Real.log (Real.exp (Real.exp 1) - Real.exp 1) := by
+    rw [Real.lt_log_iff_exp_lt hpos]
+    have hsplit : Real.exp 2 = Real.exp 1 * Real.exp 1 := by rw [← Real.exp_add]; norm_num
+    have hlt : Real.exp 1 < 2.7183 := by linarith [Real.exp_one_lt_d9]
+    rw [hsplit]; nlinarith [ee_gt_eleven, Real.exp_pos 1]
+  have hlog_lt : Real.log (Real.exp (Real.exp 1) - Real.exp 1) < 3 := by
+    rw [Real.log_lt_iff_lt_exp hpos]
+    have : Real.exp (Real.exp 1) < Real.exp 3 := Real.exp_lt_exp.mpr e_lt_three
+    linarith [Real.exp_pos 1]
+  unfold twoPiX
+  constructor <;> linarith [e_gt, e_lt_three, Real.exp_one_lt_d9]
+
+private theorem twoPiP_im : twoPiP.im = Real.pi := by simp [twoPiP]
+
+private theorem twoPiP_re : twoPiP.re = twoPiX := by simp [twoPiP]
+
+private theorem twoPiP_ne : twoPiP ≠ 0 := by
+  intro h
+  have := congrArg Complex.im h
+  rw [twoPiP_im, Complex.zero_im] at this
+  exact Real.pi_ne_zero this
+
+/-- `eml 1 (exp (exp e)) = e − e^e`, a negative real. -/
+private theorem twoPi_v1 :
+    eml 1 (Complex.exp (Complex.exp (Complex.exp 1))) =
+      ((Real.exp 1 - Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+  unfold eml
+  rw [lowerLog_exp_of_im_zero exp_exp_one_im, ← Complex.ofReal_one, ← Complex.ofReal_exp,
+    ← Complex.ofReal_exp]
+  push_cast; ring
+
+/-- `eml 1 (e − e^e) = P`. -/
+private theorem twoPi_P :
+    eml 1 ((Real.exp 1 - Real.exp (Real.exp 1) : ℝ) : ℂ) = twoPiP := by
+  have hneg : Real.exp 1 - Real.exp (Real.exp 1) < 0 := by linarith [ee_gt_eleven, e_lt_three]
+  unfold eml
+  rw [lowerLog_ofReal_neg hneg, ← Complex.ofReal_one, ← Complex.ofReal_exp]
+  unfold twoPiP twoPiX
+  push_cast; ring_nf
+
+/-- `eml 1 P = e − log P` (`P` is off the negative real axis). -/
+private theorem twoPi_Q : eml 1 twoPiP = Complex.exp 1 - Complex.log twoPiP := by
+  unfold eml
+  rw [lowerLog_eq_log_of_not_isNegReal (fun h => by
+    have := h.2; rw [twoPiP_im] at this; exact Real.pi_ne_zero this)]
+
+/-- `R = exp (e − log P) = e^e / P`. -/
+private theorem twoPi_R :
+    Complex.exp (Complex.exp 1 - Complex.log twoPiP) = Complex.exp (Complex.exp 1) / twoPiP := by
+  rw [Complex.exp_sub, Complex.exp_log twoPiP_ne]
+
+private theorem twoPi_R_im :
+    (Complex.exp (Complex.exp 1) / twoPiP).im =
+      -(Real.exp (Real.exp 1) * Real.pi) / (twoPiX ^ 2 + Real.pi ^ 2) := by
+  have hee : Complex.exp (Complex.exp (1 : ℂ)) = ((Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]
+  rw [hee, Complex.div_im, Complex.normSq_apply, twoPiP_re, twoPiP_im]
+  simp only [Complex.ofReal_re, Complex.ofReal_im, zero_mul]
+  rw [neg_div, ← sq, ← sq]
+  ring
+
+/-- `Im R ∈ [−3π, −π)`. -/
+private theorem twoPi_R_im_bounds :
+    -3 * Real.pi ≤ (Complex.exp (Complex.exp 1) / twoPiP).im ∧
+      (Complex.exp (Complex.exp 1) / twoPiP).im < -Real.pi := by
+  rw [twoPi_R_im]
+  obtain ⟨hx1, hx2⟩ := twoPiX_bounds
+  have hpi3 := Real.pi_gt_three
+  have hpi4 := Real.pi_lt_d2
+  have hD : 0 < twoPiX ^ 2 + Real.pi ^ 2 := by positivity
+  have hx2sq : twoPiX ^ 2 < 0.53 := by nlinarith
+  have hee1 := ee_gt_eleven
+  have hee2 := ee_lt
+  constructor
+  · rw [le_div_iff₀ hD]; nlinarith
+  · rw [div_lt_iff₀ hD]; nlinarith
+
+private theorem lowerUnwind_eq_neg_one {z : ℂ} (h1 : -3 * Real.pi ≤ z.im) (h2 : z.im < -Real.pi) :
+    lowerUnwind z = -1 := by
+  unfold lowerUnwind
+  rw [Int.floor_eq_iff]
+  have hpi2 : (0 : ℝ) < 2 * Real.pi := by linarith [Real.pi_pos]
+  constructor
+  · rw [le_div_iff₀ hpi2]; push_cast; linarith
+  · rw [div_lt_iff₀ hpi2]; push_cast; linarith
+
+private theorem lowerUnwind_twoPiP : lowerUnwind twoPiP = 1 := by
+  unfold lowerUnwind
+  rw [twoPiP_im, Int.floor_eq_iff]
+  have hpi := Real.pi_pos
+  have hdiv : (Real.pi + Real.pi) / (2 * Real.pi) = 1 := by field_simp; ring
+  rw [hdiv]; norm_num
+
+/-- `11E1E1E` (`exp (exp e)`), then `111E1E1EE`, `P`, `Q`, `R`. -/
+def bV1 : List Bool := nd leaf bExpExpE
+def bP : List Bool := nd leaf bV1
+def bQ : List Bool := nd leaf bP
+def bR : List Bool := nd bQ leaf
+
+/-- K = 31 `111111E1E1EEEE1EE1111E1E1EEE1EE` → `+2πi` (lower cut, no `ln 0`). -/
+def bits_twoPiI : List Bool := nd (nd leaf bR) (nd bP leaf)
+
+/-- K = 31 `11111E1E1EEEE11111E1E1EEEE1E1EE` → `−2πi` (lower cut, no `ln 0`). -/
+def bits_negTwoPiI : List Bool := nd bQ (nd bR leaf)
+
+/-- The shared chain: `P`, `Q = eml 1 P`, and `R = eml Q 1` as evaluated values. -/
+private theorem twoPi_chain :
+    evalRpn (1 : ℂ) eml bP [] = some [twoPiP] ∧
+      evalRpn (1 : ℂ) eml bQ [] = some [Complex.exp 1 - Complex.log twoPiP] ∧
+      evalRpn (1 : ℂ) eml bR [] = some [Complex.exp (Complex.exp 1) / twoPiP] := by
+  have hl := evalRpn_leaf (1 : ℂ) eml
+  have he := evalRpn_nd 1 eml hl hl
+  have heee := evalRpn_nd 1 eml (evalRpn_nd 1 eml he hl) hl
+  have hv1 := evalRpn_nd 1 eml hl heee
+  have hp := evalRpn_nd 1 eml hl hv1
+  simp only [eml_right_one] at hp
+  rw [twoPi_v1, twoPi_P] at hp
+  have hq := evalRpn_nd 1 eml hl hp
+  rw [twoPi_Q] at hq
+  have hr := evalRpn_nd 1 eml hq hl
+  rw [eml_right_one, twoPi_R] at hr
+  refine ⟨?_, ?_, ?_⟩
+  · rw [bP, bV1, bExpExpE, bExpE, bE]; exact hp
+  · rw [bQ, bP, bV1, bExpExpE, bExpE, bE]; exact hq
+  · rw [bR, bQ, bP, bV1, bExpExpE, bExpE, bE]; exact hr
+
+theorem evalRpn_twoPiI :
+    evalRpn (1 : ℂ) eml bits_twoPiI [] = some [2 * Real.pi * Complex.I] := by
+  obtain ⟨hp, -, hr⟩ := twoPi_chain
+  rw [bits_twoPiI, evalRpn_nd 1 eml (evalRpn_nd 1 eml (evalRpn_leaf _ _) hr)
+    (evalRpn_nd 1 eml hp (evalRpn_leaf _ _)), eml_right_one]
+  obtain ⟨hb1, hb2⟩ := twoPi_R_im_bounds
+  -- log R = Q, since Im Q = −arg P ∈ (−π, 0).
+  have hR : Complex.exp (Complex.exp 1) / twoPiP = Complex.exp (Complex.exp 1 - Complex.log twoPiP) :=
+    twoPi_R.symm
+  have hQim : (Complex.exp 1 - Complex.log twoPiP).im = -Complex.arg twoPiP := by
+    simp [Complex.log_im, Complex.exp_im]
+  have harg_lt : Complex.arg twoPiP < Real.pi :=
+    Complex.arg_lt_pi_iff.mpr (Or.inr (by rw [twoPiP_im]; exact Real.pi_ne_zero))
+  have harg_gt : -Real.pi < Complex.arg twoPiP := Complex.neg_pi_lt_arg _
+  have hlogR : lowerLog (Complex.exp (Complex.exp 1) / twoPiP) = Complex.exp 1 - Complex.log twoPiP := by
+    rw [lowerLog_eq_log_of_not_isNegReal (fun h => by linarith [h.2, Real.pi_pos]), hR,
+      Complex.log_exp (by rw [hQim]; linarith) (by rw [hQim]; linarith)]
+  have hinner : eml 1 (Complex.exp (Complex.exp 1) / twoPiP) = Complex.log twoPiP := by
+    unfold eml; rw [hlogR]; ring
+  rw [hinner]
+  unfold eml
+  rw [Complex.exp_log twoPiP_ne, lowerLog_exp_eq_sub_unwind, lowerUnwind_twoPiP]
+  congr 2; push_cast; ring
+
+theorem evalRpn_negTwoPiI :
+    evalRpn (1 : ℂ) eml bits_negTwoPiI [] = some [-(2 * Real.pi * Complex.I)] := by
+  obtain ⟨-, hq, hr⟩ := twoPi_chain
+  rw [bits_negTwoPiI, evalRpn_nd 1 eml hq (evalRpn_nd 1 eml hr (evalRpn_leaf _ _)), eml_right_one]
+  obtain ⟨hb1, hb2⟩ := twoPi_R_im_bounds
+  unfold eml
+  rw [twoPi_R, lowerLog_exp_eq_sub_unwind, lowerUnwind_eq_neg_one hb1 hb2]
+  congr 2; push_cast; ring
+
 end Eml.MoreRecords

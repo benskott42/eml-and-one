@@ -13,6 +13,7 @@ import { isProgram } from "../lib/eml/programIndex";
  *    - `formal/lean/Eml/<file>` exists
  *    - `@<theorem>` exists in `Eml` AND its exact `List Bool` argument equals `rpn`
  *    - `model` ("C" vs "EmlExt") matches the theorem's actual evaluator (`eml` vs `extEml`)
+ *    - its stored `lean` value term is exactly the value the theorem proves
  * 2. Compiles sample outputs of `nodeToLean4Snippet` (certified theorem, record, and
  *    symbolic variable circuit) directly with Lean 4.
  * 3. Cross-checks `certifyRpnForLean` against `Eml.Cert.certify` on every valid
@@ -65,9 +66,8 @@ for (const [rpn, ref] of Object.entries(LEAN_VERIFIED_THEOREMS)) {
     ref.model === "C"
       ? `evalRpn (1 : ℂ) eml ${bits} []`
       : `evalRpn (EmlExt.finite 1) extEml ${bits} []`;
-  lines.push(
-    `example : ∃ v, ${lhs} = some [v] := ⟨_, ${ref.theorem}⟩`,
-  );
+  // The stored value term is exactly what the theorem proves, not just "some value".
+  lines.push(`example : ${lhs} = some [${ref.lean}] := ${ref.theorem}`);
   idx += 1;
 }
 

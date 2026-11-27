@@ -511,8 +511,24 @@ function quotientWord(a: Node, b: Node, generic: Node): Node {
   return word ? derive("div", tagReal(word, Number(n) / Number(d)), a, b) : generic;
 }
 
+/**
+ * ±2πi has a K 31 word without ln 0 (formal/lean/Eml/MoreRecords.lean). The value is
+ * known from the recorded angle fact (q·π·i), however it was spelled: 2*pi*i was K 199.
+ */
+function angleWord(generic: Node): Node {
+  if (isUnverified(generic) || isExactUnsure(generic) || maxSeriesErrorExp(generic) !== undefined) return generic;
+  const angle = factsOf(generic).angle;
+  if (!angle || angle.unit !== "imag" || angle.q.d !== BigInt(1)) return generic;
+  const id = angle.q.n === BigInt(2) ? "2ipi" : angle.q.n === BigInt(-2) ? "-2ipi" : null;
+  if (!id) return generic;
+  const word = shortestWord(generic, [id]);
+  if (!word) return generic;
+  tagValue(word, { re: 0, im: Number(angle.q.n) * Math.PI });
+  return learn(word, { angle });
+}
+
 export function tSub(a: Node, b: Node): Node {
-  return foldSmallInts("sub", a, b, tSubBuild(a, b));
+  return angleWord(foldSmallInts("sub", a, b, tSubBuild(a, b)));
 }
 
 function tSubBuild(a: Node, b: Node): Node {
@@ -536,7 +552,7 @@ export function tNeg(b: Node): Node {
     const int = provenInteger(b);
     if (int !== undefined && int !== BigInt(0) && int >= BigInt(-64) && int <= BigInt(64)) return preferShorter(generic, integerNode(-Number(int)));
   }
-  return generic;
+  return angleWord(generic);
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -551,7 +567,7 @@ function largeRealSum(a: Node, b: Node): Node | null {
 }
 
 export function tAdd(a: Node, b: Node): Node {
-  return foldSmallInts("add", a, b, tAddBuild(a, b));
+  return angleWord(foldSmallInts("add", a, b, tAddBuild(a, b)));
 }
 
 function tAddBuild(a: Node, b: Node): Node {
@@ -865,7 +881,7 @@ function offAxis(node: Node): boolean {
 }
 
 export function tMul(a: Node, b: Node): Node {
-  return foldSmallInts("mul", a, b, tMulBuild(a, b));
+  return angleWord(foldSmallInts("mul", a, b, tMulBuild(a, b)));
 }
 
 function tMulBuild(a: Node, b: Node): Node {
@@ -968,7 +984,7 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
-  return quotientWord(a, b, tDivBuild(a, b));
+  return angleWord(quotientWord(a, b, tDivBuild(a, b)));
 }
 
 function tDivBuild(a: Node, b: Node): Node {

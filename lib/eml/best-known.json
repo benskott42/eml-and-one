@@ -49,7 +49,9 @@
     "3/2-strict": "111E1EE1111111EEE1EE11E1EEE11E1E1EEE1E1EE",
     "-3/2-strict": "1111111EEE1EE11E1EEE11E1E1EEE11EE",
     "1/e-strict": "11111EEE1EE11E1EE1E",
-    "-e-strict": "1111E11E1EEE1EE11E1E1EE"
+    "-e-strict": "1111E11E1EEE1EE11E1E1EE",
+    "2ipi": "111111E1E1EEEE1EE1111E1E1EEE1EE",
+    "-2ipi": "11111E1E1EEEE11111E1E1EEEE1E1EE"
   },
   "domains": {
     "minus": "exact for Im y in [-pi, pi) on this cut; the calculator uses rotSub elsewhere",
