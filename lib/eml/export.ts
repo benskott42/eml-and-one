@@ -113,6 +113,74 @@ export const APP_SUB_WORD =
   "1EE1E";
 
 /**
+ * What the compiler emits for the other operators with variable operands. Each is proved
+ * in formal/lean/Eml/AppOps.lean (`add_correct`, `mul_correct`, …) for all inputs:
+ * x + y, 2·x, x², √x and exp x exactly; x · y and −x up to the sign of zero; x / y and
+ * 1/x for a nonzero divisor; ln x as the principal log. x + y is the x − y circuit with
+ * operand (−1)·y. Check 115 and the Lean bridge compare these with the compiler.
+ */
+export const APP_WORDS: Readonly<Record<string, { source: string; word: string }>> = {
+  add: {
+    source: "x+y",
+    word:
+      "1111111111111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEE" +
+      "E1EE111111111E1EEEE11E1E1EEEEE1EE11111111111E1EEEE11E1E1EEEEE1EE111111111111EEE1" +
+      "EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1xE1EE1111111" +
+      "11111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE1111" +
+      "111111E1EEEE11EEEE1EEyE1EE1EE1EE1E1EEE1EE1111111111E1EEEE11E1E1EEEEE1EE111111111" +
+      "111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1EE1EEE1EE1E11111E1EEEE11EE1EEEE1EE111111" +
+      "1111E1EEEE11EEEE1EEyE1EE1EE1EE111111111111EEE1EE11EE1EEEE1EE1111111yEE1EEyE1EE1E" +
+      "E1EEE1EE1E11111E1EEEE11EE1EEEE1EE1111111111E1EEEE11EEEE1EEyE1EE1EE1EE1E1EEE1EE1E" +
+      "1EEE1EE1EE1EE1E",
+  },
+  mul: {
+    source: "x*y",
+    word:
+      "1111xEE1EEyE1EE1E",
+  },
+  div: {
+    source: "x/y",
+    word:
+      "111yEE1EE1xE1EE1E",
+  },
+  neg: {
+    source: "-x",
+    word:
+      "111111111E1EEEE11EEEE1EExE1EE1E",
+  },
+  sq: {
+    source: "x^2",
+    word:
+      "1111111111EEE1EE11EE1EEEE1EE11xE1EEE1EE1E1E",
+  },
+  twoMul: {
+    source: "2*x",
+    word:
+      "1111111111EEE1EE11EE1EEEE1EExE1EE1E",
+  },
+  inv: {
+    source: "1/x",
+    word:
+      "111xEE1EE11E1EE1E",
+  },
+  sqrt: {
+    source: "sqrt(x)",
+    word:
+      "111111111EEE1EE11EE1EEEE1EE111xE1EEE1EE1E1E",
+  },
+  exp: {
+    source: "exp(x)",
+    word:
+      "x1E",
+  },
+  ln: {
+    source: "ln(x)",
+    word:
+      "11xE1EE",
+  },
+};
+
+/**
  * RPN of a circuit whose leaves are `1` or variables, with each variable as its
  * name (`1`, `x`, `y`, `E`), or `null` for any other leaf or past `maxNodes`.
  */

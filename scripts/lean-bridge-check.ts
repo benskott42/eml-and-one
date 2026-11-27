@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { APP_SUB_WORD, LEAN_VERIFIED_THEOREMS, nodeToLean4Snippet, variableRpnFromNode } from "../lib/eml/export";
+import { APP_SUB_WORD, APP_WORDS, LEAN_VERIFIED_THEOREMS, nodeToLean4Snippet, variableRpnFromNode } from "../lib/eml/export";
 import { certifyRpnForLean, certifyRpnForLeanExt, rpnToLeanBits } from "../lib/eml/leanCert";
 import { E, ONE, V, nodeFromRpn } from "../lib/eml/node";
 import { compileExpression } from "../lib/eml/parse";
@@ -113,6 +113,15 @@ lines.push(`example : Eml.AppSub.appSubToks = [${subTokens.join(", ")}] := rfl`)
 lines.push("example (a b : ℂ) :");
 lines.push("    Eml.AppSub.evalTok (.finite 1) (.finite a) (.finite b) Eml.DirectedInf.dirEml");
 lines.push("      Eml.AppSub.appSubToks [] = some [.finite (a - b)] := Eml.AppSub.appSub_correct a b");
+// The other operators (Eml.AppOps): the compiler's word for each is that module's token list.
+for (const [name, { source, word }] of Object.entries(APP_WORDS)) {
+  const compiled = variableRpnFromNode(compileExpression(source, { x: V("x"), y: V("y") }), 100000);
+  if (compiled !== word) throw new Error(`The compiler's ${source} circuit (K ${compiled?.length ?? "?"}) is not APP_WORDS.${name}.`);
+  if (word.length > 200) lines.push("set_option maxRecDepth 100000 in");
+  lines.push(`example : Eml.AppOps.${name}Toks = [${word.split("").map((ch) => tokenName[ch]).join(", ")}] := rfl`);
+}
+lines.push("#check @Eml.AppOps.add_correct");
+lines.push("#check @Eml.AppOps.mul_correct");
 lines.push("");
 lines.push("end UiCrossCheck");
 lines.push("");
@@ -167,5 +176,5 @@ execFileSync("lake", ["env", "lean", outPath], {
 });
 
 console.log(
-  `Lean bridge check passed: ${idx} UI theorem links, ${certMatches} Cert.certify + certifyExt cross-checks, ${snippetCases.length} compiled snippets, x − y circuit (K ${APP_SUB_WORD.length}) linked to Eml.AppSub.appSub_correct.`,
+  `Lean bridge check passed: ${idx} UI theorem links, ${certMatches} Cert.certify + certifyExt cross-checks, ${snippetCases.length} compiled snippets, x − y circuit (K ${APP_SUB_WORD.length}) and ${Object.keys(APP_WORDS).length} more operators linked to Eml.AppSub / Eml.AppOps.`,
 );

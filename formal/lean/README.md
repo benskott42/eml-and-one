@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 19 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 20 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -76,6 +76,16 @@ For general operands the compiler lowers `x − y` (`lib/eml/lowering.ts`, `scal
 - `appSub_correct` — `evalTok (.finite 1) (.finite a) (.finite b) dirEml appSubToks [] = some [.finite (a - b)]` for **all** `a b : ℂ`, `b = 0` included (in `EmlDir`).
 - `appSubToks_eval` — the token list unfolds to `appSub`, the circuit written with Lean's words; `shortSub_eq` — the shortcut is the raw subtraction whenever `exp H` is finite (not for every `EmlDir` value: an infinity at a general angle does not come back from `exp ∘ ln`; all four uses here have `exp H` finite); `dirCIpi_eq` — the K 21 word is `iπ` in `EmlDir`.
 - `APP_SUB_WORD` in `lib/eml/export.ts` is the same word: check 115 fails if the compiler stops emitting it, and the bridge compares it with `appSubToks` token for token.
+
+### The calculator's other operators ([`Eml/AppOps.lean`](Eml/AppOps.lean))
+
+With variable operands the compiler emits a single stored word for most operators, and `x + y` is the `x − y` circuit with operand `(−1)·y` (scale still from `y`, 655 tokens). Each word below is the compiler's own (`APP_WORDS` in `lib/eml/export.ts`; check 115 and the bridge compare them token for token), proved in `EmlDir` for all complex inputs:
+
+- `add_correct` (`x + y`, K 655), `twoMul_correct` (`2·x`), `sq_correct` (`x² = exp(2·ln x)`, `0` included), `sqrt_correct` (principal `a ^ (1/2)`, `0` included), `exp_correct`: exactly the value.
+- `mul_correct` (`x · y`) and `neg_correct` (`−x = (−1)·x`): the value up to the sign of zero, read by `valueOf` (`(−1)·0 = −0`, as in IEEE).
+- `div_correct` (`x / y`) for `b ≠ 0`, up to the sign of a zero quotient; `inv_correct` (`1/x`) for `a ≠ 0`.
+- `ln_correct`: the principal `Complex.log a` for `a ≠ 0`; `ln_zero_correct`: `−∞` at `0`.
+- Along the way: `dirEmlDiv_eq_of_ne_zero` (no half-plane condition when `a ≠ 0`), `dirEmlMul_zero_left`, `dirEmlMul_negOne_zero` (`(−1)·0 = −0`), and `appSubGen_negZero` (`x − (−0) = x` through the whole rotation).
 
 ### Proof-carrying certificates ([`Eml/Cert.lean`](Eml/Cert.lean), [`Eml/CertSym.lean`](Eml/CertSym.lean), [`Eml/CertBox.lean`](Eml/CertBox.lean), [`Eml/CertExt.lean`](Eml/CertExt.lean))
 

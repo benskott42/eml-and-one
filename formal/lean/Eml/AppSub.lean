@@ -136,15 +136,20 @@ noncomputable def dirCIpi : EmlDir :=
       (dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)))))
       (dirEml (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1)))
 
-/-- The compiled `x − y`, in the order `lowering.ts` builds it. -/
-noncomputable def appSub (x y : EmlDir) : EmlDir :=
-  let k := shortSub (sqrtBody (dirEmlSqr y)) dirCNegOne
-  let b1 := dirEmlDiv y k
+/-- The compiled scaled rotation `x − yb`, in the order `lowering.ts` builds it, with the
+    scale `k = √(yk²) − (−1)` taken from `yk` (`scaledRot`'s `kFrom`). The compiler's
+    `x − y` is `appSubGen x y y`, and its `x + y` is `appSubGen x y ((−1)·y)`. -/
+noncomputable def appSubGen (x yk yb : EmlDir) : EmlDir :=
+  let k := shortSub (sqrtBody (dirEmlSqr yk)) dirCNegOne
+  let b1 := dirEmlDiv yb k
   dirEmlMul k
     (dirEmlDiv
       (shortSub (mulBody dirCIpi (shortSub (divBody x k) b1))
-        (dirEmlMul dirCIpi (shortSub (divBody y k) b1)))
+        (dirEmlMul dirCIpi (shortSub (divBody yb k) b1)))
       dirCIpi)
+
+/-- The compiled `x − y`. -/
+noncomputable def appSub (x y : EmlDir) : EmlDir := appSubGen x y y
 
 set_option maxRecDepth 100000 in
 /-- The token list is that circuit, by unfolding alone. -/
@@ -207,33 +212,40 @@ theorem dirCIpi_eq : dirCIpi = .finite (Real.pi * Complex.I) := by
 
 /-! ### The compiled `x − y` is `x − y` -/
 
-theorem appSub_finite (a b : ℂ) : appSub (.finite a) (.finite b) = .finite (a - b) := by
+/-- The scale `√(yk²) − (−1)` is `s + 1` with `0 ≤ Re s` (`s = 0` at `yk = 0`, through `−0` and
+    directed infinities). -/
+theorem appScale_finite (bk : ℂ) : ∃ s : ℂ, 0 ≤ s.re ∧
+    shortSub (sqrtBody (dirEmlSqr (.finite bk))) dirCNegOne = .finite (s + 1) := by
+  obtain ⟨s, hs, hs_re⟩ : ∃ s : ℂ, dirEmlSqrt (dirEmlSqr (.finite bk)) = .finite s ∧ 0 ≤ s.re := by
+    by_cases hb : bk = 0
+    · subst hb
+      exact ⟨0, by unfold dirEmlSqr; rw [dirEmlMul_zero_zero, dirEmlSqrt_zero], le_refl _⟩
+    · refine ⟨(bk * bk) ^ ((1 : ℂ) / 2), ?_, re_cpow_half_nonneg (bk * bk)⟩
+      unfold dirEmlSqr
+      rw [dirEmlMul_eq_of_ne_zero hb hb, dirEmlSqrt_finite (mul_ne_zero hb hb)]
+  refine ⟨s, hs_re, ?_⟩
+  have hH : dirExp (sqrtBody (dirEmlSqr (.finite bk))) = .finite s := by
+    rw [← dirEmlExp_eq]; exact hs
+  rw [shortSub_eq hH, dirEmlExp_eq, hH, dirCNegOne_eq_negOne, dirRawSub_eq,
+    lowerUnwind_of_im_zero (by simp)]
+  congr 1
+  push_cast
+  ring
+
+/-- With a finite scale source `bk` and finite operands, the compiled rotation is `a − b`. -/
+theorem appSubGen_finite (a bk b : ℂ) :
+    appSubGen (.finite a) (.finite bk) (.finite b) = .finite (a - b) := by
   set c : ℂ := Real.pi * Complex.I with hc
   have hc_re : c.re = 0 := by simp [c]
   have hc_ne : c ≠ 0 := by simp [c, Real.pi_ne_zero, Complex.I_ne_zero]
-  -- The scale: √(b²) is finite (0 at b = 0, through `−0` and directed infinities).
-  obtain ⟨s, hs, hs_re⟩ : ∃ s : ℂ, dirEmlSqrt (dirEmlSqr (.finite b)) = .finite s ∧ 0 ≤ s.re := by
-    by_cases hb : b = 0
-    · subst hb
-      exact ⟨0, by unfold dirEmlSqr; rw [dirEmlMul_zero_zero, dirEmlSqrt_zero], le_refl _⟩
-    · refine ⟨(b * b) ^ ((1 : ℂ) / 2), ?_, re_cpow_half_nonneg (b * b)⟩
-      unfold dirEmlSqr
-      rw [dirEmlMul_eq_of_ne_zero hb hb, dirEmlSqrt_finite (mul_ne_zero hb hb)]
+  obtain ⟨s, hs_re, hk⟩ := appScale_finite bk
   have hk_re : 0 ≤ (s + 1).re := by simp only [Complex.add_re, Complex.one_re]; linarith
   have hk_ne : s + 1 ≠ 0 := by
     intro h
     have := congrArg Complex.re h
     simp only [Complex.add_re, Complex.one_re, Complex.zero_re] at this
     linarith
-  have hk : shortSub (sqrtBody (dirEmlSqr (.finite b))) dirCNegOne = .finite (s + 1) := by
-    have hH : dirExp (sqrtBody (dirEmlSqr (.finite b))) = .finite s := by
-      rw [← dirEmlExp_eq]; exact hs
-    rw [shortSub_eq hH, dirEmlExp_eq, hH, dirCNegOne_eq_negOne, dirRawSub_eq,
-      lowerUnwind_of_im_zero (by simp)]
-    congr 1
-    push_cast
-    ring
-  unfold appSub
+  unfold appSubGen
   dsimp only
   rw [hk, dirCIpi_eq]
   -- The two inner shortcuts: x/k and y/k are finite.
@@ -261,6 +273,9 @@ theorem appSub_finite (a b : ℂ) : appSub (.finite a) (.finite b) = .finite (a 
     dirEmlMul_eq hk_ne hk_re]
   congr 1
   rw [mul_sub, mul_div_cancel₀ _ hk_ne, mul_div_cancel₀ _ hk_ne]
+
+theorem appSub_finite (a b : ℂ) : appSub (.finite a) (.finite b) = .finite (a - b) :=
+  appSubGen_finite a b b
 
 /-- **The calculator's `x − y` circuit computes `a − b`** for every `a b : ℂ`, in `EmlDir`. -/
 theorem appSub_correct (a b : ℂ) :
