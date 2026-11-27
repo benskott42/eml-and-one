@@ -530,6 +530,11 @@ export function endInteger(n: number): void {
   building.delete(n);
 }
 
+/** True while the library builds an integer from smaller ones (its own adds and muls must not fold). */
+export function buildingInteger(): boolean {
+  return building.size > 0;
+}
+
 function zeroNode(): Node {
   if (!zero) zero = tagReal(programNode("0"), 0);
   return zero;

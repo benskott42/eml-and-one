@@ -49,7 +49,7 @@ No −iπ on this cut was found through K 41, with or without ln 0, which is con
 | ±5/2 | 41 | yes | `111E1EE1111111E1EEEE11EEE11E1E1EEE11EE1EE` (+), `111111111E1EEEE11EEE11E1E1EEE11EEE1EE11EE` (−) | mpmath 700, acceptsConstantProgram |
 | −5/3 | 41 | yes | `11111111E1EEEE11E1E1EEE11EEE11E1E1EEE11EE` | mpmath 700 |
 
-The compiler builds several of these much longer. `e^2` compiles to K 45, `2*pi*i` to K 199, `5/2` to K 105, `-1/2` to K 49, `3/2` and `2/3` to K 63, and `4` to K 53. A constant-substitution pass that swaps a closed constant for its shortest known word would shorten those circuits.
+The compiler now uses these words for closed constants when the word is shorter and adds no dependence on ln 0 = −∞ (`lib/eml/library.ts`, constant substitution): `e^2` is K 21 (was 45), `-1/2` K 29 (was 49), `2/3` K 39 (was 63), `4` K 39 (was 53), and `1/2` takes the K 31 word without ln 0 (was K 35). `5/2` has no stored word without ln 0, so it keeps its own circuit, and `2*pi*i` (K 199; a K 31 word exists) is not matched yet.
 
 ## Impostors
 

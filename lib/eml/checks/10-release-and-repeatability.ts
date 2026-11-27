@@ -215,7 +215,7 @@ const checks: CheckModule[] = [
   {
     id: 74,
     run(ctx) {
-      // The 671-press word for ln(1+10^(−130)) was listed as able to show an exact 0
+      // The 601-press word (671 before constant words) for ln(1+10^(−130)) was listed as able to show an exact 0
       // depending on the cache. Built from its presses, alone, after the named
       // expression, and through the worker's wire, it is 10^(−130) every time.
       const named = compileExpression("ln(1+10^-130)", {});
@@ -232,7 +232,7 @@ const checks: CheckModule[] = [
         const packed = packCircuit(nodeFromRpn(words));
         texts.push(read(isolateCircuit(() => unpackCircuit(packed.tokens, packed.root))));
       }
-      if (!words || words.length !== 671 || texts.some((text) => text !== "1×10^−130")) {
+      if (!words || words.length !== 601 || texts.some((text) => text !== "1×10^−130")) {
         ctx.fail("FAIL press word of ln(1+10^-130)", words?.length, texts);
       }
     },
@@ -244,8 +244,8 @@ const checks: CheckModule[] = [
       // other circuits built in between. The table must not depend on that.
       const four = { node: compileExpression("2*2", {}) };
       const tables = [
-        { stack: [four], want: "add=K 89 sub=K 81 mul=K 87 div=K 87 pow=K 95 log=K 99 avg=K 133 hypot=K 233" },
-        { stack: [four, four], want: "add=K 123 sub=K 7 mul=K 121 div=K 121 pow=K 129 log=K 133 avg=K 167 hypot=K 301" },
+        { stack: [four], want: "add=K 63 sub=K 19 mul=K 73 div=K 73 pow=K 81 log=K 85 avg=K 107 hypot=K 167" },
+        { stack: [four, four], want: "add=K 73 sub=K 7 mul=K 93 div=K 93 pow=K 101 log=K 105 avg=K 117 hypot=K 183" },
       ];
       for (const { stack, want } of tables) {
         const whole = keyCosts(stack, "0.5", "2");
