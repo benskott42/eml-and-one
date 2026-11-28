@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { installFastMul } from "./fast-mul";
 import { exactDecimalOf, exactRationalOf, factsOf, isExactUnsure, isUnverified, provenInteger } from "./facts";
 import { EmlLimitError, type Node } from "./node";
 
@@ -107,8 +108,8 @@ function lnReducedL(x: Decimal, L: Decimal.Constructor, epsL: Decimal): Decimal 
 function precCtx(P: number): PrecCtx {
   let ctx = precCache.get(P);
   if (ctx) return ctx;
-  const B = Decimal.clone({ precision: P, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
-  const L = Decimal.clone({ precision: P + 12, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 });
+  const B = installFastMul(Decimal.clone({ precision: P, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 }));
+  const L = installFastMul(Decimal.clone({ precision: P + 12, rounding: Decimal.ROUND_HALF_UP, minE: -9e15, maxE: 9e15 }));
   const zeroB = new B(0);
   const oneB = new B(1);
   const negOneB = new B(-1);
