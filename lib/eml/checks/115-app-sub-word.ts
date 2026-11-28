@@ -66,10 +66,39 @@ const expected: Record<string, (x: Cx, y: Cx) => Cx | null> = {
     return q ? cln(q) : null;
   },
   arcosh: (x) => cln(cadd(x, cmul(csqrt(csub(x, one)), csqrt(cadd(x, one))))),
+  sin: (x) => {
+    const ix = cmul(iu, x);
+    return cdiv(csub(cexp(ix), cexp(cneg(ix))), cmul(two, iu));
+  },
+  cos: (x) => {
+    const ix = cmul(iu, x);
+    return cmul(cadd(cexp(ix), cexp(cneg(ix))), half);
+  },
+  tan: (x) => {
+    const grown = cexp(cmul(two, cmul(iu, x)));
+    const den = cadd(grown, one);
+    const quot = cdiv(two, den);
+    return quot ? cmul(cneg(iu), csub(one, quot)) : null;
+  },
+  tanh: (x) => {
+    const grown = cexp(cadd(x, x));
+    return cdiv(csub(grown, one), cadd(grown, one));
+  },
+  arctan: (x) => {
+    const ix = cmul(iu, x);
+    const den = csqrt(csub(one, ix));
+    const num = csqrt(cadd(one, ix));
+    const q = cdiv(num, den);
+    if (!q) return null;
+    const w = cln(q);
+    return w ? cmul(cneg(iu), w) : null;
+  },
 };
 
 const one: Cx = { re: 1, im: 0 };
 const half: Cx = { re: 0.5, im: 0 };
+const two: Cx = { re: 2, im: 0 };
+const iu: Cx = { re: 0, im: 1 };
 
 function cneg(z: Cx): Cx {
   return { re: -z.re, im: -z.im };

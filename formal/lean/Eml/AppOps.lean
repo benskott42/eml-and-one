@@ -43,6 +43,12 @@
     the factor `1/2` is the K 29 word (`dirCHalf_eq`), not a `certifyDir` result.
   * `artanh x`: `log (√(1+x) / √(1−x))` for `x ≠ ±1`.
   * `arcosh x`: `log (x + √(x−1)·√(x+1))` for every `x` (`arcosh_arg_ne`).
+  * `sin x`: `(exp(i·x) − exp(−i·x)) / (2·i)`, read by `valueOf` (a zero sine may be `−0`).
+  * `cos x`: `(exp(i·x) + exp(−i·x)) / 2` for every `x`.
+  * `tan x`: `−i·(1 − 2/(exp(2·i·x) + 1))` when `cos x ≠ 0`.
+  * `tanh x`: `(exp(2x) − 1)/(exp(2x) + 1)` when the denominator is not `0`.
+  * `arctan x`: `−i·log(√(1+i·x)/√(1−i·x))` for `x ≠ ±i`.
+    `i` is `exp(iπ/2)` (K 57) and `−i` is the short minus word on it.
 
   Zero `sorry`, zero custom axioms.
 -/
@@ -1441,5 +1447,378 @@ theorem arcosh_correct (a : ℂ) (y : EmlDir) :
         rw [arcoshSum, evalAt (evalTok_x _ _) hmul, addToks_eval, appAdd_finite]
       have harg := arcosh_arg_ne a
       rw [arcoshToks, evalAt hsum (evalTok_oneTok _ _), lnToks_eval, dirEmlLn_finite_ne_zero harg]
+
+
+/-! ### `i`, `−i`, and the exponential shortcuts -/
+
+def twoToks : List Tok := [
+    .one, .one, .one, .one, .one, .one, .gate, .gate,
+    .gate, .one, .gate, .gate, .one, .one, .gate, .gate,
+    .one, .gate, .gate
+  ]
+
+def iToks : List Tok := [
+    .one, .one, .one, .one, .one, .one, .one, .one,
+    .one, .gate, .gate, .gate, .one, .gate, .gate, .one,
+    .one, .gate, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .one, .one, .one,
+    .one, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .one, .gate, .one, .gate, .one, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .gate, .one,
+    .gate
+  ]
+
+def negIToks : List Tok := [
+    .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .one, .one, .one,
+    .one, .one, .one, .one, .gate, .gate, .gate, .one,
+    .gate, .gate, .one, .one, .gate, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .gate, .one, .gate,
+    .one, .gate, .gate, .gate, .gate, .one, .gate, .gate,
+    .one, .gate, .one, .gate, .one, .gate, .gate
+  ]
+
+def expMinusOneToks : List Tok := [
+    .one, .one, .one, .one, .one, .one, .one, .one,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .one,
+    .one, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one,
+    .one, .one, .one, .one, .one, .one, .one, .one,
+    .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .gate, .one, .gate, .gate, .x, .one, .one, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one,
+    .one, .one, .one, .one, .one, .one, .one, .gate,
+    .one, .gate, .gate, .gate, .gate, .one, .one, .gate,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .one, .gate, .one,
+    .gate, .gate, .one, .one, .gate, .gate, .gate, .one,
+    .gate, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .gate
+  ]
+
+def expPlusOneToks : List Tok := [
+    .one, .one, .one, .one, .one, .one, .one, .one,
+    .one, .gate, .one, .gate, .gate, .gate, .gate, .one,
+    .one, .gate, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .one, .one,
+    .one, .one, .one, .one, .one, .one, .one, .one,
+    .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .gate, .one, .gate, .gate, .x, .one, .one, .one,
+    .one, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .one, .gate, .gate, .one, .gate, .gate, .gate,
+    .one, .gate, .gate, .one, .one, .one, .one, .one,
+    .one, .one, .one, .one, .one, .gate, .one, .gate,
+    .gate, .gate, .gate, .one, .one, .gate, .one, .gate,
+    .one, .gate, .gate, .gate, .gate, .gate, .one, .gate,
+    .gate, .one, .one, .one, .one, .one, .one, .one,
+    .gate, .one, .gate, .gate, .gate, .gate, .one, .one,
+    .gate, .gate, .gate, .one, .gate, .gate, .one, .one,
+    .one, .one, .one, .gate, .one, .gate, .gate, .gate,
+    .gate, .one, .one, .gate, .gate, .one, .gate, .gate,
+    .gate, .one, .gate, .gate, .one, .gate, .one, .gate,
+    .gate, .gate, .one, .gate, .gate, .one, .gate
+  ]
+
+
+
+set_option maxRecDepth 100000 in
+theorem twoToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml twoToks [] = some [dirCTwo] := by rfl
+
+noncomputable def dirCI : EmlDir := dirEmlExp (dirEmlDiv dirCIpi dirCTwo)
+
+set_option maxRecDepth 100000 in
+theorem iToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml iToks [] = some [dirCI] := by rfl
+
+theorem dirCI_eq_I : dirCI = .finite Complex.I := by
+  unfold dirCI
+  rw [dirCIpi_eq, dirCTwo_eq_two]
+  have hne : (Real.pi : ℂ) * Complex.I ≠ 0 := by simp [Real.pi_ne_zero, Complex.I_ne_zero]
+  rw [dirEmlDiv_eq_of_ne_zero hne two_ne_zero, dirEmlExp_eq]
+  simp only [dirExp]
+  congr 1
+  rw [show (Real.pi : ℂ) * Complex.I / 2 = (Real.pi / 2) * Complex.I by ring,
+    Complex.exp_pi_div_two_mul_I]
+
+noncomputable def dirNegInfWord : EmlDir :=
+  dirEml (.finite 1) (dirEml (.finite 1) (dirEml (.finite 1)
+    (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1))))
+
+theorem dirNegInfWord_eq : dirNegInfWord = .negInf 0 := by
+  have he1_im : (Complex.exp (1 : ℂ)).im = 0 := by rw [Complex.exp_im]; simp
+  have h0 : dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) =
+      .finite 0 := by
+    rw [dirEml_finite one_ne_zero, dirEml_finite one_ne_zero,
+      dirEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+    congr 1; exact cZero_eq_zero
+  have hnegInf : dirEml (.finite 1) (dirEml (.finite 1) (.finite 0)) = .negInf 0 := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, he1_im]
+  unfold dirNegInfWord
+  rw [h0, hnegInf]
+
+set_option maxRecDepth 100000 in
+theorem negIToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml negIToks [] =
+      some [dirEml dirNegInfWord (dirEmlExp dirCI)] := by rfl
+
+theorem dirCNegI_eq :
+    dirEml dirNegInfWord (dirEmlExp dirCI) = .finite (-Complex.I) := by
+  rw [dirNegInfWord_eq, dirCI_eq_I, dirEmlExp_eq]
+  have h10 : ¬ ((1 : ℝ) < 0) := by norm_num
+  have hlog : lowerLog (Complex.exp Complex.I) = Complex.I := by
+    apply lowerLog_exp
+    · simp; linarith [Real.pi_pos]
+    · simp; linarith [Real.pi_gt_three]
+  simp [dirEml, dirExp, dirLowerLog, dirSub, h10, hlog, Complex.exp_ne_zero]
+
+def twoIToks : List Tok := Tok.subst twoToks iToks mulToks
+
+theorem twoI_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml twoIToks [] = some [.finite (2 * Complex.I)] := by
+  rw [twoIToks, evalAt (twoToks_eval x y) (iToks_eval x y), mulToks_eval,
+    dirCTwo_eq_two, dirCI_eq_I, dirEmlMul_eq two_ne_zero (by norm_num)]
+
+/-- `exp(H) − b` when the minuend is an exponential: the unscaled rotation with `subOfExp`. -/
+noncomputable def appRotExp (H b : EmlDir) : EmlDir :=
+  dirEmlDiv (shortSub (mulBody dirCIpi (shortSub H b)) (dirEmlMul dirCIpi (dirRawSub b b))) dirCIpi
+
+theorem appRotExp_finite {H : EmlDir} {w v : ℂ} (hH : dirExp H = .finite w) :
+    appRotExp H (.finite v) = .finite (w - v) := by
+  have hE : dirEmlExp H = .finite w := by rw [dirEmlExp_eq, hH]
+  have hshort : shortSub H (.finite v) = dirRawSub (.finite w) (.finite v) := by
+    rw [shortSub_eq hH, hE]
+  unfold appRotExp
+  rw [hshort]
+  exact appRot_finite w v
+
+theorem appRotExp_negOne {H : EmlDir} {w : ℂ} (hH : dirExp H = .finite w) :
+    appRotExp H dirCNegOne = .finite (w + 1) := by
+  rw [dirCNegOne_eq_negOne, appRotExp_finite hH, sub_neg_eq_add]
+
+set_option maxRecDepth 100000 in
+theorem expMinusOne_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml expMinusOneToks [] = some [appRotExp x (.finite 1)] := by rfl
+
+set_option maxRecDepth 100000 in
+theorem expPlusOne_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml expPlusOneToks [] = some [appRotExp x dirCNegOne] := by rfl
+
+theorem sin_exp_formula (a : ℂ) :
+    Complex.sin a =
+      (Complex.exp (Complex.I * a) - Complex.exp (-(Complex.I * a))) / (2 * Complex.I) := by
+  rw [Complex.sin]
+  have h1 : -a * Complex.I = -(Complex.I * a) := by ring
+  have h2 : a * Complex.I = Complex.I * a := by ring
+  rw [h1, h2]
+  set d : ℂ := Complex.exp (Complex.I * a) - Complex.exp (-(Complex.I * a))
+  have hneg : Complex.exp (-(Complex.I * a)) - Complex.exp (Complex.I * a) = -d := by
+    simp [d, neg_sub]
+  have hinv : (1 : ℂ) / (2 * Complex.I) = -Complex.I / 2 := by
+    field_simp [Complex.I_ne_zero]
+    rw [Complex.I_sq]
+    ring
+  have hre : -d * Complex.I / 2 = d * (-Complex.I * ((1 : ℂ) / 2)) := by
+    rw [neg_mul, ← mul_neg, div_eq_mul_one_div, mul_assoc]
+  have hback : -Complex.I * ((1 : ℂ) / 2) = (1 : ℂ) / (2 * Complex.I) := by
+    rw [← div_eq_mul_one_div, ← hinv]
+  rw [hneg, hre, hback]
+  exact (div_eq_mul_one_div _ _).symm
+
+theorem cos_exp_formula (a : ℂ) :
+    Complex.cos a =
+      (Complex.exp (Complex.I * a) + Complex.exp (-(Complex.I * a))) * ((1 : ℂ) / 2) := by
+  rw [Complex.cos]
+  have h1 : a * Complex.I = Complex.I * a := by ring
+  have h2 : -a * Complex.I = -(Complex.I * a) := by ring
+  rw [h1, h2, div_eq_mul_one_div]
+
+theorem exp_ix_sum (a : ℂ) :
+    Complex.exp (Complex.I * a) + Complex.exp (-(Complex.I * a)) =
+      Complex.exp (-(Complex.I * a)) * (Complex.exp (2 * Complex.I * a) + 1) := by
+  have hexp : Complex.exp (Complex.I * a) =
+      Complex.exp (-(Complex.I * a)) * Complex.exp (2 * Complex.I * a) := by
+    rw [← Complex.exp_add]
+    congr 1
+    ring
+  rw [hexp, mul_add, mul_one]
+
+theorem exp_two_I_ne_neg_one_of_cos_ne {a : ℂ} (h : Complex.cos a ≠ 0) :
+    Complex.exp (2 * Complex.I * a) + 1 ≠ 0 := by
+  intro h0
+  apply h
+  rw [cos_exp_formula, exp_ix_sum, h0, mul_zero, zero_mul]
+
+theorem tan_exp_formula {a : ℂ} (h : Complex.exp (2 * Complex.I * a) + 1 ≠ 0) :
+    Complex.tan a = -Complex.I * (1 - 2 / (Complex.exp (2 * Complex.I * a) + 1)) := by
+  rw [Complex.tan_eq_sin_div_cos, sin_exp_formula, cos_exp_formula, exp_ix_sum]
+  set u : ℂ := Complex.exp (-(Complex.I * a))
+  set w : ℂ := Complex.exp (2 * Complex.I * a)
+  have hu : u ≠ 0 := Complex.exp_ne_zero _
+  have hia : Complex.exp (Complex.I * a) = u * w := by
+    dsimp only [u, w]
+    rw [← Complex.exp_add]
+    congr 1
+    ring
+  rw [hia]
+  field_simp [hu, h, Complex.I_ne_zero]
+  rw [Complex.I_sq]
+  ring_nf
+
+def rotIx : List Tok := Tok.subst iToks [.x] mulToks
+def rotNeg : List Tok := Tok.subst rotIx [.one] negToks
+def rotExp : List Tok := Tok.subst rotIx [.one] expToks
+def rotExpNeg : List Tok := Tok.subst rotNeg [.one] expToks
+def sinToks : List Tok := Tok.subst (Tok.subst rotExp rotExpNeg appSubToks) twoIToks divToks
+def cosToks : List Tok := Tok.subst (Tok.subst rotExp rotExpNeg addToks) halfToks mulToks
+
+theorem rotIx_eval (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml rotIx [] = some [.finite (Complex.I * a)] := by
+  rw [rotIx, evalAt (iToks_eval _ _) (evalTok_x _ _), mulToks_eval, dirCI_eq_I,
+    dirEmlMul_eq Complex.I_ne_zero (by simp : (0 : ℝ) ≤ Complex.I.re)]
+
+theorem rotExp_eval (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml rotExp [] =
+      some [.finite (Complex.exp (Complex.I * a))] := by
+  rw [rotExp, evalAt (rotIx_eval a y) (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+  simp [dirExp]
+
+theorem rotNeg_eval (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml rotNeg [] =
+      some [dirEmlMul dirCNegOne (.finite (Complex.I * a))] := by
+  rw [rotNeg, evalAt (rotIx_eval a y) (evalTok_oneTok _ _), negToks_eval]
+
+theorem rotExpNeg_eval (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml rotExpNeg [] =
+      some [.finite (Complex.exp (-(Complex.I * a)))] := by
+  rw [rotExpNeg, evalAt (rotNeg_eval a y) (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+  by_cases ha : a = 0
+  · rw [ha, dirCNegOne_eq_negOne, show (Complex.I * (0 : ℂ)) = 0 by ring, dirEmlMul_negOne_zero]
+    simp [dirExp, Complex.exp_zero]
+  · have hne : Complex.I * a ≠ 0 := mul_ne_zero Complex.I_ne_zero ha
+    rw [dirCNegOne_eq_negOne, dirEmlMul_eq_of_ne_zero (by norm_num) hne]
+    simp [dirExp]
+
+theorem sin_correct (a : ℂ) (y : EmlDir) :
+    valueOf (evalTok (.finite 1) (.finite a) y dirEml sinToks []) = some (Complex.sin a) := by
+  have hnum : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst rotExp rotExpNeg appSubToks) [] =
+      some [.finite (Complex.exp (Complex.I * a) - Complex.exp (-(Complex.I * a)))] := by
+    rw [evalAt (rotExp_eval a y) (rotExpNeg_eval a y), appSubToks_eval, appSub_finite]
+  have hden := twoI_eval (.finite a) y
+  rw [sinToks, evalAt hnum hden, divToks_eval]
+  simp only [valueOf]
+  rw [toC_dirEmlDiv _ (mul_ne_zero two_ne_zero Complex.I_ne_zero), ← sin_exp_formula]
+
+theorem cos_correct (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml cosToks [] = some [.finite (Complex.cos a)] := by
+  have hsum : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst rotExp rotExpNeg addToks) [] =
+      some [.finite (Complex.exp (Complex.I * a) + Complex.exp (-(Complex.I * a)))] := by
+    rw [evalAt (rotExp_eval a y) (rotExpNeg_eval a y), addToks_eval, appAdd_finite]
+  rw [cosToks, evalAt hsum (halfToks_eval _ _), mulToks_eval, dirCHalf_eq]
+  set s : ℂ := Complex.exp (Complex.I * a) + Complex.exp (-(Complex.I * a))
+  have hhalf : ((1 : ℂ) / 2) ≠ 0 := by norm_num
+  by_cases h0 : s = 0
+  · rw [h0, dirEmlMul_zero_left hhalf, cos_exp_formula,
+      show Complex.exp (Complex.I * a) + Complex.exp (-(Complex.I * a)) = s from rfl, h0, zero_mul]
+  · rw [dirEmlMul_eq_of_ne_zero h0 hhalf, cos_exp_formula]
+
+def tanH : List Tok := Tok.subst twoToks rotIx mulToks
+def tanSum : List Tok := Tok.subst tanH [.one] expPlusOneToks
+def tanQuot : List Tok := Tok.subst twoToks tanSum divToks
+def tanGap : List Tok := Tok.subst [.one] tanQuot appSubToks
+def tanToks : List Tok := Tok.subst negIToks tanGap mulToks
+
+theorem tan_correct {a : ℂ} (hc : Complex.cos a ≠ 0) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml tanToks [] = some [.finite (Complex.tan a)] := by
+  have hpole : Complex.exp (2 * Complex.I * a) + 1 ≠ 0 := exp_two_I_ne_neg_one_of_cos_ne hc
+  have hH : evalTok (.finite 1) (.finite a) y dirEml tanH [] =
+      some [.finite (2 * (Complex.I * a))] := by
+    rw [tanH, evalAt (twoToks_eval _ _) (rotIx_eval a y), mulToks_eval, dirCTwo_eq_two,
+      dirEmlMul_eq two_ne_zero (by norm_num)]
+  have hexp : dirExp (.finite (2 * (Complex.I * a))) =
+      .finite (Complex.exp (2 * (Complex.I * a))) := by simp [dirExp]
+  have hsum : evalTok (.finite 1) (.finite a) y dirEml tanSum [] =
+      some [.finite (Complex.exp (2 * (Complex.I * a)) + 1)] := by
+    rw [tanSum, evalAt hH (evalTok_oneTok _ _), expPlusOne_eval, appRotExp_negOne hexp]
+  have hassoc : (2 : ℂ) * (Complex.I * a) = 2 * Complex.I * a := by ring_nf
+  have hquot : evalTok (.finite 1) (.finite a) y dirEml tanQuot [] =
+      some [.finite (2 / (Complex.exp (2 * Complex.I * a) + 1))] := by
+    rw [tanQuot, evalAt (twoToks_eval _ _) hsum, divToks_eval, dirCTwo_eq_two, hassoc,
+      dirEmlDiv_eq_of_ne_zero two_ne_zero hpole]
+  have hgap : evalTok (.finite 1) (.finite a) y dirEml tanGap [] =
+      some [.finite (1 - 2 / (Complex.exp (2 * Complex.I * a) + 1))] := by
+    rw [tanGap, evalAt (evalTok_oneTok _ _) hquot, appSubToks_eval, appSub_finite]
+  have hneg := negIToks_eval (.finite a) y
+  rw [tanToks, evalAt hneg hgap, mulToks_eval, dirCNegI_eq,
+    dirEmlMul_eq (by simp [Complex.I_ne_zero]) (by simp : (0 : ℝ) ≤ (-Complex.I).re),
+    tan_exp_formula hpole]
+
+theorem tanh_exp_formula {a : ℂ} (h : Complex.exp (a + a) + 1 ≠ 0) :
+    (Complex.exp (a + a) - 1) / (Complex.exp (a + a) + 1) = Complex.tanh a := by
+  have _hden := h
+  rw [Complex.tanh_eq_sinh_div_cosh, Complex.sinh, Complex.cosh]
+  have he : Complex.exp a ≠ 0 := Complex.exp_ne_zero _
+  have hsq : Complex.exp (a + a) = Complex.exp a * Complex.exp a := by
+    rw [← Complex.exp_add]
+  have hneg : Complex.exp a * Complex.exp (-a) = 1 := by
+    rw [← Complex.exp_add, add_neg_cancel, Complex.exp_zero]
+  have hnum : Complex.exp (a + a) - 1 = Complex.exp a * (Complex.exp a - Complex.exp (-a)) := by
+    rw [hsq, mul_sub, hneg]
+  have hden : Complex.exp (a + a) + 1 = Complex.exp a * (Complex.exp a + Complex.exp (-a)) := by
+    rw [hsq, mul_add, hneg]
+  rw [hnum, hden, mul_div_mul_left _ _ he, div_div_eq_mul_div,
+    div_mul_cancel₀ _ (by norm_num : (2 : ℂ) ≠ 0)]
+
+def tanhTwo : List Tok := Tok.subst [.x] [.x] addToks
+def tanhNum : List Tok := Tok.subst tanhTwo [.one] expMinusOneToks
+def tanhDen : List Tok := Tok.subst tanhTwo [.one] expPlusOneToks
+def tanhToks : List Tok := Tok.subst tanhNum tanhDen divToks
+
+theorem tanh_correct {a : ℂ} (h : Complex.exp (a + a) + 1 ≠ 0) (y : EmlDir) :
+    valueOf (evalTok (.finite 1) (.finite a) y dirEml tanhToks []) = some (Complex.tanh a) := by
+  have htwo : evalTok (.finite 1) (.finite a) y dirEml tanhTwo [] = some [.finite (a + a)] := by
+    rw [tanhTwo, evalAt (evalTok_x _ _) (evalTok_x _ _), addToks_eval, appAdd_finite]
+  have hexp : dirExp (.finite (a + a)) = .finite (Complex.exp (a + a)) := by simp [dirExp]
+  have hnum : evalTok (.finite 1) (.finite a) y dirEml tanhNum [] =
+      some [.finite (Complex.exp (a + a) - 1)] := by
+    rw [tanhNum, evalAt htwo (evalTok_oneTok _ _), expMinusOne_eval, appRotExp_finite hexp]
+  have hden : evalTok (.finite 1) (.finite a) y dirEml tanhDen [] =
+      some [.finite (Complex.exp (a + a) + 1)] := by
+    rw [tanhDen, evalAt htwo (evalTok_oneTok _ _), expPlusOne_eval, appRotExp_negOne hexp]
+  rw [tanhToks, evalAt hnum hden, divToks_eval]
+  simp only [valueOf]
+  rw [toC_dirEmlDiv _ h, tanh_exp_formula h]
+
+def arctanInner : List Tok := Tok.subst rotIx [.one] artanhToks
+def arctanToks : List Tok := Tok.subst negIToks arctanInner mulToks
+
+set_option maxRecDepth 1000000 in
+theorem arctan_correct {a : ℂ} (hp : a ≠ Complex.I) (hm : a ≠ -Complex.I) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml arctanToks [] =
+      some [.finite (-Complex.I * Complex.log
+        (((1 + Complex.I * a) ^ ((1 : ℂ) / 2)) / ((1 - Complex.I * a) ^ ((1 : ℂ) / 2))))] := by
+  have hnotI : Complex.I * a ≠ -1 := by
+    intro h
+    apply hp
+    calc a = -Complex.I * (Complex.I * a) := by rw [← mul_assoc, neg_mul, ← pow_two, Complex.I_sq, neg_neg, one_mul]
+      _ = -Complex.I * -1 := by rw [h]
+      _ = Complex.I := by rw [mul_neg, mul_one, neg_neg]
+  have hnotNeg : Complex.I * a ≠ 1 := by
+    intro h
+    apply hm
+    calc a = -Complex.I * (Complex.I * a) := by rw [← mul_assoc, neg_mul, ← pow_two, Complex.I_sq, neg_neg, one_mul]
+      _ = -Complex.I * 1 := by rw [h]
+      _ = -Complex.I := by rw [mul_one]
+  have hart : evalTok (.finite 1) (.finite a) y dirEml arctanInner [] =
+      some [.finite (Complex.log (((1 + Complex.I * a) ^ ((1 : ℂ) / 2)) /
+        ((1 - Complex.I * a) ^ ((1 : ℂ) / 2))))] := by
+    rw [arctanInner, evalAt (rotIx_eval a y) (evalTok_oneTok _ _)]
+    exact artanh_correct hnotNeg hnotI y
+  rw [arctanToks, evalAt (negIToks_eval _ _) hart, mulToks_eval, dirCNegI_eq,
+    dirEmlMul_eq (by simp [Complex.I_ne_zero]) (by simp : (0 : ℝ) ≤ (-Complex.I).re)]
 
 end Eml.AppOps
