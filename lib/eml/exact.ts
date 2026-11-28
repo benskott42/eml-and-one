@@ -1803,6 +1803,12 @@ function holdDustBand(report: ExactReport, root: Node, env: Record<string, C | Z
         if (provedZero) return haveZero ? report : refuse();
         // A radius that pins fewer than 12 digits is not a certificate. A tighter
         // ball may still pin them; otherwise the finite stays refused.
+        // An exact 0 on one component, while the pass kept a nonzero one, is a
+        // term the enclosure dropped (10^400 + i). That is not a proof: keep
+        // the value the pass printed.
+        const droppedComponent =
+          (proved.value.re.isZero() && !report.value.re.isZero()) || (proved.value.im.isZero() && !report.value.im.isZero());
+        if (droppedComponent) return report;
         // The same 12 digits the pass already printed need no rewrite.
         if (proved.digits >= 12 && exactClose(proved.value, report.value.re, report.value.im, 12)) return report;
         if (proved.digits >= 12) {
