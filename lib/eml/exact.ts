@@ -11,6 +11,7 @@ import {
   type Node,
   isPure,
   precisionMessage,
+  registerArcoshSign,
   trigArg,
 } from "./node";
 import { besideSumOf, decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
@@ -2609,6 +2610,48 @@ function exactInteger(d: Decimal): boolean {
   const scale = D.max(d.abs(), 1);
   return gap.lte(scale.mul(new D(10).pow(-(D.precision - 24))));
 }
+
+function snapshotPass(): PassState {
+  return {
+    ...passState,
+    firstTinyParts: { ...passState.firstTinyParts },
+    gateHits: passState.gateHits.slice(),
+  };
+}
+
+function restorePass(saved: PassState): void {
+  const hits = saved.gateHits;
+  const tiny = saved.firstTinyParts;
+  Object.assign(passState, saved);
+  passState.gateHits = hits;
+  passState.firstTinyParts = tiny;
+}
+
+/**
+ * Upper bank for an arcosh argument whose float imaginary part is −0.
+ * A negative exact imaginary part, including −0, is the lower bank.
+ * An unverified non-negative part is unknown. Restores the exact pass so a
+ * float evaluation can ask during another exact report.
+ */
+export function exactArcoshUpper(node: Node): boolean | null {
+  const saved = snapshotPass();
+  const prec = D.precision;
+  try {
+    const ex = exactReport(node, {}, { maxNodes: 80_000 });
+    const im = ex.value.im;
+    if (!im.isFinite()) return null;
+    if (im.isNeg()) return false;
+    if (ex.unverified) return null;
+    return true;
+  } catch {
+    return null;
+  } finally {
+    restorePass(saved);
+    if (D.precision !== prec) D.set({ precision: prec });
+  }
+}
+
+registerArcoshSign(exactArcoshUpper);
 
 // beyondFloatBound lives in ./float-bound so the screen can load it without decimal.js.
 export { beyondFloatBound } from "./float-bound";

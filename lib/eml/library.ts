@@ -39,6 +39,8 @@ import {
   markExactInt,
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+// exact.ts registers the arcosh sign hook. node.ts cannot import it: that cycle runs before the hook table exists.
+import "./exact";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
 import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
@@ -1712,12 +1714,22 @@ export function tArsinh(t: Node): Node {
   return node;
 }
 
+/** −∞ aimed along the negative real axis (quarter turn 2), including a typed −inf. */
+function directedNegativeInfinity(t: Node): boolean {
+  const dir = recordedDirection(t);
+  if (!dir) return false;
+  const q = ((dir.quarter % 4) + 4) % 4;
+  return q === 2;
+}
+
 /** Principal arcosh: ln(z + sqrt(z−1)·sqrt(z+1)). sqrt(z²−1) flips the real part for Re(z) < −1. */
 export function tArcosh(t: Node): Node {
   const rad = tMul(tSqrt(tSub(t, ONE)), tSqrt(tAdd(t, ONE)));
   const node = tLn(tAdd(t, rad));
   // The float product can land just below the cut. Exact keeps this circuit.
   notePrecision(node, { kind: "arcosh", arg: t });
+  // arcosh(−∞) is +∞ + πi. The circuit is ∞ − ∞ and was certified undefined.
+  if (negativeRealInfinity(t) || directedNegativeInfinity(t)) return markUnverified(node);
   return node;
 }
 
