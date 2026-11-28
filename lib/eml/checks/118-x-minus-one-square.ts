@@ -52,6 +52,13 @@ const checkModule: CheckModule = {
     // These fit in 480 digits, so the square is part of the certified value.
     judge("(10^20+i)/(10^20-i)-1", "−2×10^−40 + 2×10^−20i", false);
     for (const [source, want] of sources(200)) judge(source, want, false);
+    // i·(x−1) at n = 200 puts the square on the imaginary part. The mirror is the
+    // same product on the right. Both have to keep −2×10^−400 i, not drop it.
+    judge("i*((10^200+i)/(10^200-i)-1)", "−2×10^−200 − 2×10^−400i", false);
+    judge("((10^200+i)/(10^200-i)-1)*i", "−2×10^−200 − 2×10^−400i", false);
+    // (10^n+i)·(10^n−i)/10^(2n) − 1 is 10^(−2n). v1.0.13 certifies it. A refusal
+    // is also accepted: the square signature sits past 480 digits for these n.
+    for (const n of [160, 200, 220]) judge(`(10^${n}+i)*(10^${n}-i)/10^${2 * n}-1`, `1×10^−${2 * n}`, true);
     // The square is past the 480-digit cap. A certified leading term is right; so is a refusal.
     for (const n of [300, 400]) {
       for (const [source, want] of sources(n)) judge(source, want, true);
