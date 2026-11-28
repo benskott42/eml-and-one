@@ -23,6 +23,7 @@ import {
   noteTinyReal,
   naiveSub,
   negativeZero,
+  noteRealArctan,
   shieldLift,
   noteExp,
   noteLn,
@@ -40,7 +41,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, dependsOnUnverified, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -706,16 +707,43 @@ function signedZero(node: Node): boolean {
   return !!known && known.re === 0 && known.im === 0;
 }
 
-function negativeFactor(node: Node): boolean {
-  const v = knownValue(node);
-  if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
-  // −0 is the negative leaf. A proven negative integer is too: 0·(−1) and 0·(−2)
-  // are −0, because the product program would collapse that sign.
-  // A negative non-integer is not. Tagging −2/3 or −ln 2 as an exact point must
-  // not turn 0 times that point into −0; the product stays +0.
-  if (Object.is(v.re, -0)) return true;
-  const n = provenInteger(node);
-  return n !== undefined && n < BigInt(0);
+/**
+ * Sign of a certified finite factor, for the IEEE rule sign(0·a) = sign(a).
+ * −1 is a negative real, including −0. +1 is anything certified not to be one.
+ * null means this node alone does not decide.
+ */
+function realFactorSign(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && Number.isFinite(v.re)) {
+    if (Object.is(v.re, -0) || v.re < 0) return -1;
+    return 1;
+  }
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im) && !imagZero(v)) return 1;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return null;
+  const real = range.im.lo === 0 && range.im.hi === 0;
+  if (real && Number.isFinite(range.re.lo) && Number.isFinite(range.re.hi)) {
+    if (range.re.hi < 0 || (Object.is(range.re.lo, -0) && Object.is(range.re.hi, -0))) return -1;
+    // A real enclosure that never goes negative is +0 under IEEE, 0·0 included.
+    if (range.re.lo > 0 || (range.re.lo === 0 && range.re.hi >= 0 && !Object.is(range.re.lo, -0))) return 1;
+    return null;
+  }
+  if ((range.im.lo > 0 || range.im.hi < 0) && provenFinite(node)) return 1;
+  return null;
+}
+
+/**
+ * Sign of 0·a. One rule for a literal, a computed enclosure, and a variable
+ * bound to either: the sign of a, when that sign is certified.
+ * null means the sign cannot be certified. A cap-collapsed tiny has no sign
+ * left; 0 times it stays the certified +0.
+ */
+function zeroProductSign(node: Node): -1 | 1 | null {
+  if (isUnverified(node) || isExactUnsure(node)) return null;
+  // The cap erased this magnitude, so 0 times it is the certified +0.
+  // (0−10^(−500))·0 is that zero, not a signed −0.
+  if (isLostTiny(node)) return 1;
+  return realFactorSign(node);
 }
 
 /** A known infinity, or a node marked non-finite. ln(0) is −∞ and is not marked. */
@@ -930,13 +958,18 @@ function tMulBuild(a: Node, b: Node): Node {
     const pole = nonFiniteFactor(a) ? a : b;
     return markMaybeInfinite(naiveIndeterminate(pole), a, b);
   }
-  // 0 · (−1) is the −0 leaf. The product program collapses that sign.
-  if (exactZero(a) && negativeFactor(b)) return negativeZero();
-  if (exactZero(b) && negativeFactor(a)) return negativeZero();
-  // 0 times a finite value is exactly 0. The other factor's cap mark stops here,
-  // so 0·10^(−500) stays a certified 0.
-  if (exactZero(a) && provenFinite(b)) return tZero();
-  if (exactZero(b) && provenFinite(a)) return tZero();
+  // sign(0·a) is sign(a) whenever that sign is certified. The product word
+  // collapses it, so the leaf is chosen here for every path that can see a.
+  if (exactZero(a) || exactZero(b)) {
+    const other = exactZero(a) ? b : a;
+    if (exactZero(other)) return tZero();
+    const sign = zeroProductSign(other);
+    if (sign === -1) return negativeZero();
+    if (sign === 1) return tZero();
+    // A finite enclosure that still contains a negative real must not become
+    // the certified +0 the product word would print.
+    if (provenFinite(other)) return markUnverified(rawMul(a, b));
+  }
   // Carry the angle. Two infinities add their quarter turns. A factor off an
   // axis has no quarter turn, and the product word would still certify a real ∞.
   const dirA = directionOf(a);
@@ -1606,7 +1639,12 @@ export function tArcsin(t: Node): Node {
     // π/2 − 0 folds back to that half, so in-process acos stays certified.
     // The wire rebuilds the half after the mark, and the refusal climbs.
     // The collapsed value is the same exact 0 a proven integer takes above.
-    if (provenInteger(series) === BigInt(0)) return recognized(series);
+    // A refused argument collapses onto that same 0. The refusal has to live
+    // on a fresh node, or arsinh of an overflowed sum is certified 0.
+    if (provenInteger(series) === BigInt(0)) {
+      if (isUnverified(t) || isExactUnsure(t) || dependsOnUnverified(t)) return markUnverified(E(t, ONE));
+      return recognized(series);
+    }
     return box < 1e-60 ? markUnverified(series) : markSeries(series, SMALL_NOTE);
   }
   const re = realBounds(t);
@@ -1684,7 +1722,7 @@ export function tArctan(t: Node): Node {
   // mpmath's atanh. Bypass tArtanh's < 1e-6 linear shortcut here: tArctan already
   // handled tiny arguments via tinyRealArgument / oddSeries above, so 1e-20 < |z| < 1e-6
   // stays on the exact closed form instead of dropping z³/3.
-  return tMul(tNeg(tI()), tArtanhClosed(tMul(tI(), t)));
+  return noteRealArctan(tMul(tNeg(tI()), tArtanhClosed(tMul(tI(), t))), t);
 }
 
 function asinhBox(t: Node): number | null {

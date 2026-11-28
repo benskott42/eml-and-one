@@ -125,6 +125,34 @@ export function rangeOf(node: Node): Range {
   return UNKNOWN;
 }
 
+/**
+ * arctan of a real off zero stays real and keeps that sign, inside (−π/2, π/2).
+ * The closed form does not record a range, so a later 0·arctan could not see it.
+ */
+export function noteRealArctan(node: Node, arg: Node): Node {
+  const range = rangeOf(arg);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return node;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return node;
+  const pad = 1e-12;
+  if (range.re.hi < 0) {
+    const far = Math.atan(range.re.lo);
+    const near = Math.atan(range.re.hi);
+    const hi = Math.min(near + pad, -Number.MIN_VALUE);
+    const lo = far - pad;
+    if (!(hi < 0) || !Number.isFinite(lo)) return node;
+    return setRange(node, { re: { lo: Math.min(lo, hi), hi }, im: { lo: 0, hi: 0 } });
+  }
+  if (range.re.lo > 0) {
+    const near = Math.atan(range.re.lo);
+    const far = Math.atan(range.re.hi);
+    const lo = Math.max(near - pad, Number.MIN_VALUE);
+    const hi = far + pad;
+    if (!(lo > 0) || !Number.isFinite(hi)) return node;
+    return setRange(node, { re: { lo, hi: Math.max(lo, hi) }, im: { lo: 0, hi: 0 } });
+  }
+  return node;
+}
+
 function ulp(x: number): number {
   const ax = Math.abs(x);
   if (!(ax > 0) || !Number.isFinite(ax)) return 0;
