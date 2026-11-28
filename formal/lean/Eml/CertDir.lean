@@ -11,7 +11,9 @@
   `certifyDir` is the directed checker: the same bit programs, evaluated in `EmlDir`,
   with infinity phases kept in units of `π/2` (`DSym`). It returns `none` when a zero
   test or a phase is not decided, which is sound and stricter than the value. The
-  current boxes do not decide `π` or `10`.
+  boxes do decide `π`, `−iπ`, `i`, `1/2`, and `−∞`. `certifyDir` also decides `10`,
+  `−i`, `2i`, and `10i` (`Eml.DirConst`, `Eml.CertDirCall`); `1/2` is `half_dir`
+  (plain `decide` takes 2.7 s).
 
   Zero `sorry`, zero custom axioms.
 -/
