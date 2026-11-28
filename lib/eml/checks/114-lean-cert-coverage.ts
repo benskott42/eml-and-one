@@ -20,18 +20,18 @@ import type { CheckModule } from "./_types";
  * TypeScript box of every subterm contains the subterm's numeric value (the Lean
  * boxes are proved sound; this catches a transcription slip in the port).
  * The EmlExt checker (`Eml.Cert.certifyExt`, `ln 0 = −∞`) certifies EXT_ONLY as
- * well, and agrees with `certify` wherever that succeeds. pi, -ipi and -ipi-strict
- * need bounds for exp and ln of genuinely complex values.
+ * well, and agrees with `certify` wherever that succeeds. Complex `exp` and `ln`
+ * decide `pi` and `-ipi` in EmlExt, and `-ipi-strict` in ℂ.
  */
 const CERTIFIED = [
   "0", "2", "3", "4", "e", "ln2", "sqrt2", "1/2-strict", "-1/2-strict", "1/2-alt", "2/3", "-1/3",
   "-3", "1/3-strict", "e^2", "3/2-strict", "-3/2-strict", "1/e-strict", "-e-strict", "2ipi", "-2ipi",
-  "ipi-strict", "-2/3-strict",
+  "ipi-strict", "-2/3-strict", "-ipi-strict",
 ];
 
 const EXT_ONLY = [
   "-inf", "-1", "-2", "1/2", "-1/2", "ipi", "i", "1/3", "3/2", "-3/2", "5/2", "-5/2", "1/e", "-e",
-  "-ln2", "-2/3", "-5/3",
+  "-ln2", "-2/3", "-5/3", "pi", "-ipi",
 ];
 
 type Cx = { re: number; im: number };

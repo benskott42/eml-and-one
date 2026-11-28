@@ -31,6 +31,7 @@ import Eml.Basic
 import Eml.Binary
 import Eml.Extended
 import Eml.CertBox
+import Eml.CertBoxC
 
 namespace Eml.Cert
 
