@@ -847,14 +847,19 @@ function zFinite(v: Z): boolean {
 }
 
 /**
- * A pole re-read certifies a part when it is exact 0, or the same size as its
- * sibling. A lost square dozens of decades below the quotient is not a part
- * this reading established.
+ * A pole re-read certifies a part when it is the same size as its sibling, or
+ * when this re-read itself produced an exact 0. A zero that merely showed up
+ * (one part of a cancelled sum) was not established. A lost square dozens of
+ * decades below the quotient was not either.
  */
-function poleRereadHolds(r: ExactReport): boolean {
+function poleRereadHolds(r: ExactReport, fromPoleReread: boolean): boolean {
   const { re, im } = r.value;
   if (!re.isFinite() || !im.isFinite()) return false;
-  if (re.isZero() || im.isZero()) return true;
+  // A cancelled sum can show an exact 0 beside a stray
+  // (tan(π/2 − 10^(−130)) + tan(−π/2 + 10^(−130)) is not −3×10^(−120) i).
+  // That 0 was not established. The pole re-read was, and so was a root that
+  // is itself the pole: tan(acos(10^(−30))) is 10^30, imag exactly 0.
+  if (re.isZero() || im.isZero()) return fromPoleReread || r.singular === SINGULAR_POLE;
   if (Math.abs(re.e - im.e) <= 8) return true;
   const digits = r.digits ?? D.precision;
   if ((r.absorb2 ?? 0) > digits - 12) return false;
@@ -862,6 +867,32 @@ function poleRereadHolds(r: ExactReport): boolean {
   const small = Math.min(re.e, im.e);
   // The square of the reciprocal sits near −2·big. That part was not established.
   return small > -2 * big + 4;
+}
+
+/** True when some tan below `root` has its argument on a quarter-turn pole. */
+function nearPoleBelow(root: Node): boolean {
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  const half = Math.PI / 2;
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
+    seen.add(node);
+    const note = precisionNoteOf(node);
+    if (note?.kind === "pole") {
+      try {
+        const arg = floatEvaluate(note.arg);
+        if (Number.isFinite(arg.re) && Math.abs(arg.im) <= 1) {
+          const n = Math.round(arg.re / half);
+          if (n % 2 !== 0 && Math.abs(arg.re - n * half) < 1e-6) return true;
+        }
+      } catch (err) {
+        rethrowBudget(err);
+      }
+    }
+    if (node.type === "eml") stack.push(node.a, node.b);
+  }
+  return false;
 }
 
 /**
@@ -1763,12 +1794,17 @@ function exactReportCore(
   // A square that is still there (tan(−π/2 − 10^(−126)) is 10^126, not 3×10^(−253) i)
   // is refused. The whole value goes out through release.
   let fromPoleReread = false;
+  // A tan under a sum or a negation is not the root, and its re-read still
+  // owns both parts. −tan(−π/2 − 10^(−64)) is that case.
+  const below = nearPoleBelow(root);
   const release = (r: ExactReport): ExactReport => {
-    if (r.unverified || !zFinite(r.value) || poleRereadHolds(r)) return r;
-    // The re-read, and a later hop that starts from a finite near-pole value
-    // (tan(−π/2 − 10^(−64)) is already finite at 120 digits), must not certify
-    // a stray part. A true zero part stays exact 0, or the value is refused.
-    if (fromPoleReread || r.singular === SINGULAR_POLE) return certifyZero(r);
+    if (r.unverified || !zFinite(r.value) || poleRereadHolds(r, fromPoleReread)) return r;
+    // The re-read, a later hop that starts from a finite near-pole value
+    // (tan(−π/2 − 10^(−64)) is already finite at 120 digits), and the same
+    // re-read under a parent, must not certify a stray part. A zero on a
+    // cancelled sum was not established; a zero the re-read or the pole
+    // itself produced stays.
+    if (fromPoleReread || r.singular === SINGULAR_POLE || below) return certifyZero(r);
     return r;
   };
   // cosSin snaps an angle within 10^(−(P−8)) of a quarter turn onto that axis, so a genuine

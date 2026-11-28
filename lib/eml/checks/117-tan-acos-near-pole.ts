@@ -24,6 +24,10 @@ const D = Decimal.clone({ precision: 40 });
 type Want = { pole: true } | { re: Decimal; im: Decimal; must?: boolean };
 
 const probes: string[] = [
+  "tan(pi/2-1e-130)+tan(-pi/2+1e-130)",
+  "tan(pi/2-1e-126)+tan(-pi/2+1e-126)",
+  "tan(pi/2-1e-130)-tan(3*pi/2-1e-130)",
+  "-tan(-pi/2-1e-64)",
   "tan(-pi/2-1e-64)",
   "tan(3*pi/2-1e-130)",
   "tan(5*pi/2-1e-130)",
@@ -139,6 +143,14 @@ function quarterTurn(n: Decimal, re: Decimal, im: Decimal): Want {
 
 function wantOf(src: string): Want {
   if (src === "tanh(acosh(-1e-130)+1e-130)") return { re: new D("5e129"), im: new D("-5e129"), must: true };
+  if (
+    src === "tan(pi/2-1e-130)+tan(-pi/2+1e-130)" ||
+    src === "tan(pi/2-1e-126)+tan(-pi/2+1e-126)" ||
+    src === "tan(pi/2-1e-130)-tan(3*pi/2-1e-130)"
+  ) {
+    return { re: new D(0), im: new D(0) };
+  }
+  if (src === "-tan(-pi/2-1e-64)") return { re: new D("-1e64"), im: new D(0) };
   if (src === "tan(pi/2)" || src === "tanh(i*pi/2)") return { pole: true };
   if (src === "sin(2/exp(200))") return { re: new D(2).div(new D(200).exp()), im: new D(0) };
   if (src === "sqrt(1+1e-130)-1-0.5e-130") return { re: new D("-1.25e-261"), im: new D(0) };
