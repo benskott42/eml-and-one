@@ -40,7 +40,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -463,6 +463,9 @@ function foldSmallInts(op: "add" | "sub" | "mul", a: Node, b: Node, generic: Nod
   const ia = provenInteger(a);
   const ib = provenInteger(b);
   if (ia === undefined || ib === undefined) return generic;
+  // A product of two nonzero integers with either past ±64 is past ±64: do not multiply huge ones to see that.
+  const big = (v: bigint) => v > BigInt(64) || v < BigInt(-64);
+  if (op === "mul" && ia !== BigInt(0) && ib !== BigInt(0) && (big(ia) || big(ib))) return generic;
   const value = op === "add" ? ia + ib : op === "sub" ? ia - ib : ia * ib;
   if (value === BigInt(0) || value < BigInt(-64) || value > BigInt(64)) return generic;
   return preferShorter(generic, integerNode(Number(value)));
@@ -479,6 +482,8 @@ const QUOTIENT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "-3/2": ["-3/2", "-3/2-strict"],
   "5/2": ["5/2"],
   "-5/2": ["-5/2"],
+  "-2/3": ["-2/3", "-2/3-strict"],
+  "-5/3": ["-5/3"],
 };
 
 function gcd(x: bigint, y: bigint): bigint {
@@ -511,6 +516,47 @@ function quotientWord(a: Node, b: Node, generic: Node): Node {
   return word ? derive("div", tagReal(word, Number(n) / Number(d)), a, b) : generic;
 }
 
+/** ±iπ and ±2πi words, by the recorded multiple of πi. */
+const ANGLE_WORDS: Readonly<Record<string, readonly string[]>> = {
+  "1": ["ipi", "ipi-strict"],
+  "-1": ["-ipi", "-ipi-strict"],
+  "2": ["2ipi"],
+  "-2": ["-2ipi"],
+};
+
+/**
+ * A value the compiler has recorded exactly, as a multiple of πi (angle fact) or as a
+ * rational (rational or decimal fact), takes its stored word under the preferShorter
+ * policy, however it was spelled: 2*pi*i was K 199, pi*i K 165, 1/3−1 K 47.
+ * The word carries the same exact fact, so later rules still see the value.
+ * The parser applies it to each subexpression the user wrote (parse.ts foldAst), never
+ * inside a library builder: tan(π/2) builds exp(2i·π/2), and swapping that iπ for its
+ * word turned "near a pole" into an indeterminate form.
+ */
+export function constantWord(generic: Node): Node {
+  if (isUnverified(generic) || isExactUnsure(generic) || maxSeriesErrorExp(generic) !== undefined) return generic;
+  // A recognized result (cos((2/3)·π) is −1/2) keeps its own node: the word is shared,
+  // and the "recognized exactly" note belongs to this circuit.
+  if (isRecognized(generic)) return generic;
+  const angle = factsOf(generic).angle;
+  if (angle && angle.unit === "imag" && angle.q.d === BigInt(1)) {
+    const ids = ANGLE_WORDS[angle.q.n.toString()];
+    const word = ids ? shortestWord(generic, ids) : null;
+    if (!word) return generic;
+    tagValue(word, { re: 0, im: Number(angle.q.n) * Math.PI });
+    return learn(word, { angle });
+  }
+  const rational = exactRationalOf(generic);
+  if (rational && rational.d !== BigInt(1)) {
+    const ids = QUOTIENT_WORDS[`${rational.n}/${rational.d}`];
+    const word = ids ? shortestWord(generic, ids) : null;
+    if (!word) return generic;
+    tagReal(word, Number(rational.n) / Number(rational.d));
+    return learn(word, { rational });
+  }
+  return generic;
+}
+
 export function tSub(a: Node, b: Node): Node {
   return foldSmallInts("sub", a, b, tSubBuild(a, b));
 }
@@ -530,6 +576,11 @@ export function tNeg(b: Node): Node {
   if (b === tE()) {
     const word = shortestWord(generic, ["-e", "-e-strict"]);
     return word ? tagReal(word, -Math.E) : generic;
+  }
+  // −ln 2 is a K 27 word; negating the ln 2 word is K 39.
+  if (b === programNode("ln2")) {
+    const word = shortestWord(generic, ["-ln2"]);
+    return word ? tagReal(word, -Math.LN2) : generic;
   }
   // −2 and −3 are words (K 25, K 35); negating 2 or 3 is K 33 and K 43.
   if (!buildingInteger() && closedConstant(b)) {

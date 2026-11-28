@@ -1,6 +1,6 @@
 # Machine-Checked Lean 4 + Mathlib Formalization (`formal/lean/`)
 
-This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 15 modules (776 declarations) is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
+This directory contains a concrete Lean 4 (`v4.28.0`) + Mathlib (`v4.28.0`) formalization of **EML and One** over `ℂ`, with zero `sorry` (`warningAsError := true` on `lean_lib Eml`) and zero custom axioms. Every declaration across all 21 modules is automatically audited by [`AxiomCheck.lean`](AxiomCheck.lean) to depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and [`scripts/lean-bridge-check.ts`](../../scripts/lean-bridge-check.ts) verifies in CI that every UI theorem link, every `Eml.Cert.certify` mirror check, and sample `Copy Lean 4` snippets typecheck in Lean 4.
 
 > **Note on the earlier Lean 4.14 axiomatic version:** An earlier formalization in this directory used abstract uninstantiated typeclasses without Mathlib. Its `EmlExtendedModel` was inconsistent and collapsed to `1 = 0` (`sub_self(negInf)` vs. `sub_negInf` gave `posInf = zero`, `ln_posInf` and `ln_zero` then gave `negInf = zero`, and `exp_negInf` with `exp_zero` gave `one = zero`), its `Transcendental` proofs were tautologies over `cos_def` axioms rather than `eml` words, and `RotSub` assumed `raw(b, b) = unwind(b)` without modeling the rotation into the strip. That entire axiomatic layer has been replaced with concrete Mathlib definitions over `ℂ`, an honest inductive phase-free extended domain `EmlExt`, and a concrete directed-infinity + signed-zero domain `EmlDir`.
 
@@ -65,7 +65,40 @@ Direct RPN stack evaluations `evalRpn (EmlExt.finite 1) extEml bits [] = some [v
 The words the compiler substitutes for closed constants, proved from their proved sub-words with a generic gate lemma (`evalRpn_nd`: the program `p ++ q ++ [false]` evaluates to `op a b`):
 
 - Over `ℂ` (no `ln 0`): `evalRpn_eSq` (K = 21) → `e²`, `evalRpn_invE_strict` (K = 19) → `exp (-1)`, `evalRpn_negE_strict` (K = 23) → `-e`, `evalRpn_threeHalves_strict` (K = 41) → `3/2`, `evalRpn_negThreeHalves_strict` (K = 33) → `-3/2`.
+- Over `ℂ`, the `±2πi` words (K = 31, lower cut): `evalRpn_twoPiI` → `2πi` and `evalRpn_negTwoPiI` → `−2πi`. The `−2πi` proof bounds `Im(e^e / P) ∈ [−3π, −π)` from `11 < e^e < 20.1` and `3 < π < 3.15`.
+- `−ln 2`, `−2/3`, `−5/3` via two general lemmas, `eml_one_scaledEE` (`eml 1 (c·e^e) = −ln c`) and `eml_one_negScaledEE` (`eml 1 (−c·e^e) = −ln c + iπ`) for real `c > 0`: `evalRpn_negLn2` (K = 27, `EmlExt`), `evalRpn_negTwoThirds` (K = 37, `EmlExt`), `evalRpn_negTwoThirds_strict` (K = 39, `ℂ`), `evalRpn_negFiveThirds` (K = 41, `EmlExt`).
 - Over `EmlExt` (`ln 0 = -∞`): `evalRpn_invE` (K = 17) → `exp (-1)`, `evalRpn_negE` (K = 17) → `-e`, `evalRpn_threeHalves` (K = 39) → `3/2`, `evalRpn_negThreeHalves` (K = 31) → `-3/2`, `evalRpn_fiveHalves` (K = 41) → `5/2`, `evalRpn_negFiveHalves` (K = 41) → `-5/2`.
+
+### The calculator's own `x − y` circuit ([`Eml/AppSub.lean`](Eml/AppSub.lean))
+
+For general operands the compiler lowers `x − y` (`lib/eml/lowering.ts`, `scaledRot`) to a 565-token circuit: `k · rotSub(x/k, y/k)` with `k = √(y²) − (−1)`, the rotation constant `iπ` (the K 21 word), and the `subOfExp` shortcut `eml(H, exp v)` where the left operand is a word `exp H`. Its `mul`, `div`, `sqrt`, `sqr`, `sub` and `−1` words are token for token `dirEmlMul`, `dirEmlDiv`, `dirEmlSqrt`, `dirEmlSqr`, `dirRawSub` and `dirCNegOne`.
+
+- `appSub_correct` — `evalTok (.finite 1) (.finite a) (.finite b) dirEml appSubToks [] = some [.finite (a - b)]` for **all** `a b : ℂ`, `b = 0` included (in `EmlDir`).
+- `appSubToks_eval` — the token list unfolds to `appSub`, the circuit written with Lean's words; `shortSub_eq` — the shortcut is the raw subtraction whenever `exp H` is finite (not for every `EmlDir` value: an infinity at a general angle does not come back from `exp ∘ ln`; all four uses here have `exp H` finite); `dirCIpi_eq` — the K 21 word is `iπ` in `EmlDir`.
+- `APP_SUB_WORD` in `lib/eml/export.ts` is the same word: check 115 fails if the compiler stops emitting it, and the bridge compares it with `appSubToks` token for token.
+
+### The calculator's other operators ([`Eml/AppOps.lean`](Eml/AppOps.lean))
+
+With variable operands the compiler emits a single stored word for most operators, and `x + y` is the `x − y` circuit with operand `(−1)·y` (scale still from `y`, 655 tokens). Each word below is the compiler's own (`APP_WORDS` in `lib/eml/export.ts`; check 115 and the bridge compare them token for token), proved in `EmlDir` for all complex inputs:
+
+- `add_correct` (`x + y`, K 655), `twoMul_correct` (`2·x`), `sq_correct` (`x² = exp(2·ln x)`, `0` included), `sqrt_correct` (principal `a ^ (1/2)`, `0` included), `exp_correct`: exactly the value.
+- `mul_correct` (`x · y`) and `neg_correct` (`−x = (−1)·x`): the value up to the sign of zero, read by `valueOf` (`(−1)·0 = −0`, as in IEEE).
+- `div_correct` (`x / y`) for `b ≠ 0`, up to the sign of a zero quotient; `inv_correct` (`1/x`) for `a ≠ 0`.
+- `ln_correct`: the principal `Complex.log a` for `a ≠ 0`; `ln_zero_correct`: `−∞` at `0`.
+- With a constant: `subOne_correct`, `addOne_correct`, `subTwo_correct` (`x − 1`, `x + 1`, `x − 2` are the unscaled rotation `rotSub(x, c)`, `appRot_finite`), `mulTwo_correct`, `divTwo_correct`, `expE_correct` (`e^x = exp(x·ln e)`), and `cube_correct` (`x³ = exp(3·ln x)`, `0` included, with the `3` word's `EmlDir` value from its certificate): exactly the value.
+- `pow_correct`: `x ^ y = exp(y·ln x)` is exactly the principal `a ^ b` for `a ≠ 0`.
+- Along the way: `dirEmlDiv_eq_of_ne_zero` (no half-plane condition when `a ≠ 0`), `dirEmlMul_zero_left`, `dirEmlMul_negOne_zero` (`(−1)·0 = −0`), `dirEmlMul_pos_negInf` (`r·(−∞) = ∞·e^{iπ}` for real `r > 0`), and `appSubGen_negZero` (`x − (−0) = x` through the whole rotation).
+- [`Eml/CertDir.lean`](Eml/CertDir.lean): `certify_sound_dir` — a certified constant word evaluates to its certificate's value in `EmlDir` too, so certified constants can be used inside compiled circuits (`dirConst_eq`).
+
+### Proof-carrying certificates ([`Eml/Cert.lean`](Eml/Cert.lean), [`Eml/CertSym.lean`](Eml/CertSym.lean), [`Eml/CertBox.lean`](Eml/CertBox.lean), [`Eml/CertExt.lean`](Eml/CertExt.lean))
+
+`Eml.Cert.certify : List Bool → Option Sym` evaluates a constant program symbolically, and `certify_sound` (proved once) gives both `evalRpn (1 : ℂ) eml bits [] = some [s.denote]` and the same finite value in `EmlExt`, with every `ln` argument proved nonzero. A circuit is then certified by `certify_sound (by decide)`, with no per-circuit proof.
+
+- Structural rules: integer and `kiπ` arithmetic, `exp(ln u) = u` for provably nonzero `u`, `exp(a ± kiπ) = ±exp a`, `ln(exp u) = u` in the strip, `ln(−u) = ln u − iπ` for positive real `u`, and subtraction rules that keep `iπ` multiples outermost.
+- `Eml.CertBox`: `bnd s` gives integer fixed-point bounds (scale `2^48`) on the real and imaginary parts, proved by `bnd_sound`. `e` and `π` come from Mathlib's decimal bounds, `exp` on real boxes from `(1 ± x/2^16)^(±2^16)` with outward-rounded squarings, and `ln` from `1 − 1/x ≤ log x ≤ x − 1`. The checker uses boxes to prove values nonzero (`e − exp e`, `exp(e − ln 2) − exp e`), positive or negative real, or inside the strip. All of it is `Int` arithmetic, so the kernel evaluates it.
+- `Eml.CertExt`: `certifyExt` runs the same gate in `EmlExt` with `±∞` as symbols (`ln 0 = −∞` for the symbol `0`, `exp(−∞) = 0`, the `extSub` table), and `certifyExt_sound` gives `evalRpn (EmlExt.finite 1) extEml bits [] = some [x.denote]`. It agrees with `certify` wherever that succeeds.
+- Coverage: 23 of the 43 closed stored words certify in `ℂ`, and 17 more in `EmlExt` (check 114). `pi`, `-ipi` and `-ipi-strict` need bounds for `exp` and `ln` of genuinely complex values.
+- `lib/eml/leanCert.ts` is an exact port; the bridge has the kernel re-decide `certify` and `certifyExt` on 237 programs (every program with K ≤ 13 plus every closed stored word) and compares. The inspector shows an EmlExt certificate when there is no `ℂ` one, and `Copy Lean 4` emits a `certifyExt_sound (by decide)` theorem for it.
 
 ### Genuine `eml`-word transcendental, circular, hyperbolic & logistic functions ([`Eml/Transcendental.lean`](Eml/Transcendental.lean))
 
@@ -94,7 +127,7 @@ Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 
 - **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
-- *(All 39 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link, and `lean.yml` runs when `best-known.json` changes.)*
+- *(All 45 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link or if a link's stored `lean` value disagrees with the exact engine, `scripts/lean-bridge-check.ts` proves each link's word evaluates to exactly that stored value, and `lean.yml` runs when `best-known.json` changes.)*
 
 ## Building and auditing locally
 

@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 import { exactDecimalOf, exactRationalOf, factsOf, isExactUnsure, isUnverified, provenInteger } from "./facts";
-import type { Node } from "./node";
+import { EmlLimitError, type Node } from "./node";
 
 /**
  * A rigorous enclosure of a circuit's value, used to confirm a result that a
@@ -727,7 +727,12 @@ export function ballEnclose(
       const n = frame.n;
       if (memo.has(n)) continue;
       if (++steps > maxNodes * 2) return { ok: false, reason: "maxNodes" };
-      if ((steps & 63) === 0 && deadline && performance.now() > deadline) return { ok: false, reason: "deadline" };
+      // Running out of time is not "the enclosure could not confirm": a caller that
+      // reads ok: false as a refusal would turn a timeout into "could not verify",
+      // and the answer would depend on the clock (fuzz seed 74).
+      if ((steps & 63) === 0 && deadline && performance.now() > deadline) {
+        throw new EmlLimitError("Exact evaluation timed out.");
+      }
       const exactFromFacts = (): Ball | null => {
         if (isUnverified(n) || isExactUnsure(n)) return null;
         const big = provenInteger(n);
