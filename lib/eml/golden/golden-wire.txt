@@ -113,7 +113,7 @@ expr: 1e-400*pi+1e-400 | exact: 4.14159265359×10^−400 | exact-notes: certifie
 expr: 1e-400/2*2-1e-400 | exact: 0 | exact-notes: certified | float: −0 | float-notes: ln0,underflowed | press: 594457+ | round-trip: OK | eval2: 0 | eval2-notes: certified | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
 expr: 1e-50*1.5/1.5-1e-50 | exact: 0 | exact-notes: certified | float: −2.841181×10^−64 | float-notes: ln0,differs-from-exact | press: 21491+ | round-trip: OK | eval2: 0 | eval2-notes: certified | # KNOWN-BUG residue-stable: certified nonzero residue of an exact 0
 expr: 1e-500 | exact: 1×10^−500 | exact-notes: certified | float: 0 | float-notes: ln0,underflowed,differs-from-exact | press: 53017+ | round-trip: OK | eval2: 1×10^−500 | eval2-notes: certified
-expr: 1e-500*e/e-1e-500 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 742825+ | round-trip: OK | eval2: — | eval2-notes: couldn't verify,ln0
+expr: 1e-500*e/e-1e-500 | exact: 0 | exact-notes: certified | float: −0 | float-notes: ln0,underflowed | press: 742825+ | round-trip: OK | eval2: 0 | eval2-notes: certified
 expr: 2 | exact: 2 | exact-notes: certified | float: 2 | float-notes:  | press: 19 | round-trip: OK | eval2: 2 | eval2-notes: certified
 expr: 2*(1e-18+1e-125*i) | exact: 2×10^−18 + 2×10^−125i | exact-notes: certified,ln0 | float: 2×10^−18 ≈ | float-notes: ln0 | press: 21023+ | round-trip: OK | eval2: 2×10^−18 + 2×10^−125i | eval2-notes: certified,ln0
 expr: 2/3 | exact: 0.666666666667 | exact-notes: certified | float: 0.666666666667 | float-notes:  | press: 39+ | round-trip: OK | eval2: 0.666666666667 | eval2-notes: certified
@@ -152,7 +152,7 @@ expr: exp(1e-432)-1 | exact: 1×10^−432 | exact-notes: certified,ln0 | float: 
 expr: exp(1e-50)-1 | exact: 1×10^−50 | exact-notes: certified | float: 0 | float-notes: differs-from-exact | press: 5329+ | round-trip: OK | eval2: 1×10^−50 | eval2-notes: certified
 expr: exp(800)-exp(800) | exact: 0 | exact-notes: certified | float: 0 | float-notes:  | press: 7 | round-trip: OK | eval2: 0 | eval2-notes: certified | # KNOWN-BUG jimmy1: −∞, singular:passed through a non-finite value, true value is 0
 expr: exp(800)*0 | exact: — | exact-notes: couldn't verify | float: undefined | float-notes: singular:out of float range / overflow,ln0,overflowed | press: 987+ | round-trip: OK | eval2: — | eval2-notes: couldn't verify
-expr: exp(ln(1e-400))-1e-400 | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 594397+ | round-trip: OK | eval2: — | eval2-notes: couldn't verify,ln0 | # KNOWN-BUG residue-stable: certified −5×10^−801, true value is 0
+expr: exp(ln(1e-400))-1e-400 | exact: 0 | exact-notes: certified | float: −0 | float-notes: ln0,underflowed | press: 594397+ | round-trip: OK | eval2: 0 | eval2-notes: certified
 expr: exp(ln(ln(0))*i) | exact: — | exact-notes: couldn't verify,ln0 | float: — | float-notes: unverified | press: 93+ | round-trip: OK | eval2: — | eval2-notes: couldn't verify,ln0
 expr: i | exact: i | exact-notes: certified,ln0 | float: i | float-notes: ln0 | press: 57+ | round-trip: OK | eval2: i | eval2-notes: certified,ln0
 expr: inf+1 | exact: — | exact-notes: couldn't verify | float: — | float-notes: unverified | press: N/A | round-trip: OK | eval2: — | eval2-notes: couldn't verify | # KNOWN-BUG inf-finite: −∞i, singular:uses ln 0 = −∞

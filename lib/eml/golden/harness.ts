@@ -55,7 +55,6 @@ const BUGS: Record<string, string> = {
   "6*i+(-6*i)": "roundtrip: pack/unpack text mismatch",
   "1e-100*1.5/1.5-1e-100": "residue-stable: certified nonzero residue of an exact 0",
   "1e-50*1.5/1.5-1e-50": "residue-stable: certified nonzero residue of an exact 0",
-  "exp(ln(1e-400))-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
   "1e-400*1.5/1.5-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
   "1e-400/2*2-1e-400": "residue-stable: certified −5×10^−801, true value is 0",
   "inf+1": "inf-finite: −∞i, singular:uses ln 0 = −∞",
