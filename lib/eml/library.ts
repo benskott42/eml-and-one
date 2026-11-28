@@ -709,8 +709,13 @@ function signedZero(node: Node): boolean {
 function negativeFactor(node: Node): boolean {
   const v = knownValue(node);
   if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
-  if (!Number.isFinite(v.re)) return false;
-  return v.re < 0 || Object.is(v.re, -0);
+  // −0 is the negative leaf. A proven negative integer is too: 0·(−1) and 0·(−2)
+  // are −0, because the product program would collapse that sign.
+  // A negative non-integer is not. Tagging −2/3 or −ln 2 as an exact point must
+  // not turn 0 times that point into −0; the product stays +0.
+  if (Object.is(v.re, -0)) return true;
+  const n = provenInteger(node);
+  return n !== undefined && n < BigInt(0);
 }
 
 /** A known infinity, or a node marked non-finite. ln(0) is −∞ and is not marked. */

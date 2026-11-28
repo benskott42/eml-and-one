@@ -488,14 +488,14 @@ export function rawDiv(a: Node, b: Node): Node {
     return markQuotient(noteNonfinite(node, neg ? -1 : 1), a, b);
   }
   if (b.type === "input" && Object.is(b.value.re, -0) && (b.value.im === 0 || Object.is(b.value.im, -0))) {
-    // The div program logs +0, so the gates of 1/(−0) come out +∞.
-    // The reciprocal of this leaf is the opposite infinity, which is what
-    // those keys compute.
+    // The div program logs +0, so a/(−0) comes out with the sign of a/(+0).
+    // Negating that division flips the infinity and keeps the ln 0 note.
+    // A typed infinity leaf had the sign and dropped the note.
     const num = knownValue(a);
-    const positive = a.type === "one" || (num !== null && num.re > 0 && (num.im === 0 || Object.is(num.im, -0)));
-    const negative = num !== null && num.re < 0 && (num.im === 0 || Object.is(num.im, -0));
-    if (positive) return noteNonfinite(input({ re: -Infinity, im: 0 }, "−∞"), -1);
-    if (negative) return noteNonfinite(input({ re: Infinity, im: 0 }, "∞"), 1);
+    const real =
+      a.type === "one" ||
+      (num !== null && (num.im === 0 || Object.is(num.im, -0)) && Number.isFinite(num.re) && num.re !== 0);
+    if (real) return domainNeg(rawDiv(a, zeroNode()));
     return markQuotient(noteNonfinite(node, -1), a, b);
   }
   return markQuotient(node, a, b);
