@@ -1131,9 +1131,9 @@ function tMulBuild(a: Node, b: Node): Node {
       // Literal +0 uses the product word. A computed zero, or −0, stays unverified.
       if (zSign === -1 || !literalPositiveZero(zeroNode)) return refuseZeroProduct(a, b, other);
     } else if (other.type !== "var") {
-      // A computed +0 is not the integer 0. Minting a signed leaf from it
-      // disagrees with the product word once the factor is only positive on one baseline.
-      if (zSign === 1 && !literalPositiveZero(zeroNode)) return refuseZeroProduct(a, b, other);
+      // A computed +0 times a pure imaginary factor is not the integer 0·i that
+      // cos(0) needs. (0.1+0.2−0.3)·7 is a real factor and keeps its sign.
+      if (zSign === 1 && !literalPositiveZero(zeroNode) && pureImagFactor(other)) return refuseZeroProduct(a, b, other);
       // +0 times a certified positive real, a cap-erased tiny, or a pure
       // imaginary factor. cos(0) multiplies 0 by i and needs that +0.
       if (sign === 1 && zSign === 1 && (factorIsReal(other) || isLostTiny(other) || pureImagFactor(other))) return tZero();
