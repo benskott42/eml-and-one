@@ -3,17 +3,18 @@ import Decimal from "decimal.js";
 /**
  * decimal.js multiplies base-1e7 limbs with a schoolbook loop. At a few hundred
  * digits that loop is most of exp, ln, cos and sin. This is the same integer
- * product: the significands are multiplied and written back in the same base, so
- * every digit matches. An internal series keeps the full product, and a normal
- * call rounds to the working precision. decimal.js keeps that choice in a closed
- * flag; a value past minE is preserved only while the flag says not to round.
+ * product, written back in the same base. A series keeps the full product, and a
+ * normal call rounds to the working precision and then applies that constructor's
+ * exponent range. Clones share one prototype, so only constructors passed to
+ * installFastMul take this path.
  */
 const BASE = 10_000_000;
 const LOG = 7;
 const MIN_LIMBS = 12;
+const EXP_LIMIT = 9e15;
 const TAG = "[object Decimal]";
 // minE cannot be below -9e15, so this exponent underflows exactly when rounding is on.
-const PROBE_E = -9e15 - 1;
+const PROBE_E = -EXP_LIMIT - 1;
 const probe = { toStringTag: TAG, s: 1, e: PROBE_E, d: [1] };
 
 function roundingOff(Ctor: Decimal.Constructor): boolean {
@@ -53,16 +54,42 @@ function limbExpToE(digits: number[], limbE: number): number {
   return e;
 }
 
-let installed = false;
+/**
+ * Round to the constructor's precision, then apply its minE/maxE.
+ * toSD copies through the constructor, and that copy clamps before rounding,
+ * so a product at minE − 1 would become zero before a round-up could carry it
+ * back into range. Widen the range for the round, then clamp the way mul does.
+ */
+function roundProduct(out: Decimal, Ctor: Decimal.Constructor): Decimal {
+  const cfg = Ctor as unknown as { minE: number; maxE: number };
+  const minE = cfg.minE;
+  const maxE = cfg.maxE;
+  cfg.minE = -EXP_LIMIT;
+  cfg.maxE = EXP_LIMIT;
+  let rounded: Decimal;
+  try {
+    rounded = out.toSD(Ctor.precision, Ctor.rounding);
+  } finally {
+    cfg.minE = minE;
+    cfg.maxE = maxE;
+  }
+  if (!rounded.d || rounded.e > maxE) return new Ctor(rounded.s < 0 ? -Infinity : Infinity);
+  if (rounded.e < minE) return new Ctor(rounded.s < 0 ? -0 : 0);
+  return rounded;
+}
 
-export function installFastMul(): void {
-  if (installed) return;
+let installed = false;
+const opted = new WeakSet<object>();
+
+export function installFastMul<T extends Decimal.Constructor>(Ctor: T): T {
+  opted.add(Ctor);
+  if (installed) return Ctor;
   installed = true;
   const orig = Decimal.prototype.mul;
   const fastMul = function (this: Decimal, y: Decimal.Value): Decimal {
     const Ctor = this.constructor as Decimal.Constructor;
     const xd = this.d;
-    if (!(y instanceof Ctor) || !xd || !y.d || !xd[0] || !y.d[0] || xd.length < MIN_LIMBS || y.d.length < MIN_LIMBS) {
+    if (!opted.has(Ctor) || !(y instanceof Ctor) || !xd || !y.d || !xd[0] || !y.d[0] || xd.length < MIN_LIMBS || y.d.length < MIN_LIMBS) {
       return orig.call(this, y);
     }
     const round = !roundingOff(Ctor);
@@ -75,8 +102,9 @@ export function installFastMul(): void {
     coeff.s = this.s * y.s;
     coeff.d = digits;
     coeff.e = limbExpToE(digits, limbE);
-    return round ? out.toSD(Ctor.precision, Ctor.rounding) : out;
+    return round ? roundProduct(out, Ctor) : out;
   };
   Decimal.prototype.mul = fastMul;
   Decimal.prototype.times = fastMul;
+  return Ctor;
 }
