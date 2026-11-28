@@ -603,4 +603,75 @@ theorem norm_bounds_of_has {b : Box} {z : ℂ} (hb : b.Has z) :
   have hn : 0 ≤ nxny b := add_nonneg (mul_self_nonneg _) (mul_self_nonneg _)
   exact ⟨sqrtLo_sound hn hlo (norm_nonneg _), sqrtHi_sound hhi (norm_nonneg _)⟩
 
+/-! ### Sharp logarithm
+
+The bisection is untrusted. `lnSLo` / `lnSHi` keep the candidate only when
+`expHi` / `expLo` certify it, and otherwise fall back to `lnLo` / `lnHi`.
+-/
+
+/-- Largest candidate `m` the fuel finds with `expHi m = some h` and `h ≤ x`. -/
+def lnSearchLo : Nat → Int → Int → Int → Int
+  | 0, _, lo, _ => lo
+  | fuel + 1, x, lo, hi =>
+    if hi ≤ lo then lo
+    else
+      let mid := (lo + hi + 1) / 2
+      match expHi mid with
+      | some h => if h ≤ x then lnSearchLo fuel x mid hi else lnSearchLo fuel x lo (mid - 1)
+      | none => lnSearchLo fuel x lo (mid - 1)
+
+/-- Smallest candidate `m` the fuel finds with `m ≤ expCap` and `x ≤ expLo m`. -/
+def lnSearchHi : Nat → Int → Int → Int → Int
+  | 0, _, _, hi => hi
+  | fuel + 1, x, lo, hi =>
+    if hi ≤ lo then hi
+    else
+      let mid := (lo + hi) / 2
+      if mid ≤ expCap ∧ x ≤ expLo mid then lnSearchHi fuel x lo mid
+      else lnSearchHi fuel x (mid + 1) hi
+
+/-- Lower bound for `log`, sharpened by bisection when the `exp` upper bound allows it. -/
+def lnSLo (x : Int) : Int :=
+  let c := lnSearchLo boxFuel x (lnLo x) (min (lnHi x) expCap)
+  match expHi c with
+  | some h => if h ≤ x then c else lnLo x
+  | none => lnLo x
+
+/-- Upper bound for `log`, sharpened by bisection when the `exp` lower bound allows it. -/
+def lnSHi (x : Int) : Int :=
+  let c := lnSearchHi boxFuel x (lnLo x) (lnHi x)
+  if c ≤ expCap ∧ x ≤ expLo c then c else lnHi x
+
+theorem fx_lnSLo_le {x : Int} (hx : 0 < x) {r : ℝ} (hr : fx x ≤ r) :
+    fx (lnSLo x) ≤ Real.log r := by
+  dsimp only [lnSLo]
+  generalize hc : lnSearchLo boxFuel x (lnLo x) (min (lnHi x) expCap) = c
+  cases hE : expHi c with
+  | none =>
+    dsimp
+    exact fx_lnLo_le hx hr
+  | some h =>
+    dsimp
+    by_cases hh : h ≤ x
+    · rw [if_pos hh]
+      have hexp : Real.exp (fx c) ≤ fx h := exp_le_fx_expHi hE
+      have hr0 : 0 < r := lt_of_lt_of_le (fx_pos hx) hr
+      have : Real.exp (fx c) ≤ r := le_trans hexp (le_trans (fx_mono hh) hr)
+      exact (Real.le_log_iff_exp_le hr0).mpr this
+    · rw [if_neg hh]
+      exact fx_lnLo_le hx hr
+
+theorem log_le_fx_lnSHi {x : Int} {r : ℝ} (hr0 : 0 < r) (hr : r ≤ fx x) :
+    Real.log r ≤ fx (lnSHi x) := by
+  dsimp only [lnSHi]
+  generalize hc : lnSearchHi boxFuel x (lnLo x) (lnHi x) = c
+  by_cases hcond : c ≤ expCap ∧ x ≤ expLo c
+  · rw [if_pos hcond]
+    rcases hcond with ⟨_hcap, hlo⟩
+    have : r ≤ Real.exp (fx c) :=
+      le_trans hr (le_trans (fx_mono hlo) (fx_expLo_le c))
+    exact (Real.log_le_iff_le_exp hr0).mpr this
+  · rw [if_neg hcond]
+    exact log_le_fx_lnHi hr0 hr
+
 end Eml.Cert
