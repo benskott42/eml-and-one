@@ -16,7 +16,7 @@ import {
 import { besideSumOf, decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
 import { knownValue } from "./lowering";
 import { evaluate as floatEvaluate, precisionNoteOf } from "./node";
-import { ballConfirmsValue } from "./exact-ball";
+import { ballConfirmsValue, ballEnclose, type BallCompOut } from "./exact-ball";
 
 /**
  * Wide-exponent complex values for EML circuits.
@@ -1379,6 +1379,177 @@ function looksExactDecimal(d: Decimal): boolean {
  * digits, with each zero part exactly 0, is kept. (exp(800)+1)−exp(800) leaves a
  * radius near 10^168 and stays refused; ln(10^400) is confirmed.
  */
+/**
+ * Reports whose value was proved by the ball enclosure, not by a second
+ * reading at another precision. exactReport returns these as proved: a later
+ * pass must not replace the proved digits with a fresh rounding.
+ */
+const ballProved = new WeakSet<ExactReport>();
+
+/** A component the enclosure actually pins down, or null when the radius still covers other answers. */
+function provedComponent(part: BallCompOut): { text: string; negZero: boolean; digits: number } | null {
+  if (part.v.isNaN()) return null;
+  if (!part.v.isFinite()) {
+    if (!part.exact) return null;
+    return { text: part.v.isNeg() ? "-Infinity" : "Infinity", negZero: false, digits: D.precision };
+  }
+  if (part.v.isZero()) {
+    if (!part.exact && !part.r.isZero()) return null;
+    return { text: "0", negZero: part.v.isNeg(), digits: D.precision };
+  }
+  let digits = D.precision;
+  if (!part.exact && !part.r.isZero()) {
+    if (!part.r.isFinite() || part.r.gte(part.v.abs())) return null;
+    const decades = part.v.abs().div(part.r).ln().div(Math.LN10);
+    if (decades.isFinite() && decades.lt(1)) return null;
+    digits = decades.isFinite() ? Math.min(D.precision, Math.floor(decades.toNumber())) : D.precision;
+  }
+  return { text: part.v.toSignificantDigits(digits).toString(), negZero: false, digits };
+}
+
+function decimalOfProved(part: { text: string; negZero: boolean }): Decimal {
+  if (part.text === "Infinity") return new D(Infinity);
+  if (part.text === "-Infinity") return new D(-Infinity);
+  if (part.text === "0") return part.negZero ? new D(-0) : ZERO;
+  return new D(part.text);
+}
+
+/**
+ * The value every enclosure candidate proves, or "loose" when a higher precision
+ * might still separate the residue from 0. Two candidates that prove different
+ * values are not a value. A finite proof is the center rounded to the digits the
+ * radius supports, so the certified digits are the ones the enclosure contains.
+ */
+function provedByBalls(
+  balls: { re: BallCompOut; im: BallCompOut }[],
+): { value: Z; digits: number } | "loose" | null {
+  if (balls.length === 0) return null;
+  const parts = balls.map((ball) => {
+    const re = provedComponent(ball.re);
+    const im = provedComponent(ball.im);
+    return re && im ? { re, im } : null;
+  });
+  if (parts.some((part) => part === null)) return "loose";
+  const first = parts[0];
+  if (!first) return "loose";
+  if (parts.some((part) => !part || part.re.text !== first.re.text || part.im.text !== first.im.text || part.re.negZero !== first.re.negZero || part.im.negZero !== first.im.negZero)) {
+    return null;
+  }
+  return {
+    value: { re: decimalOfProved(first.re), im: decimalOfProved(first.im) },
+    digits: Math.min(first.re.digits, first.im.digits),
+  };
+}
+
+/**
+ * A dust-band snap (about 10^(−(digits−8))) feeds ln 0 and the pass reports an
+ * infinity. Leave that infinity only when the enclosure proves the snapped
+ * residue is not 0, and certify the value the enclosure proved. An exact
+ * cancellation such as exp(ln a) − ln(exp a) has an empty key and stays the
+ * infinity. Anything the enclosure cannot pin down is refused. Agreement of two
+ * working precisions is not a proof: the same rounding residue can hold still
+ * while its logarithm is a finite number.
+ */
+function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport | null {
+  if (zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN() || report.sawLead) return null;
+  const gap = report.lossGap ?? 0;
+  const digits = report.digits ?? D.precision;
+  if (!(gap > digits - 24)) return null;
+  let prec = Math.min(PRECISION_CAP, Math.max(digits, gap + 48));
+  for (let hop = 0; hop < 8; hop += 1) {
+    let enclosed: ReturnType<typeof ballEnclose>;
+    try {
+      enclosed = ballEnclose(root, env, prec, budget);
+    } catch (err) {
+      rethrowBudget(err);
+      return certifyZero(report);
+    }
+    if (enclosed.ok) {
+      const proved = provedByBalls(enclosed.balls);
+      if (proved && proved !== "loose") {
+        if (!zFinite(proved.value)) {
+          // The snap is the proved infinity. Keep that report so the screen shows
+          // it, and so the ordinary refusal rules still apply. A later precision
+          // hop must not replace it: this return is that guard.
+          const same =
+            report.value.re.isFinite() === proved.value.re.isFinite() &&
+            report.value.im.isFinite() === proved.value.im.isFinite() &&
+            report.value.re.isNeg() === proved.value.re.isNeg() &&
+            report.value.im.isNeg() === proved.value.im.isNeg();
+          return same ? report : { ...report, value: proved.value };
+        }
+        // The residue is not 0. Certify the center the enclosure proved, not a
+        // second reading rounded back to the working precision.
+        const out: ExactReport = {
+          ...report,
+          value: proved.value,
+          digits: prec,
+          singular: null,
+          touchedLn0: false,
+          nearCut: false,
+        };
+        ballProved.add(out);
+        return out;
+      }
+      if (proved === null) return certifyZero(report);
+    } else if (enclosed.reason !== "fail" && enclosed.reason !== "overflow" && enclosed.reason !== "ln-unconverged") {
+      return certifyZero(report);
+    }
+    const next = Math.min(PRECISION_CAP, prec + 48);
+    if (next <= prec) return certifyZero(report);
+    prec = next;
+  }
+  return certifyZero(report);
+}
+
+/**
+ * A vanished pass that comes back finite can be the log of a rounding residue
+ * of an exact 0, and two precisions can agree on that log. The enclosure is
+ * the proof: an exact infinity (empty key, as in exp(ln a) − ln(exp a))
+ * replaces the finite. A finite the enclosure does not pin as infinity stays.
+ */
+function preferExactInfinity(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport {
+  if (report.unverified || report.sawLead || !zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN()) return report;
+  // ln of a rounding residue is a large finite. A small recovered term is not that log.
+  const cancelled = Math.max(report.lossGap ?? 0, report.surviveLoss ?? 0);
+  if (cancelled <= 24) return report;
+  const large = (part: Decimal) => part.isFinite() && !part.isZero() && part.abs().gte(20);
+  if (!large(report.value.re) && !large(report.value.im)) return report;
+  let prec = Math.min(PRECISION_CAP, Math.max(report.digits ?? D.precision, (report.lossGap ?? 0) + 48));
+  for (let hop = 0; hop < 4; hop += 1) {
+    let enclosed: ReturnType<typeof ballEnclose>;
+    try {
+      enclosed = ballEnclose(root, env, prec, budget);
+    } catch (err) {
+      rethrowBudget(err);
+      return report;
+    }
+    if (enclosed.ok) {
+      const proved = provedByBalls(enclosed.balls);
+      if (proved === "loose") {
+        // A wider enclosure may still show the cancellation is exact.
+      } else if (!proved || zFinite(proved.value)) {
+        return report;
+      } else {
+        return {
+          ...report,
+          value: proved.value,
+          digits: D.precision,
+          singular: SINGULAR_LN0,
+          touchedLn0: true,
+          nearCut: false,
+        };
+      }
+    } else if (enclosed.reason !== "fail" && enclosed.reason !== "overflow" && enclosed.reason !== "ln-unconverged") {
+      return report;
+    }
+    const next = Math.min(PRECISION_CAP, prec + 48);
+    if (next <= prec) return report;
+    prec = next;
+  }
+  return report;
+}
+
 function confirmedBeside(
   root: Node,
   env: Record<string, C | Z>,
@@ -1520,6 +1691,11 @@ export function exactReport(
   if (crudeErr !== undefined && zFinite(out.value)) {
     const top = vanished(out.value) ? Number.NEGATIVE_INFINITY : exponentCeil(out.value);
     if (top <= crudeErr + 12) return { ...out, singular: null, unverified: true };
+  }
+  // The enclosure named this value. A later rescue pass would print a different rounding.
+  if (ballProved.has(out)) {
+    if (nestedTrigTooLarge(root, env)) return { ...out, unverified: true };
+    return out;
   }
   if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
   const squared = squaredTinyPart(root, env, budget, out);
@@ -1843,7 +2019,7 @@ function exactReportCore(
         if (raised.unverified) return raised;
         revealed = raised;
       }
-      return confirmDust(present(revealed), root, env, budget);
+      return preferExactInfinity(confirmDust(present(revealed), root, env, budget), root, env, budget);
     }
     if (lostGapOf(report) > D.precision + 4) {
       const abNeed = lostGapOf(report) + 48;
@@ -1854,37 +2030,16 @@ function exactReportCore(
       const nonzeroResidue = residueParts(again).some((name) => !again.value[name].isZero());
       const revealed = nonzeroResidue ? settleResidue(again, root, env, budget) : again;
       if (revealed.unverified) return revealed;
-      return confirmDust(present(revealed), root, env, budget);
+      return preferExactInfinity(confirmDust(present(revealed), root, env, budget), root, env, budget);
     }
     return present(report);
   }
   let initial = report;
-  // A cancellation in the dust band, about 10^-(digits-8), snaps to 0, and a later
-  // ln reads that 0 as ln 0. exp(e − exp(exp(e−1))) − 1 is about 10^(−114): real at
-  // 120 digits, and eml(1, that) is exp(exp(e−1)), not +∞. Rounding noise sits on the
-  // last digit and still snaps after the raise, so a true ln 0 (e − ln(exp(e)), or an
-  // exact 0 with no gap) stays the infinity it is. The gap is the one recorded on the
-  // report (passState.lossGap for this pass).
-  if (!zFinite(initial.value) && !initial.value.re.isNaN() && !initial.value.im.isNaN() && !initial.sawLead) {
-    const gap = initial.lossGap ?? 0;
-    const digits = initial.digits ?? D.precision;
-    const need = gap + 48;
-    if (gap > digits - 24 && need <= PRECISION_CAP) {
-      const again = atPrecision(need, root, env, budget);
-      if (!again.unverified && zFinite(again.value)) {
-        const next = Math.min(PRECISION_CAP, need + 24);
-        const check = next > need ? atPrecision(next, root, env, budget) : again;
-        if (
-          !check.unverified &&
-          zFinite(check.value) &&
-          !residueMoved(again.value.re, check.value.re) &&
-          !residueMoved(again.value.im, check.value.im)
-        ) {
-          initial = again;
-        }
-      }
-    }
-  }
+  // A dust-band snap read as ln 0 is an infinity the pass did not prove. The
+  // enclosure either shows that residue is not 0 and supplies the finite value,
+  // or shows the cancellation is exact and the infinity stands.
+  const dust = proveDustSnap(initial, root, env, budget);
+  if (dust) return dust;
   if (absorbedMatters(initial)) {
     const raised = raiseForAbsorbed(initial);
     if (raised.unverified) return raised;
@@ -1979,7 +2134,7 @@ function exactReportCore(
     }
   }
   const besideTiny = recoverTinyPart(settled, root, env, budget);
-  if (besideTiny) return besideTiny;
+  if (besideTiny) return preferExactInfinity(besideTiny, root, env, budget);
   // ln(−2 − 10^(−p) i) collapses onto the cut once p passes the working
   // precision, and the composed log then certifies +π. The point is still
   // below the axis. Raise precision until the known power is visible, or
@@ -1993,7 +2148,12 @@ function exactReportCore(
       if (settled.unverified) return settled;
     }
   }
-  return confirmDust(present(settled), root, env, budget);
+  const shown = confirmDust(present(settled), root, env, budget);
+  // Two agreeing precisions can both print ln(noise) of an exact cancellation.
+  // Only a cancellation this deep is worth an enclosure; a clean value is not.
+  const cancelled = Math.max(shown.lossGap ?? 0, shown.surviveLoss ?? 0);
+  if (shown.sawLead || cancelled <= 24) return shown;
+  return preferExactInfinity(shown, root, env, budget);
 }
 
 /**
