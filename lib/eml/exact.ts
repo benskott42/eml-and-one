@@ -14,7 +14,7 @@ import {
   precisionMessage,
   trigArg,
 } from "./node";
-import { besideSumOf, decadeOf, dependsOnUnverified, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
+import { besideSumOf, decadeOf, dependsOnUnverified, factsOf, inScaledShell, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isSeriesShortcut, isUnverified, maxSeriesErrorExp, mayBeInfinite, provenInteger } from "./facts";
 import { knownValue } from "./lowering";
 import { evaluate as floatEvaluate, precisionNoteOf } from "./node";
 import { ballConfirmsValue, ballEnclose, type BallCompOut } from "./exact-ball";
@@ -1625,7 +1625,32 @@ function nestedTrigTooLarge(root: Node, env: Record<string, C | Z>): boolean {
  * dropped it for sitting more than 160 decades under its sibling. Read the square
  * when it fits in 480 digits. When it does not, that vanished component is not certified.
  * Multiplying by ±i swaps the parts, so either component can be the one that cancelled.
+ * A pure real is re-read the same way. When the square fits, the recovered
+ * imaginary part is kept; when one comes back and cannot be kept, the pure
+ * real is not certified. A real circuit with no imaginary leaf, such as
+ * (10^300+2)^(−1), has no square to recover.
  */
+function hasImagLeaf(root: Node, env: Record<string, C | Z>): boolean {
+  for (const value of Object.values(env)) {
+    const im = value.im;
+    if (typeof im === "number" ? im !== 0 : !im.isZero()) return true;
+  }
+  const seen = new Set<Node>();
+  const stack: Node[] = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    if (n.type === "input" && n.value.im !== 0) return true;
+    if (factsOf(n).imaginaryUnit !== undefined) return true;
+    const note = precisionNoteOf(n);
+    if (note?.kind === "add") stack.push(note.left, note.right);
+    else if (note) stack.push(note.arg);
+    if (n.type === "eml" && n.a && n.b) stack.push(n.a, n.b);
+  }
+  return false;
+}
+
 function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): ExactReport | null {
   if (out.sawLead || out.unverified || agreesWithInteger(root, out.value)) return null;
   const v = out.value;
@@ -1634,10 +1659,8 @@ function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: Eva
   const work = out.workExp;
   // work 0 is a value that did not cancel, such as sin(−10^(−400)). x − 1 cancels near 1.
   if (work === undefined || !Number.isFinite(work) || work <= 0 || work > 12) return null;
-  const kept = v.re.isZero() ? v.im : v.re;
-  // A pure real from a magnitude inside float range is the leading term, as in (10^300+2)^(−1).
-  // The swapped square is a 10^400 circuit, past float range.
-  if (!v.re.isZero() && passState.firstBig <= 308) return null;
+  const lostRe = v.re.isZero();
+  const kept = lostRe ? v.im : v.re;
   const square = -2 * kept.e;
   if (square <= 24) return null;
   const near = (gap: number) => gap > 24 && Math.abs(gap - square) <= 16;
@@ -1646,7 +1669,11 @@ function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: Eva
   const survHit = near(out.surviveLoss ?? 0);
   if (!absorbHit && !survHit) return null;
   const digits = out.digits ?? D.precision;
-  if (absorbHit && square + 48 > PRECISION_CAP) return { ...out, unverified: true };
+  if (absorbHit && square + 48 > PRECISION_CAP) {
+    // Inside float range a real circuit's absorb gap is the next real term, not a lost imaginary.
+    if (!lostRe && passState.firstBig <= 308 && !hasImagLeaf(root, env)) return null;
+    return { ...out, unverified: true };
+  }
   const need = Math.min(PRECISION_CAP, Math.max(digits, square + 48));
   let again: ExactReport;
   try {
@@ -1655,12 +1682,17 @@ function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: Eva
     return { ...out, unverified: true };
   }
   if (again.unverified) return again;
-  const real = again.value.re;
-  if (residueMoved(v.im, again.value.im) || !real.isFinite() || real.isZero() || Math.abs(real.e + square) > 8) {
+  const lost = lostRe ? again.value.re : again.value.im;
+  const keptNow = lostRe ? again.value.im : again.value.re;
+  const keptBefore = lostRe ? v.im : v.re;
+  if (residueMoved(keptBefore, keptNow) || !lost.isFinite() || lost.isZero() || Math.abs(lost.e + square) > 8) {
     if (absorbHit && square > (again.digits ?? need) - 24) return { ...out, unverified: true };
+    // An imaginary part came back. Certifying the pure real would drop it.
+    if (!lostRe && lost.isFinite() && !lost.isZero()) return { ...out, unverified: true };
     return null;
   }
-  const room = Math.min(PRECISION_CAP, Math.max(need + 24, (again.workRe ?? 0) - real.e + 36));
+  const lostWork = lostRe ? (again.workRe ?? 0) : (again.workIm ?? 0);
+  const room = Math.min(PRECISION_CAP, Math.max(need + 24, lostWork - lost.e + 36));
   if (room > need) {
     let check: ExactReport;
     try {
