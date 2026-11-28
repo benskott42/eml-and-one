@@ -1,4 +1,4 @@
-import { packFacts, unpackFacts } from "./facts";
+import { besideSumOf, noteBesideSum, packFacts, unpackFacts } from "./facts";
 import { knownValue, tagValue } from "./lowering";
 import { E, ONE, V, input, notePrecision, precisionNoteOf, type Node } from "./node";
 
@@ -41,6 +41,14 @@ export type Wire =
       xu?: 1;
       /** Built from a ln 0, pole, or division by 0: an ∞ − ∞ here can be the value. */
       inf?: 1;
+      /**
+       * A huge integer kept beside a non-integer (facts.ts besideSumOf): the integer's
+       * token, the small operand's token (packed even though no gate uses it), and
+       * whether it was a subtraction. Without them the worker refuses the circuit.
+       */
+      bsH?: number;
+      bsO?: number;
+      bsSub?: 1;
     };
 
 /** True when a known component is below the 120-digit floor and must travel with the circuit. */
@@ -85,6 +93,12 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     }
     if (!frame.seen) {
       stack.push({ n: frame.n, seen: true });
+      // A remembered huge sum's operands go first, so their ids exist when this gate is emitted.
+      const beside = besideSumOf(frame.n);
+      if (beside) {
+        stack.push({ n: beside.other, seen: false });
+        stack.push({ n: beside.huge, seen: false });
+      }
       stack.push({ n: frame.n.b, seen: false });
       stack.push({ n: frame.n.a, seen: false });
       continue;
@@ -107,6 +121,16 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     if (known && tinyPoint(known.re, known.im)) {
       token.kr = known.re;
       token.ki = known.im;
+    }
+    const beside = besideSumOf(frame.n);
+    if (beside) {
+      const h = idOf.get(beside.huge);
+      const o = idOf.get(beside.other);
+      if (h !== undefined && o !== undefined) {
+        token.bsH = h;
+        token.bsO = o;
+        if (beside.op === "sub") token.bsSub = 1;
+      }
     }
     packFacts(frame.n, token);
     tokens.push(token);
@@ -139,6 +163,9 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
         notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
       }
       if (tok.kr !== undefined && tok.ki !== undefined) tagValue(node, { re: tok.kr, im: tok.ki });
+      if (tok.bsH !== undefined && tok.bsO !== undefined && nodes[tok.bsH] && nodes[tok.bsO]) {
+        noteBesideSum(node, nodes[tok.bsH] as Node, nodes[tok.bsO] as Node, tok.bsSub ? "sub" : "add");
+      }
       unpackFacts(node, tok);
     }
   }

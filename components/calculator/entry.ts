@@ -79,7 +79,8 @@ function programText(node: Node): string | null {
   const summary = `K ${stats.rpnLength} · ${stats.dagGates} shared · depth ${stats.depth}`;
   if (stats.dagGates <= 12 && stats.depth <= 10 && stats.rpnLength <= BigInt(48)) {
     const tokens = rpnTokens(node, 48);
-    if (tokens && tokens.every(isOneAndE)) return `${tokens.join(" ")} · ${summary}`;
+    // The word is written as on the keys, 11E: the same spelling the program field takes.
+    if (tokens && tokens.every(isOneAndE)) return `${tokens.join("")} · ${summary}`;
     const nested = describe(node);
     if (nested && pureDescribe(nested)) return nested;
   }

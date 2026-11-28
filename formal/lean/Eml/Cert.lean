@@ -17,7 +17,8 @@
   `ℂ` and `EmlExt` evaluations agree.
 
   The TypeScript port in `lib/eml/leanCert.ts` is checked against this file on
-  hundreds of programs by the generated `formal/lean/UiCrossCheck.lean`.
+  every program with K ≤ 9 plus sample records (26 programs) by the generated
+  `formal/lean/.lake/UiCrossCheck.lean` (`scripts/lean-bridge-check.ts`).
 
   Zero `sorry`, zero custom axioms.
 -/

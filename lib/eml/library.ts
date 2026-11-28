@@ -1,6 +1,7 @@
 import type { C } from "./complex";
 import {
   beginInteger,
+  buildingInteger,
   carryTinyScale,
   domainAdd,
   domainNeg,
@@ -37,8 +38,8 @@ import {
   installIntegerBuilder,
   markExactInt,
 } from "./lowering";
-import { E, EmlError, ONE, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
-import { applyProgram, programNode } from "./programs";
+import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
+import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
 import { DECIMAL_SCALE_MAX, type Rational, derive, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
@@ -408,7 +409,113 @@ function sqrtMinusOne(a: Node, b: Node): Node | null {
   return markSeriesError(markSeries(noteDecade(half, scale - 1), "series shortcut: x/2, for |x| < 10^(−478)"), 2 * scale + 2);
 }
 
+/**
+ * Constant substitution. A closed constant with a shortest known word
+ * (best-known.json) uses it when the word is shorter than the ordinary circuit
+ * and does not add a dependence on ln 0 = −∞: 1/2 is the K 35 circuit without
+ * ln 0, so it may take the K 31 strict word but not the K 29 word that logs 0.
+ */
+const ln0Memo = new WeakMap<Node, boolean>();
+
+function touchesLn0(node: Node): boolean {
+  const known = ln0Memo.get(node);
+  if (known !== undefined) return known;
+  let touched = true;
+  try {
+    touched = evaluateReport(node).touchedLn0;
+  } catch {
+    touched = true;
+  }
+  ln0Memo.set(node, touched);
+  return touched;
+}
+
+function preferShorter(generic: Node, candidate: Node | null): Node {
+  if (!candidate || candidate === generic) return generic;
+  if (circuitStats(candidate).rpnLength >= circuitStats(generic).rpnLength) return generic;
+  if (touchesLn0(candidate) && !touchesLn0(generic)) return generic;
+  return candidate;
+}
+
+/** The shortest of these words that preferShorter accepts over `generic`, or null. */
+function shortestWord(generic: Node, ids: readonly string[]): Node | null {
+  const length = (id: string) => SHORT_PROGRAMS[id]?.length ?? Number.POSITIVE_INFINITY;
+  const sorted = ids.filter((id) => Object.hasOwn(SHORT_PROGRAMS, id)).sort((x, y) => length(x) - length(y));
+  for (const id of sorted) {
+    const word = programNode(id);
+    if (preferShorter(generic, word) === word) return word;
+  }
+  return null;
+}
+
+/** A closed operand: no input leaf, no variable, no series shortcut. Only those fold. */
+function closedConstant(node: Node): boolean {
+  return node.type !== "input" && node.type !== "var" && maxSeriesErrorExp(node) === undefined && provenFinite(node);
+}
+
+/**
+ * Small exact integers combined by + − × are that integer: 5 − 7 was the K 147
+ * subtraction circuit and −2 is a K 25 word. A zero is left to the ordinary
+ * builders, which keep its sign, and so is any integer the library is building.
+ */
+function foldSmallInts(op: "add" | "sub" | "mul", a: Node, b: Node, generic: Node): Node {
+  if (buildingInteger() || !closedConstant(a) || !closedConstant(b)) return generic;
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
+  if (ia === undefined || ib === undefined) return generic;
+  const value = op === "add" ? ia + ib : op === "sub" ? ia - ib : ia * ib;
+  if (value === BigInt(0) || value < BigInt(-64) || value > BigInt(64)) return generic;
+  return preferShorter(generic, integerNode(Number(value)));
+}
+
+/** Quotients of small integers with a stored word, and the stricter word that avoids ln 0. */
+const QUOTIENT_WORDS: Readonly<Record<string, readonly string[]>> = {
+  "1/2": ["1/2", "1/2-strict", "1/2-alt"],
+  "-1/2": ["-1/2", "-1/2-strict"],
+  "1/3": ["1/3", "1/3-strict"],
+  "-1/3": ["-1/3"],
+  "2/3": ["2/3"],
+  "3/2": ["3/2", "3/2-strict"],
+  "-3/2": ["-3/2", "-3/2-strict"],
+  "5/2": ["5/2"],
+  "-5/2": ["-5/2"],
+};
+
+function gcd(x: bigint, y: bigint): bigint {
+  let p = x < BigInt(0) ? -x : x;
+  let q = y < BigInt(0) ? -y : y;
+  while (q !== BigInt(0)) [p, q] = [q, p % q];
+  return p;
+}
+
+function quotientWord(a: Node, b: Node, generic: Node): Node {
+  if (!closedConstant(a) || !closedConstant(b)) return generic;
+  if (provenInteger(a) === BigInt(1) && b === tE()) {
+    const word = shortestWord(generic, ["1/e", "1/e-strict"]);
+    return word ? tagReal(word, 1 / Math.E) : generic;
+  }
+  const ia = provenInteger(a);
+  const ib = provenInteger(b);
+  if (ia === undefined || ib === undefined || ib === BigInt(0)) return generic;
+  const g = gcd(ia, ib);
+  let n = ia / g;
+  let d = ib / g;
+  if (d < BigInt(0)) {
+    n = -n;
+    d = -d;
+  }
+  const ids = QUOTIENT_WORDS[`${n}/${d}`];
+  if (!ids) return generic;
+  const word = shortestWord(generic, ids);
+  // The word takes the facts the ordinary quotient derives from a and b.
+  return word ? derive("div", tagReal(word, Number(n) / Number(d)), a, b) : generic;
+}
+
 export function tSub(a: Node, b: Node): Node {
+  return foldSmallInts("sub", a, b, tSubBuild(a, b));
+}
+
+function tSubBuild(a: Node, b: Node): Node {
   const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
   if (series) return derive("sub", markMaybeInfinite(series, a, b), a, b);
   const node = domainSub(a, b);
@@ -419,7 +526,17 @@ export function tSub(a: Node, b: Node): Node {
 export function tNeg(b: Node): Node {
   const dir = directionOf(b);
   if (dir) return rememberDirection(dir.magnitude, dir.quarter + 2);
-  return derive("neg", domainNeg(b), b);
+  const generic = derive("neg", domainNeg(b), b);
+  if (b === tE()) {
+    const word = shortestWord(generic, ["-e", "-e-strict"]);
+    return word ? tagReal(word, -Math.E) : generic;
+  }
+  // −2 and −3 are words (K 25, K 35); negating 2 or 3 is K 33 and K 43.
+  if (!buildingInteger() && closedConstant(b)) {
+    const int = provenInteger(b);
+    if (int !== undefined && int !== BigInt(0) && int >= BigInt(-64) && int <= BigInt(64)) return preferShorter(generic, integerNode(-Number(int)));
+  }
+  return generic;
 }
 
 function largeRealSum(a: Node, b: Node): Node | null {
@@ -434,6 +551,10 @@ function largeRealSum(a: Node, b: Node): Node | null {
 }
 
 export function tAdd(a: Node, b: Node): Node {
+  return foldSmallInts("add", a, b, tAddBuild(a, b));
+}
+
+function tAddBuild(a: Node, b: Node): Node {
   const cancelled = sumOfNegation(a, b);
   if (cancelled) return cancelled;
   const large = largeRealSum(a, b);
@@ -744,6 +865,10 @@ function offAxis(node: Node): boolean {
 }
 
 export function tMul(a: Node, b: Node): Node {
+  return foldSmallInts("mul", a, b, tMulBuild(a, b));
+}
+
+function tMulBuild(a: Node, b: Node): Node {
   // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
   if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
     const pole = nonFiniteFactor(a) ? a : b;
@@ -843,6 +968,10 @@ function moderateExponent(node: Node): boolean {
 }
 
 export function tDiv(a: Node, b: Node): Node {
+  return quotientWord(a, b, tDivBuild(a, b));
+}
+
+function tDivBuild(a: Node, b: Node): Node {
   // A finite numerator over a directed infinity is 0. The quotient word can
   // leave a signed zero in the opposite direction.
   if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
@@ -904,6 +1033,23 @@ export function tPow(a: Node, b: Node): Node {
   if (unit) {
     const exp = integerExponent(b);
     if (exp !== null) return unitPower(Number((exp * BigInt(unit)) % BigInt(4)));
+  }
+  if (closedConstant(a) && closedConstant(b)) {
+    // e^2 is a K 21 word without ln 0; the power word on e is K 45.
+    if (a === tE() && provenInteger(b) === BigInt(2)) {
+      const word = shortestWord(applyProgram("pow", { x: a, y: b }), ["e^2"]);
+      if (word) return tagReal(word, Math.E ** 2);
+    }
+    // A small integer power is that integer when the integer is shorter: 2^2 is the K 39 word for 4.
+    const ia = provenInteger(a);
+    const ib = provenInteger(b);
+    if (!buildingInteger() && ia !== undefined && ib !== undefined && ib >= BigInt(0) && ib <= BigInt(64)) {
+      const value = ia ** ib;
+      if (value !== BigInt(0) && value >= BigInt(-64) && value <= BigInt(64)) {
+        const int = integerNode(Number(value));
+        if (preferShorter(applyProgram("pow", { x: a, y: b }), int) === int) return int;
+      }
+    }
   }
   const node = applyProgram("pow", { x: a, y: b });
   const errB = maxSeriesErrorExp(b);
@@ -1676,6 +1822,11 @@ function integerNodeBuild(n: number): Node {
     else if (n < 0) node = tNeg(integerNode(-n));
     else if (n % 2 === 0) node = tMul(integerNode(n / 2), tTwo());
     else node = tAdd(integerNode(n - 1), ONE);
+    // A stored word for this integer (−2, −3, 4), when it is shorter and adds no ln 0.
+    const id = String(n);
+    if (n < -1 || n > 3) {
+      if (Object.hasOwn(SHORT_PROGRAMS, id)) node = preferShorter(node, programNode(id));
+    }
   } finally {
     endInteger(n);
   }

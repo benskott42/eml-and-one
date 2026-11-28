@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Exact mode no longer certifies the square under x − 1 as a real 0. (10^200+i)/(10^200−i)−1 is −2×10^−400 + 2×10^−200 i, not 2×10^−200 i. The same square in the 10^300 and 10^400 forms, including sqrt(10^400+i)/10^200−1, does not fit in 480 digits, so those are unverified instead of a pure imaginary. A factor of ±i or 2i, which swaps the lost square onto the other component, is refused the same way.
+- Exact mode evaluates a huge integer kept beside a non-integer as that sum. (10^400+i)/7 is 1.428571428571×10^399 + 0.142857142857i, and (10^400+i)·2, 2·(10^400+π), 1/(10^400+i) and sqrt(10^400+i) are certified; each of these said could not verify. When such a sum feeds a later gate, exact mode reads it with enough digits to span the gap between its parts, and past 480 digits it still refuses. A circuit rebuilt from its tokens has no record of the sum and stays refused.
+- A part far below the other keeps only the decades its pass resolved. (10^100+i)·2 printed 2×10^100 + 2.000…0078i; it is 2×10^100 + 2i. A raised reading was rounded back to 120 significant digits per part, which kept noise from below that pass's accuracy.
+- Closed constants compile to their shortest known word when it is shorter and adds no dependence on ln 0 = −∞. −2 is K 25 (was 33), 4 K 39 (53), −3 K 35 (43), 1/3 K 37 (45), −1/2 K 29 (49), 2/3 and 3/2 K 39 and K 41 (63), e^2 K 21 (45); 1/2 takes the K 31 word without ln 0 (35). Values are unchanged; golden rows changed only in their press counts and in float readings already flagged as differing from exact. New stored words: ±3/2, ±5/2, e^2, 1/e, −e and their strict forms, from docs/search-k41.md.
+- One program notation. The note and press panel write a program as on the keys, 11E (they showed 1 1 E and 110). Binary appears only on its labelled line, Binary: 0b110 · 0x6, and #N is only the program number. A bare 0/1 string in the program field still loads as presses, and the screen says so: Read 110 as presses 11E. Program number 110 is #110. Copy copies the 11E word.
+- Lean: the 11 new stored words are proved in `formal/lean/Eml/MoreRecords.lean` (5 over `ℂ` without ln 0, 6 over `EmlExt` with ln 0 = −∞), so all 39 records in best-known.json are machine-checked (776 declarations audited, standard axioms only). Check 112 fails if a stored word has no Lean theorem link, and the Lean workflow now runs when best-known.json changes. The Cert.lean note on its cross-check now gives the real coverage (26 programs, not hundreds).
+- Internal: the exact engine's twenty module-level pass variables are one `PassState` object with a named per-walk reset. Output is unchanged (full check suite and both golden modes).
+
 ## 1.0.13 — 2026-11-26
 
 - Added proof-carrying circuit certificates: [`formal/lean/Eml/Cert.lean`](formal/lean/Eml/Cert.lean) proves `certify_sound` once and for all over both `ℂ` and `EmlExt` (zero `ln 0`), mirrored in `lib/eml/leanCert.ts` so `Copy Lean 4` emits a kernel-checked `theorem circuit_eval := certify_sound (by decide)` for certifiable pure circuits.

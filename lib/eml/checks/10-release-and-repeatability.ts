@@ -17,7 +17,7 @@ import { compileSubmission } from "../../../components/submitTurn";
 // Release refusals: a large trig argument below the root, a part cancelled to 0
 // beside a nonzero part after a value below the precision, a finite overflow
 // operand, inf·0, and the tiny sinh/artanh shortcut are refused, not certified.
-const releaseRefused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "(10^400+i)*2", "2*(10^400+pi)", "(10^400+i)/7", "exp(((1+10^-500)-1)*i)", "(exp(1200)+1)-exp(1200)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(10^400-(2-2*i))^-1", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
+const releaseRefused = ["-cos(1e119)", "cos(1e119)+1", "cos(1e125)*cos(1e130)", "tan(1e140)+1", "((1+exp(-299.3))-1)+i/2", "((1+exp(-300))-1)*i+1/2", "((1+10^-500)-1)+i/2", "i*((1+10^-500)-1)+1/2", "exp(((1+10^-500)-1)*i)", "(exp(1200)+1)-exp(1200)", "exp(800)*0", "sinh(1e-7)-1e-7", "artanh(1e-7)-1e-7", "cos(10^119)+1", "cos(2^400)+1", "sin(1e22)+1", "arcsin(1e-300)-1e-300", "tanh(130)", "tanh(200)", "tanh(354)", "sinh(5e-7)-5e-7", "sinh(1e-7*i)-1e-7*i", "(1+(10^400+pi))-2", "(1+(10^400+pi))*2", "((cos(10^-50))+((10^400)+(pi)))-(((e)^0.5)+(((1+10^-200))+((-1+1*i))))", "tanh(10^300)", "tanh(10^20)", "tanh(-10^300)", "tanh(exp(800))", "asin((-1)/(10^-200))", "asinh(1/10^-200)", "acosh(asinh(10^400))", "exp(-10^20)", "(cosh(10^50))^(-2)", "1/cosh(10^50)"];
 function releaseRefusal(ctx: CheckContext, source: string): void {
   const node = compileExpression(source, {});
   const packed = packCircuit(node);
@@ -215,7 +215,7 @@ const checks: CheckModule[] = [
   {
     id: 74,
     run(ctx) {
-      // The 671-press word for ln(1+10^(−130)) was listed as able to show an exact 0
+      // The 601-press word (671 before constant words) for ln(1+10^(−130)) was listed as able to show an exact 0
       // depending on the cache. Built from its presses, alone, after the named
       // expression, and through the worker's wire, it is 10^(−130) every time.
       const named = compileExpression("ln(1+10^-130)", {});
@@ -232,7 +232,7 @@ const checks: CheckModule[] = [
         const packed = packCircuit(nodeFromRpn(words));
         texts.push(read(isolateCircuit(() => unpackCircuit(packed.tokens, packed.root))));
       }
-      if (!words || words.length !== 671 || texts.some((text) => text !== "1×10^−130")) {
+      if (!words || words.length !== 601 || texts.some((text) => text !== "1×10^−130")) {
         ctx.fail("FAIL press word of ln(1+10^-130)", words?.length, texts);
       }
     },
@@ -244,8 +244,8 @@ const checks: CheckModule[] = [
       // other circuits built in between. The table must not depend on that.
       const four = { node: compileExpression("2*2", {}) };
       const tables = [
-        { stack: [four], want: "add=K 89 sub=K 81 mul=K 87 div=K 87 pow=K 95 log=K 99 avg=K 133 hypot=K 233" },
-        { stack: [four, four], want: "add=K 123 sub=K 7 mul=K 121 div=K 121 pow=K 129 log=K 133 avg=K 167 hypot=K 301" },
+        { stack: [four], want: "add=K 63 sub=K 19 mul=K 73 div=K 73 pow=K 81 log=K 85 avg=K 107 hypot=K 167" },
+        { stack: [four, four], want: "add=K 73 sub=K 7 mul=K 93 div=K 93 pow=K 101 log=K 105 avg=K 117 hypot=K 183" },
       ];
       for (const { stack, want } of tables) {
         const whole = keyCosts(stack, "0.5", "2");

@@ -283,6 +283,23 @@ export function builtSumOf(node: Node): { left: Node; right: Node } | undefined 
   return s && s.gen === expressionGen ? s : undefined;
 }
 
+/**
+ * A huge integer kept beside a finite non-integer (lowering's rememberHugeReal).
+ * The node's gates hold only the integer, so exact mode evaluates the sum itself.
+ * The node is a product by a leaf labelled with `other`'s id and the op, so the
+ * same node always means the same operands, and this needs no expression generation.
+ */
+export type BesideSum = { huge: Node; other: Node; op: "add" | "sub" };
+const besideTable = new WeakMap<Node, BesideSum>();
+
+export function noteBesideSum(node: Node, huge: Node, other: Node, op: "add" | "sub"): void {
+  besideTable.set(node, { huge, other, op });
+}
+
+export function besideSumOf(node: Node): BesideSum | undefined {
+  return besideTable.get(node);
+}
+
 export function builtSubOf(node: Node): { left: Node; right: Node } | undefined {
   const s = factsOf(node).builtFrom?.realSub;
   return s && s.gen === expressionGen ? s : undefined;
