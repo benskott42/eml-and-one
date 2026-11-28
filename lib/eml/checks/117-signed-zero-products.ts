@@ -109,6 +109,41 @@ const checkModule: CheckModule = {
     if (!refused.floatUnverified || !refused.exactUnverified) {
       ctx.fail("FAIL uncertified sign", refused.float, refused.floatUnverified, refused.exact, refused.exactUnverified);
     }
+
+    // A factor whose sign is not certified stays unverified even when it is
+    // not proven finite. A signed zero times a non-real factor stays unverified
+    // on both operand orders. App and the worker wire must agree.
+    const uncertified = [
+      "(-pi)^3*0",
+      "0*(-(exp(0.5)^2))",
+      "(exp(0.5))^2*((-0.5)*0)",
+      "(0*cos(2))*i",
+      "i*(0*cos(2))",
+      "((-2/3)*0)*(-1+i)",
+      "(-1+i)*((-2/3)*0)",
+    ];
+    for (const source of uncertified) {
+      const node = compileExpression(source, {});
+      const app = show(node);
+      const packed = packCircuit(node);
+      const unpacked = reportUnpacked(packed.tokens, packed.root);
+      const wireFloat = evaluateReport(unpacked.node);
+      const wireExact = unpacked.report;
+      if (!app.floatUnverified || !app.exactUnverified || wireFloat.unverified !== true || wireExact.unverified !== true) {
+        ctx.fail(
+          "FAIL uncertified product",
+          source,
+          "app",
+          app.float,
+          app.floatUnverified,
+          app.exact,
+          app.exactUnverified,
+          "wire",
+          wireFloat.unverified,
+          wireExact.unverified ? "unverified" : formatExact(wireExact.value),
+        );
+      }
+    }
   },
 };
 

@@ -952,10 +952,10 @@ function factorQuarter(node: Node): number | null {
   return null;
 }
 
-/**
- * A finite factor whose angle is not a quarter turn. 1+i is one.
- * An unknown range is not this: the product word still has to run.
- */
+function isUnitImag(node: Node): boolean {
+  return factsOf(node).imaginaryUnit !== undefined;
+}
+
 function factorIsReal(node: Node): boolean {
   const v = node.type === "input" ? node.value : knownValue(node);
   if (v && imagZero(v) && Number.isFinite(v.re)) return true;
@@ -963,6 +963,10 @@ function factorIsReal(node: Node): boolean {
   return !!range.re && !!range.im && range.im.lo === 0 && range.im.hi === 0 && Number.isFinite(range.re.lo) && Number.isFinite(range.re.hi);
 }
 
+/**
+ * A finite factor whose angle is not a quarter turn. 1+i is one.
+ * An unknown range is not this: the product word still has to run.
+ */
 function offAxis(node: Node): boolean {
   if (factorQuarter(node) !== null) return false;
   const v = node.type === "input" ? node.value : knownValue(node);
@@ -998,14 +1002,16 @@ function tMulBuild(a: Node, b: Node): Node {
     const other = za !== null ? b : a;
     if (isUnverified(other) || isExactUnsure(other) || dependsOnUnverified(other)) return markUnverified(rawMul(a, b));
     const sign = zeroProductSign(other);
-    // +0 times any certified finite is +0. −0 flips a certified real only:
-    // −0·i is −0i, not the real −0.
-    if (sign === 1 && zSign === 1) return tZero();
-    if (sign !== null && factorIsReal(other)) return zSign === sign ? tZero() : negativeZero();
-    // A finite enclosure that still contains a negative real must not become
-    // the certified +0 the product word would print. A non-real factor times
-    // −0 is not that case: the product word still has to run.
-    if (sign === null && provenFinite(other)) return markUnverified(rawMul(a, b));
+    // +0 times a certified positive real, a cap-erased tiny, or ±i. cos(0)
+    // multiplies 0 by i and needs that +0. Any other non-real factor is not
+    // this case: (−0)·i and 0·(cos(2)·i) must not become different zeros.
+    if (sign === 1 && zSign === 1 && (factorIsReal(other) || isLostTiny(other) || isUnitImag(other))) return tZero();
+    if (!factorIsReal(other)) return markUnverified(rawMul(a, b));
+    // sign(0·a) = sign(a) for a certified real.
+    if (sign !== null) return zSign === sign ? tZero() : negativeZero();
+    // realFactorSign is null. The enclosure does not decide the sign, whether
+    // or not the factor is proven finite. The product word would print a zero.
+    return markUnverified(rawMul(a, b));
   }
   // Carry the angle. Two infinities add their quarter turns. A factor off an
   // axis has no quarter turn, and the product word would still certify a real ∞.
@@ -1526,6 +1532,9 @@ export function tSin(t: Node): Node {
 }
 
 export function tCos(t: Node): Node {
+  // cos is even. A certified −0 times i is unverified, so cos of that zero is
+  // cos of +0, which is the same value, before that product is built.
+  if (certifiedZeroSign(t) === -1) return tCos(tZero());
   // cos x = sin(x + π/2).
   const twelfths = piTwelfths(t);
   const special = sinAtPiMultiple(twelfths === null ? null : (twelfths + 6) % 24);
