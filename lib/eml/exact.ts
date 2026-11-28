@@ -847,6 +847,24 @@ function zFinite(v: Z): boolean {
 }
 
 /**
+ * A pole re-read certifies a part when it is exact 0, or the same size as its
+ * sibling. A lost square dozens of decades below the quotient is not a part
+ * this reading established.
+ */
+function poleRereadHolds(r: ExactReport): boolean {
+  const { re, im } = r.value;
+  if (!re.isFinite() || !im.isFinite()) return false;
+  if (re.isZero() || im.isZero()) return true;
+  if (Math.abs(re.e - im.e) <= 8) return true;
+  const digits = r.digits ?? D.precision;
+  if ((r.absorb2 ?? 0) > digits - 12) return false;
+  const big = Math.max(re.e, im.e);
+  const small = Math.min(re.e, im.e);
+  // The square of the reciprocal sits near −2·big. That part was not established.
+  return small > -2 * big + 4;
+}
+
+/**
  * Evaluate a pure or user-bound circuit with wide exponents.
  * `maxNodes` and `deadline` (a performance.now() instant) stop a huge circuit
  * from running without a result. Exact mode uses the same cut as float64:
@@ -1678,6 +1696,19 @@ function exactReportCore(
   }
   // Pass 3 is a raised pass whose caller judges a tiny part itself, so it is not scrubbed.
   if (pass !== 0) return pass === 3 ? report : present(report);
+  // A pole re-read is accepted only when both parts are certified: exact 0, or the
+  // same size as its sibling. A later hop may clear a lost square (tan(acos(10^(−120)))).
+  // A square that is still there (tan(−π/2 − 10^(−126)) is 10^126, not 3×10^(−253) i)
+  // is refused. The whole value goes out through release.
+  let fromPoleReread = false;
+  const release = (r: ExactReport): ExactReport => {
+    if (r.unverified || !zFinite(r.value) || poleRereadHolds(r)) return r;
+    // The re-read, and a later hop that starts from a finite near-pole value
+    // (tan(−π/2 − 10^(−64)) is already finite at 120 digits), must not certify
+    // a stray part. A true zero part stays exact 0, or the value is refused.
+    if (fromPoleReread || r.singular === SINGULAR_POLE) return certifyZero(r);
+    return r;
+  };
   // cosSin snaps an angle within 10^(−(P−8)) of a quarter turn onto that axis, so a genuine
   // offset smaller than the tolerance becomes a pole: tan(acos(10^(−120))) was NaN, and the
   // value is 10^120. Read again where the tracked tiny fits. A true pole has no such tiny.
@@ -1687,7 +1718,10 @@ function exactReportCore(
     if (need > digits && need <= PRECISION_CAP) {
       try {
         const again = atPrecision(need, root, env, budget);
-        if (zFinite(again.value) && !again.unverified) report = again;
+        if (zFinite(again.value) && !again.unverified) {
+          fromPoleReread = true;
+          report = again;
+        }
       } catch (err) {
         rethrowBudget(err);
       }
@@ -1731,7 +1765,13 @@ function exactReportCore(
     // The square does not fit under the cap. A component still sitting beside the
     // quotient is the lost term and is not certified; a component that already
     // cleared is the real value (tan(acos(10^(−120))) at the second reading).
-    if (gap + 48 > PRECISION_CAP) return r.value.re.isZero() === r.value.im.isZero() ? gap : 0;
+    // Two parts of one magnitude are the value, not a square beside a quotient:
+    // tanh(acosh(−10^(−130)) + 10^(−130)) is 5×10^129 − 5×10^129 i.
+    if (gap + 48 > PRECISION_CAP) {
+      if (r.value.re.isZero() !== r.value.im.isZero()) return 0;
+      if (!r.value.re.isZero() && Math.abs(r.value.re.e - r.value.im.e) <= 8) return 0;
+      return gap;
+    }
     return gap;
   };
   const absorbedGap = (r: ExactReport): number => Math.max(firstOrderGap(r), secondOrderGap(r));
@@ -1832,7 +1872,7 @@ function exactReportCore(
         if (raised.unverified) return raised;
         revealed = raised;
       }
-      return confirmDust(present(revealed), root, env, budget);
+      return release(confirmDust(present(revealed), root, env, budget));
     }
     if (lostGapOf(report) > D.precision + 4) {
       const abNeed = lostGapOf(report) + 48;
@@ -1843,9 +1883,9 @@ function exactReportCore(
       const nonzeroResidue = residueParts(again).some((name) => !again.value[name].isZero());
       const revealed = nonzeroResidue ? settleResidue(again, root, env, budget) : again;
       if (revealed.unverified) return revealed;
-      return confirmDust(present(revealed), root, env, budget);
+      return release(confirmDust(present(revealed), root, env, budget));
     }
-    return present(report);
+    return release(present(report));
   }
   let initial = report;
   if (absorbedMatters(initial)) {
@@ -1895,7 +1935,7 @@ function exactReportCore(
         return certifyZero(first);
       }
       if (second.unverified || hidden.some((name) => residueMoved(first.value[name], second.value[name]))) return certifyZero(first);
-      return first;
+      return release(first);
     }
   }
   // A lifted tiny sum keeps (precision − gap) digits, and the work tally does not see it:
@@ -1948,7 +1988,7 @@ function exactReportCore(
     }
   }
   const besideTiny = recoverTinyPart(settled, root, env, budget);
-  if (besideTiny) return besideTiny;
+  if (besideTiny) return release(besideTiny);
   // ln(−2 − 10^(−p) i) collapses onto the cut once p passes the working
   // precision, and the composed log then certifies +π. The point is still
   // below the axis. Raise precision until the known power is visible, or
@@ -1962,7 +2002,7 @@ function exactReportCore(
       if (settled.unverified) return settled;
     }
   }
-  return confirmDust(present(settled), root, env, budget);
+  return release(confirmDust(present(settled), root, env, budget));
 }
 
 /**
