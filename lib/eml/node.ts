@@ -147,6 +147,7 @@ export const SINGULAR_TRIG = "argument too large to reduce";
 
 type PrecisionNote =
   | { kind: "asinh"; arg: Node }
+  | { kind: "arcosh"; arg: Node }
   | { kind: "add"; left: Node; right: Node }
   | { kind: "pole"; arg: Node }
   | { kind: "trig"; arg: Node };
@@ -215,7 +216,7 @@ function structHash(root: Node): HashPair | null {
 }
 
 type StoredPrecisionNote =
-  | { kind: "asinh" | "pole" | "trig"; argKey: string | null; argFallback?: Node }
+  | { kind: "asinh" | "arcosh" | "pole" | "trig"; argKey: string | null; argFallback?: Node }
   | { kind: "add"; leftKey: string | null; leftFallback?: Node; rightKey: string | null; rightFallback?: Node };
 
 const PRECISION_STRUCT_LIMIT = 512;
@@ -272,7 +273,7 @@ export function importPrecisionRegistry(raw: string): number {
         precisionByStruct.set(key, { kind: "add", leftKey: val.leftKey, rightKey: val.rightKey });
         loaded += 1;
       } else if (
-        (val.kind === "asinh" || val.kind === "pole" || val.kind === "trig") &&
+        (val.kind === "asinh" || val.kind === "arcosh" || val.kind === "pole" || val.kind === "trig") &&
         typeof val.argKey === "string"
       ) {
         if (precisionByStruct.size >= PRECISION_STRUCT_LIMIT) break;
@@ -374,6 +375,13 @@ export type EvalReport = {
 
 function zeroC(v: C): boolean {
   return (v.re === 0 || Object.is(v.re, -0)) && (v.im === 0 || Object.is(v.im, -0));
+}
+
+/** A finite real on the negative axis, including −0 and −1. */
+function negativeReal(z: C): boolean {
+  if (!Number.isFinite(z.re) || !Number.isFinite(z.im)) return false;
+  if (!(z.im === 0 || Object.is(z.im, -0))) return false;
+  return z.re < 0 || Object.is(z.re, -0);
 }
 
 function finiteC(v: C): boolean {
@@ -502,7 +510,16 @@ function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget
     const angle = trigArg(n);
     const angleValue = angle ? memo.get(angle) : undefined;
     const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));
-    const value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
+    let value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
+    // arcosh of a negative real is the upper bank (Im ≥ 0), matching exact.
+    // The float product sqrt(z−1)·sqrt(z+1) can sit a few ulps below the cut.
+    const arcosh = precisionNotes.get(n);
+    if (arcosh?.kind === "arcosh") {
+      const arg = memo.get(arcosh.arg);
+      if (arg && negativeReal(arg) && (value.im < 0 || Object.is(value.im, -0))) {
+        value = { re: value.re, im: -value.im };
+      }
+    }
     const nan = Number.isNaN(value.re) || Number.isNaN(value.im);
     // Logging 0 at this gate is a real pole. An infinity born from two finite
     // inputs that are not that pole is float overflow, even if some other
