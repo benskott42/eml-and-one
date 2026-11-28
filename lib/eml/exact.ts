@@ -1708,6 +1708,10 @@ function proveRefusedFinite(report: ExactReport, root: Node, env: Record<string,
             unverified: false,
           };
         }
+        // exp(3.5×10^(−479)) − 1 − 3.5×10^(−479) is x²/2, about 10^(−957).
+        // That square is past the cap, and the enclosure reports an exact 0
+        // because it never carries the term. A refused 0 stays refused.
+        if (proved.value.re.isZero() && proved.value.im.isZero()) return null;
         // A pass can keep only the leading digits (ln(exp(10^(−400)) − 1) is
         // −921.03404 at a few places) while the enclosure pins the rest.
         // Fewer than 12 pinned digits is not a certificate yet: try a tighter ball.
