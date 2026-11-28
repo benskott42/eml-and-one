@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { installFastMul } from "./fast-mul";
 import type { C } from "./complex";
 import {
   EmlError,
@@ -17,6 +18,8 @@ import { besideSumOf, decadeOf, dependsOnUnverified, inScaledShell, isExactUnsur
 import { knownValue } from "./lowering";
 import { evaluate as floatEvaluate, precisionNoteOf } from "./node";
 import { ballConfirmsValue } from "./exact-ball";
+
+installFastMul();
 
 /**
  * Wide-exponent complex values for EML circuits.
