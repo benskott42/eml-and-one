@@ -29,12 +29,13 @@ usage: python decide.py [max_K]       the claims in docs/minimality.md (default 
        python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
                                       K 27 without ln 0
        python decide.py --open --deep the same, with deep.py for the programs left open
-       python decide.py --word WORD --upto K [--strict] [--witness WORD]
+       python decide.py --word WORD --upto K [--strict] [--expect NAME] [--witness WORD]
                                       WORD is the target. Exclude every program with
                                       K <= upto. --strict allows a hit that takes ln 0.
-                                      The witness has to match a named constant in the
-                                      exact layer. A missing phase of exp(e^W) is used
-                                      only when arb's cos of it is strictly signed.
+                                      --expect NAME (ln2, -e, 1/e, e+1, e^2, 2, ipi, -2)
+                                      requires the witness to be that constant. A missing
+                                      phase of exp(e^W) is used only when arb's cos of
+                                      it is strictly signed.
 """
 import sys
 import time
@@ -792,10 +793,31 @@ def canonical_form(name):
         return _form(e1)
     if name == "e^2":
         return _form(lambda: towers.mk_exp({"1": 2}))
+    if name == "2":
+        return {"1": 2}
+    if name == "+iπ":
+        return {"ipi": 1}
+    if name == "-2":
+        return {"1": -2}
     raise KeyError(name)
 
 
-NAMED = ("ln 2", "-e", "1/e", "e + 1", "e^2")
+NAMED = ("ln 2", "-e", "1/e", "e + 1", "e^2", "2", "+iπ", "-2")
+
+# Tokens for --expect. Each one is a constant built above, not a word.
+EXPECT = {
+    "ln2": "ln 2",
+    "-e": "-e",
+    "1/e": "1/e",
+    "e+1": "e + 1",
+    "e^2": "e^2",
+    "2": "2",
+    "ipi": "+iπ",
+    "-2": "-2",
+}
+
+# Cumulative program counts. A scan at one of these lengths has to match.
+PROGRAM_COUNTS = {15: 626, 17: 2056, 19: 6918, 21: 23714, 23: 82500}
 
 
 def constant_name(word):
@@ -960,6 +982,10 @@ def word_target_test():
         "111111E1EEEE11EE1EE": "e + 1",
         "111111EEE1EE11E1EE1EE": "e + 1",
         "111111EEE1EE11EE1EE1E": "e^2",
+        "111111EEE1EE11EE1EE": "2",
+        "111111E1EEEE11E1E1EEE": "+iπ",
+        "111111E1E1EEE1EE11E1EEE": "+iπ",
+        "111111E1EEEE11E1E1EEE11EE": "-2",
     }
     for word, name in named.items():
         got = constant_name(word)
@@ -967,6 +993,28 @@ def word_target_test():
             bad.append(f"{word} is {got}, not {name}")
     if constant_name("1") is not None:
         bad.append("the word 1 was accepted as a named constant")
+    import io
+    import contextlib
+    held = io.StringIO()
+    with contextlib.redirect_stdout(held):
+        pinned = prove_word("swap", "11111E1EEEE11E1EE", 15, expect="ln 2")
+    if pinned or "witness is -e, not ln 2" not in held.getvalue():
+        bad.append("a -e word passed --expect ln 2")
+    try:
+        require_program_count(15, [None] * 625, [[None] * 625])
+    except AssertionError:
+        pass
+    else:
+        bad.append("a short K <= 15 count was accepted")
+    try:
+        require_program_count(15, [None] * 626, [[None] * 400, [None] * 226])
+    except AssertionError as why:
+        bad.append(f"626 programs in two batches raised: {why}")
+    try:
+        require_program_count(15, [None] * 626, [[None] * 400, [None] * 200])
+        bad.append("batches that do not sum to the total were accepted")
+    except AssertionError:
+        pass
     import deep
     iv.prec = 128
     got = deep.exp_iv(iv.mpf("-2.5"), 128)
@@ -1052,7 +1100,9 @@ def _word_batch(payload):
     signal.signal(signal.SIGALRM, _on_alarm)
     bad = []
     before = STATS["towers"]
+    seen = 0
     for w in words:
+        seen += 1
         signal.alarm(1200)
         try:
             verdict, reason = decide_word(w, target_word)
@@ -1062,13 +1112,28 @@ def _word_batch(payload):
             bad.append((w, None, "timeout"))
         finally:
             signal.alarm(0)
-    return bad, STATS["towers"] - before
+    return bad, STATS["towers"] - before, seen
 
 
-def prove_word(label, target_word, upto, strict=False, witness=None):
+def require_program_count(upto, words, batches):
+    """Fail if a known length has the wrong number of programs, or a batch was dropped."""
+    n = len(words)
+    if upto in PROGRAM_COUNTS and n != PROGRAM_COUNTS[upto]:
+        raise AssertionError(
+            f"K <= {upto}: counted {n} programs, expected {PROGRAM_COUNTS[upto]}"
+        )
+    got = sum(len(batch) for batch in batches)
+    if got != n:
+        raise AssertionError(
+            f"K <= {upto}: {len(batches)} batches sum to {got} programs, not {n}"
+        )
+
+
+def prove_word(label, target_word, upto, strict=False, witness=None, expect=None):
     """Exclude every program with K <= upto. With strict, a program that takes ln 0 may hit.
 
-    Returns True when nothing undecided and no counterexample remains.
+    expect is the named constant the witness has to be. Returns True when nothing
+    undecided and no counterexample remains.
     """
     import os
     import concurrent.futures
@@ -1077,6 +1142,9 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
     name = constant_name(wit)
     if name is None:
         print(f"{label}: witness is not a named constant", flush=True)
+        return False
+    if expect is not None and name != expect:
+        print(f"{label}: witness is {name}, not {expect}", flush=True)
         return False
     if witness is not None and constant_name(target_word) != name:
         print(f"{label}: target word is not {name}", flush=True)
@@ -1088,10 +1156,12 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
     words = []
     for n in range(1, (upto + 1) // 2 + 1):
         words.extend(programs(n))
-    print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
     batches = [words[i:i + 400] for i in range(0, len(words), 400)]
+    require_program_count(upto, words, batches)
+    print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
     bad = []
     towers_n = 0
+    scanned = 0
     import tempfile
     import shutil
     import deep
@@ -1110,20 +1180,26 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
                 futures = [pool.submit(_word_batch, payload) for payload in payloads]
                 done = 0
                 for fut in concurrent.futures.as_completed(futures):
-                    found, n = fut.result()
+                    found, n, seen = fut.result()
                     bad.extend(found)
                     towers_n += n
+                    scanned += seen
                     done += 1
                     if done % 10 == 0 or done == len(futures):
                         print(f"   {done}/{len(futures)} batches, {len(bad)} open", flush=True)
         else:
             for payload in payloads:
-                found, _n = _word_batch(payload)
+                found, _n, seen = _word_batch(payload)
                 bad.extend(found)
+                scanned += seen
     finally:
         towers.PHASE = saved_phase
         deep.SHARE = saved_share
         shutil.rmtree(share, ignore_errors=True)
+    if scanned != len(words):
+        raise AssertionError(
+            f"{label}: workers scanned {scanned} programs, not {len(words)}"
+        )
     if len(words) >= 800:
         STATS["towers"] += towers_n
     equal = [w for w, verdict, _ in bad if verdict is False]
@@ -1145,8 +1221,15 @@ def main():
         target = args[args.index("--word") + 1]
         upto = int(args[args.index("--upto") + 1]) if "--upto" in args else len(target) - 2
         witness = args[args.index("--witness") + 1] if "--witness" in args else None
+        expect = None
+        if "--expect" in args:
+            token = args[args.index("--expect") + 1]
+            expect = EXPECT.get(token)
+            if expect is None:
+                print(f"unknown --expect {token}", flush=True)
+                sys.exit(1)
         t0 = time.time()
-        ok = prove_word(target, target, upto, strict="--strict" in args, witness=witness)
+        ok = prove_word(target, target, upto, strict="--strict" in args, witness=witness, expect=expect)
         print(f"decided by towers.py: {STATS['towers']}  ({time.time() - t0:.0f} s)", flush=True)
         sys.exit(0 if ok else 1)
     if "--open" in args:
