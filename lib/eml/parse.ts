@@ -27,6 +27,7 @@ import {
 import {
   builtHugeAngle,
   tAvg,
+  constantWord,
   tDiv,
   tE,
   tHypot,
@@ -409,7 +410,15 @@ function builtOn(root: Node, part: Node): boolean {
   return false;
 }
 
+/**
+ * Each subexpression the user wrote takes the shortest stored word for an exactly
+ * recorded value (library.ts constantWord): pi*i is the K 21 word, 2*pi*i K 31.
+ */
 function foldAst(ast: Ast): Node {
+  return constantWord(foldAstBuild(ast));
+}
+
+function foldAstBuild(ast: Ast): Node {
   if (ast.k === "n") return ast.node;
   // Flattening would split (a+b)+(-(a+b)) into a, b, and -(a+b), so the identical nodes never meet.
   if (ast.k === "+" && holdsNegatedGroup(ast)) {

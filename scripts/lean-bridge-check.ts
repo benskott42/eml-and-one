@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { LEAN_VERIFIED_THEOREMS, nodeToLean4Snippet } from "../lib/eml/export";
-import { certifyRpnForLean, rpnToLeanBits } from "../lib/eml/leanCert";
+import { APP_SUB_WORD, APP_WORDS, LEAN_VERIFIED_THEOREMS, nodeToLean4Snippet, variableRpnFromNode } from "../lib/eml/export";
+import { certifyRpnForLean, certifyRpnForLeanExt, rpnToLeanBits } from "../lib/eml/leanCert";
 import { E, ONE, V, nodeFromRpn } from "../lib/eml/node";
+import { compileExpression } from "../lib/eml/parse";
 import { isProgram } from "../lib/eml/programIndex";
+import { SHORT_PROGRAMS } from "../lib/eml/programs";
 
 /**
  * End-to-end bridge verifier between TypeScript (`lib/eml/`) and Lean 4 (`formal/lean/`):
@@ -13,10 +15,14 @@ import { isProgram } from "../lib/eml/programIndex";
  *    - `formal/lean/Eml/<file>` exists
  *    - `@<theorem>` exists in `Eml` AND its exact `List Bool` argument equals `rpn`
  *    - `model` ("C" vs "EmlExt") matches the theorem's actual evaluator (`eml` vs `extEml`)
+ *    - its stored `lean` value term is exactly the value the theorem proves
  * 2. Compiles sample outputs of `nodeToLean4Snippet` (certified theorem, record, and
  *    symbolic variable circuit) directly with Lean 4.
- * 3. Cross-checks `certifyRpnForLean` against `Eml.Cert.certify` on every valid
- *    EML program up to K = 9 (23 programs) plus sample records.
+ * 4. Checks that the compiler's `x − y` is `APP_SUB_WORD` and that this is token for
+ *    token `Eml.AppSub.appSubToks`, the word `appSub_correct` proves is `a − b`.
+ * 3. Cross-checks `certifyRpnForLean` against `Eml.Cert.certify`, and
+ *    `certifyRpnForLeanExt` against `Eml.Cert.certifyExt` (EmlExt, `ln 0 = −∞`), on
+ *    every valid EML program up to K = 13 (197 programs) plus every closed stored word.
  */
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -65,31 +71,57 @@ for (const [rpn, ref] of Object.entries(LEAN_VERIFIED_THEOREMS)) {
     ref.model === "C"
       ? `evalRpn (1 : ℂ) eml ${bits} []`
       : `evalRpn (EmlExt.finite 1) extEml ${bits} []`;
-  lines.push(
-    `example : ∃ v, ${lhs} = some [v] := ⟨_, ${ref.theorem}⟩`,
-  );
+  // The stored value term is exactly what the theorem proves, not just "some value".
+  lines.push(`example : ${lhs} = some [${ref.lean}] := ${ref.theorem}`);
   idx += 1;
 }
 
 lines.push("");
 
-// 2. Cross-check certifyRpnForLean against Eml.Cert.certify on all valid programs up to K = 9
+// 2. Cross-check certifyRpnForLean against Eml.Cert.certify on every valid program up to
+// K = 13 (197 programs) and on every closed stored word, certified or not.
 const samplePrograms = [
-  ...enumerateValidPrograms(4), // K = 1, 3, 5, 7, 9 (23 programs)
-  "111E1EE11EE",
-  "11111EEE1EE11E1EE",
-  "111111EEE1EE11EE1EE",
+  ...new Set([
+    ...enumerateValidPrograms(6), // K = 1 … 13
+    ...Object.values(SHORT_PROGRAMS).filter((word) => !/[xy]/.test(word)),
+  ]),
 ];
 
 let certMatches = 0;
 for (const rpn of samplePrograms) {
   const bits = rpnToLeanBits(rpn);
-  const cert = certifyRpnForLean(rpn);
+  const cert = certifyRpnForLean(rpn, 100000);
   const rhs = cert ? `some (${cert.leanSym})` : "none";
   lines.push(`example : certify ${bits} = ${rhs} := by decide`);
+  const ext = certifyRpnForLeanExt(rpn, 100000);
+  const extRhs = ext ? `some (${ext.leanXSym})` : "none";
+  lines.push(`example : certifyExt ${bits} = ${extRhs} := by decide`);
   certMatches += 1;
 }
 
+lines.push("");
+
+// 4. The compiler's x − y circuit is the word Eml.AppSub proves correct.
+const compiledSub = variableRpnFromNode(compileExpression("x-y", { x: V("x"), y: V("y") }));
+if (compiledSub !== APP_SUB_WORD) {
+  throw new Error(`The compiler's x − y circuit (K ${compiledSub?.length ?? "?"}) is not APP_SUB_WORD.`);
+}
+const tokenName: Record<string, string> = { "1": ".one", x: ".x", y: ".y", E: ".gate" };
+const subTokens = APP_SUB_WORD.split("").map((ch) => tokenName[ch]);
+lines.push("set_option maxRecDepth 100000 in");
+lines.push(`example : Eml.AppSub.appSubToks = [${subTokens.join(", ")}] := rfl`);
+lines.push("example (a b : ℂ) :");
+lines.push("    Eml.AppSub.evalTok (.finite 1) (.finite a) (.finite b) Eml.DirectedInf.dirEml");
+lines.push("      Eml.AppSub.appSubToks [] = some [.finite (a - b)] := Eml.AppSub.appSub_correct a b");
+// The other operators (Eml.AppOps): the compiler's word for each is that module's token list.
+for (const [name, { source, word }] of Object.entries(APP_WORDS)) {
+  const compiled = variableRpnFromNode(compileExpression(source, { x: V("x"), y: V("y") }), 100000);
+  if (compiled !== word) throw new Error(`The compiler's ${source} circuit (K ${compiled?.length ?? "?"}) is not APP_WORDS.${name}.`);
+  if (word.length > 200) lines.push("set_option maxRecDepth 100000 in");
+  lines.push(`example : Eml.AppOps.${name}Toks = [${word.split("").map((ch) => tokenName[ch]).join(", ")}] := rfl`);
+}
+lines.push("#check @Eml.AppOps.add_correct");
+lines.push("#check @Eml.AppOps.mul_correct");
 lines.push("");
 lines.push("end UiCrossCheck");
 lines.push("");
@@ -101,6 +133,8 @@ const snippetCases: Array<{ name: string; node: ReturnType<typeof nodeFromRpn> }
   { name: "SnippetTwo", node: nodeFromRpn("111111EEE1EE11EE1EE".split("")) },
   { name: "SnippetPi", node: nodeFromRpn("1111111111E1EEEE11E1E1EEEE1EEE1EE111111111EEE1EE11EE1EEEE1EE1111111E1EEEE11E1E1EEEE1EE1E1EE1E".split("")) },
   { name: "SnippetVar", node: E(V("x"), ONE) },
+  // exp(ln 0) = exp(−∞) = 0 (K 13): no theorem link, certified by certifyExt.
+  { name: "SnippetExtZero", node: nodeFromRpn("11111E1EEEE1E".split("")) },
 ];
 
 for (const sc of snippetCases) {
@@ -142,5 +176,5 @@ execFileSync("lake", ["env", "lean", outPath], {
 });
 
 console.log(
-  `Lean bridge check passed: ${idx} UI theorem links, ${certMatches} Cert.certify cross-checks, ${snippetCases.length} compiled snippets.`,
+  `Lean bridge check passed: ${idx} UI theorem links, ${certMatches} Cert.certify + certifyExt cross-checks, ${snippetCases.length} compiled snippets, x − y circuit (K ${APP_SUB_WORD.length}) and ${Object.keys(APP_WORDS).length} more operators linked to Eml.AppSub / Eml.AppOps.`,
 );

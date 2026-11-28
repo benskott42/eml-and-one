@@ -454,6 +454,44 @@ theorem dirEmlMul_zero_zero : dirEmlMul (.finite 0) (.finite 0) = .finite 0 := b
 noncomputable def dirEmlDiv (a b : EmlDir) : EmlDir :=
   dirEmlExp (dirEml (dirEmlLn (dirEml (.finite 1) b)) (dirEmlExp (dirEml (.finite 1) a)))
 
+/-- For nonzero `a, b : ℂ`, `dirEmlDiv (.finite a) (.finite b) = .finite (a / b)`, with no
+    condition on `b`'s half-plane (that matters only for the sign of `0 / b`). -/
+theorem dirEmlDiv_eq_of_ne_zero {a b : ℂ} (ha : a ≠ 0) (hb : b ≠ 0) :
+    dirEmlDiv (.finite a) (.finite b) = .finite (a / b) := by
+  unfold dirEmlDiv
+  rw [dirEml_finite hb]
+  rw [dirEml_finite ha, dirEmlExp_eq, dirEmlExp_eq]
+  simp only [dirExp]
+  by_cases hbe : eml 1 b = 0
+  · rw [hbe, dirEmlLn_zero]
+    have h1 : dirEml (.negInf 0) (.finite (Complex.exp (eml 1 a))) =
+        .finite (-lowerLog (Complex.exp (eml 1 a))) := by
+      simp [dirEml, dirExp_negInf_zero, dirLowerLog, dirSub, Complex.exp_ne_zero]
+    rw [h1]
+    dsimp only
+    congr 1
+    have hb_eq : b = Complex.exp (Complex.exp 1) := by
+      have hsub : Complex.exp 1 = lowerLog b := sub_eq_zero.mp hbe
+      rw [← exp_lowerLog hb, ← hsub]
+    rw [lowerLog_exp_eq_sub_unwind]
+    set u : ℂ := eml 1 a
+    have hrew : -(u - 2 * Real.pi * Complex.I * (lowerUnwind u : ℂ)) =
+        (lowerLog a - Complex.exp 1) + (lowerUnwind u : ℂ) * (2 * Real.pi * Complex.I) := by
+      simp only [u, eml]; ring
+    rw [hrew, Complex.exp_add, Complex.exp_int_mul_two_pi_mul_I, mul_one, Complex.exp_sub,
+      exp_lowerLog ha, hb_eq]
+  · rw [dirEmlLn_finite_ne_zero hbe, dirEml_finite (Complex.exp_ne_zero _)]
+    dsimp only
+    congr 1
+    unfold eml at hbe ⊢
+    rw [Complex.exp_log hbe, lowerLog_exp_eq_sub_unwind]
+    set u : ℂ := Complex.exp 1 - lowerLog a
+    have hrew : Complex.exp 1 - lowerLog b - (u - 2 * Real.pi * Complex.I * (lowerUnwind u : ℂ)) =
+        (lowerLog a - lowerLog b) + (lowerUnwind u : ℂ) * (2 * Real.pi * Complex.I) := by
+      simp only [u]; ring
+    rw [hrew, Complex.exp_add, Complex.exp_int_mul_two_pi_mul_I, mul_one, Complex.exp_sub,
+      exp_lowerLog ha, exp_lowerLog hb]
+
 /-- Helper: in `EmlDir`, dividing `0` by `b` yields `.finite 0` (`+0`) whenever `0 ≤ cos (Im (eml 1 b))`
     (in particular whenever `Re b ≥ 0`, such as `b = 1 + √(w)` or `b.re = 0`), and `.negZero` (`-0`)
     when `cos (Im (eml 1 b)) < 0`. -/
@@ -461,10 +499,10 @@ theorem dirEmlDiv_eq_of_cos_nonneg (a : ℂ) {b : ℂ} (hb : b ≠ 0)
     (hcos : 0 ≤ Real.cos (eml 1 b).im) :
     dirEmlDiv (.finite a) (.finite b) = .finite (a / b) := by
   have he1_im : (Complex.exp (1 : ℂ)).im = 0 := by rw [Complex.exp_im]; simp
-  unfold dirEmlDiv
-  rw [dirEml_finite hb]
   by_cases ha : a = 0
   · subst ha
+    unfold dirEmlDiv
+    rw [dirEml_finite hb]
     have h1a : dirEmlExp (dirEml (.finite 1) (.finite 0)) = .dirInf 0 := by
       simp [dirEmlExp_eq, dirEml, dirExp, dirLowerLog, dirSub, he1_im]
     rw [h1a]
@@ -475,37 +513,7 @@ theorem dirEmlDiv_eq_of_cos_nonneg (a : ℂ) {b : ℂ} (hb : b ≠ 0)
       have hne_neg : ¬ (Real.cos (Complex.exp (Complex.log (eml 1 b))).im < 0) := by
         rw [Complex.exp_log hbe]; linarith
       simp [dirEmlExp_eq, dirEml, dirExp, dirLowerLog, dirSub, hne_neg, one_not_lt_zero]
-  · rw [dirEml_finite ha, dirEmlExp_eq, dirEmlExp_eq]
-    simp only [dirExp]
-    by_cases hbe : eml 1 b = 0
-    · rw [hbe, dirEmlLn_zero]
-      have h1 : dirEml (.negInf 0) (.finite (Complex.exp (eml 1 a))) =
-          .finite (-lowerLog (Complex.exp (eml 1 a))) := by
-        simp [dirEml, dirExp_negInf_zero, dirLowerLog, dirSub, Complex.exp_ne_zero]
-      rw [h1]
-      dsimp only
-      congr 1
-      have hb_eq : b = Complex.exp (Complex.exp 1) := by
-        have hsub : Complex.exp 1 = lowerLog b := sub_eq_zero.mp hbe
-        rw [← exp_lowerLog hb, ← hsub]
-      rw [lowerLog_exp_eq_sub_unwind]
-      set u : ℂ := eml 1 a
-      have hrew : -(u - 2 * Real.pi * Complex.I * (lowerUnwind u : ℂ)) =
-          (lowerLog a - Complex.exp 1) + (lowerUnwind u : ℂ) * (2 * Real.pi * Complex.I) := by
-        simp only [u, eml]; ring
-      rw [hrew, Complex.exp_add, Complex.exp_int_mul_two_pi_mul_I, mul_one, Complex.exp_sub,
-        exp_lowerLog ha, hb_eq]
-    · rw [dirEmlLn_finite_ne_zero hbe, dirEml_finite (Complex.exp_ne_zero _)]
-      dsimp only
-      congr 1
-      unfold eml at hbe ⊢
-      rw [Complex.exp_log hbe, lowerLog_exp_eq_sub_unwind]
-      set u : ℂ := Complex.exp 1 - lowerLog a
-      have hrew : Complex.exp 1 - lowerLog b - (u - 2 * Real.pi * Complex.I * (lowerUnwind u : ℂ)) =
-          (lowerLog a - lowerLog b) + (lowerUnwind u : ℂ) * (2 * Real.pi * Complex.I) := by
-        simp only [u]; ring
-      rw [hrew, Complex.exp_add, Complex.exp_int_mul_two_pi_mul_I, mul_one, Complex.exp_sub,
-        exp_lowerLog ha, exp_lowerLog hb]
+  · exact dirEmlDiv_eq_of_ne_zero ha hb
 
 theorem dirEmlDiv_eq (a : ℂ) {b : ℂ} (hb : b ≠ 0) (hre : 0 ≤ b.re) :
     dirEmlDiv (.finite a) (.finite b) = .finite (a / b) :=
