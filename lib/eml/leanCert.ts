@@ -79,7 +79,7 @@ function cls(s: LeanSym): 0 | 1 | 2 {
   }
 }
 
-// ---- Fixed-point boxes (formal/lean/Eml/CertBox.lean), exactly the same Int arithmetic ----
+// ---- Fixed-point boxes (formal/lean/Eml/CertBox.lean and CertBoxC.lean) ----
 
 /** Lean's `Int` division (`Int.ediv`): Euclidean, the remainder is never negative. */
 function ediv(n: bigint, d: bigint): bigint {
@@ -121,17 +121,269 @@ function expHi(x: bigint): bigint | null {
 const lnLo = (x: bigint) => D - cdiv(D * D, x);
 const lnHi = (x: bigint) => x - D;
 
+const minI = (a: bigint, b: bigint) => (a <= b ? a : b);
+const maxI = (a: bigint, b: bigint) => (a >= b ? a : b);
+const absI = (a: bigint) => (a < Z0 ? -a : a);
+
+const KH = 4;
+const PS = Z1 << 64n;
+const BOX_FUEL = 16;
+const halfPiLo = ediv(PI_LO, Z2);
+const halfPiHi = cdiv(PI_HI, Z2);
+
+function imul(a1: bigint, a2: bigint, b1: bigint, b2: bigint, S: bigint): [bigint, bigint] {
+  const p11 = a1 * b1, p12 = a1 * b2, p21 = a2 * b1, p22 = a2 * b2;
+  const lo = minI(minI(p11, p12), minI(p21, p22));
+  const hi = maxI(maxI(p11, p12), maxI(p21, p22));
+  return [ediv(lo, S), cdiv(hi, S)];
+}
+
+function idiv(a1: bigint, a2: bigint, b1: bigint, b2: bigint): [bigint, bigint] {
+  const flo = (n: bigint, d: bigint) => ediv(n * D, d);
+  const cei = (n: bigint, d: bigint) => cdiv(n * D, d);
+  return [
+    minI(minI(flo(a1, b1), flo(a1, b2)), minI(flo(a2, b1), flo(a2, b2))),
+    maxI(maxI(cei(a1, b1), cei(a1, b2)), maxI(cei(a2, b1), cei(a2, b2))),
+  ];
+}
+
+function clampU(x: bigint): bigint {
+  return maxI(-D, minI(D, x));
+}
+
+function isqrtSearch(fuel: number, lo: bigint, hi: bigint, n: bigint): bigint {
+  let f = fuel, a = lo, b = hi;
+  while (f > 0) {
+    if (b <= a + Z1) return a;
+    const mid = ediv(a + b, Z2);
+    if (mid * mid <= n) a = mid;
+    else b = mid;
+    f -= 1;
+  }
+  return a;
+}
+
+function sqrtLo(n: bigint): bigint {
+  const r = n <= Z0 ? Z0 : isqrtSearch(512, Z0, n + Z1, n);
+  return Z0 <= r && r * r <= n ? r : Z0;
+}
+
+function sqrtHi(n: bigint): bigint {
+  const r = (n <= Z0 ? Z0 : isqrtSearch(512, Z0, n + Z1, n)) + Z1;
+  return Z0 <= r && n <= r * r ? r : n + D;
+}
+
+function lnSearchLo(fuel: number, x: bigint, lo: bigint, hi: bigint): bigint {
+  let f = fuel, a = lo, b = hi;
+  while (f > 0) {
+    if (b <= a) return a;
+    const mid = ediv(a + b + Z1, Z2);
+    const h = expHi(mid);
+    if (h !== null && h <= x) a = mid;
+    else b = mid - Z1;
+    f -= 1;
+  }
+  return a;
+}
+
+function lnSearchHi(fuel: number, x: bigint, lo: bigint, hi: bigint): bigint {
+  let f = fuel, a = lo, b = hi;
+  while (f > 0) {
+    if (b <= a) return b;
+    const mid = ediv(a + b, Z2);
+    if (mid <= EXP_CAP && x <= expLo(mid)) b = mid;
+    else a = mid + Z1;
+    f -= 1;
+  }
+  return b;
+}
+
+function lnSLo(x: bigint): bigint {
+  const c = lnSearchLo(BOX_FUEL, x, lnLo(x), minI(lnHi(x), EXP_CAP));
+  const h = expHi(c);
+  return h !== null && h <= x ? c : lnLo(x);
+}
+
+function lnSHi(x: bigint): bigint {
+  const c = lnSearchHi(BOX_FUEL, x, lnLo(x), lnHi(x));
+  return c <= EXP_CAP && x <= expLo(c) ? c : lnHi(x);
+}
+
+type CS = { cl: bigint; ch: bigint; sl: bigint; sh: bigint };
+
+function sqI(a: bigint, b: bigint, S: bigint): [bigint, bigint] {
+  if (Z0 <= a) return [ediv(a * a, S), cdiv(b * b, S)];
+  if (b <= Z0) return [ediv(b * b, S), cdiv(a * a, S)];
+  return [Z0, cdiv(maxI(a * a, b * b), S)];
+}
+
+function taylorCS(u: bigint): CS {
+  const u2 = imul(u, u, u, u, PS);
+  const u3 = imul(u2[0], u2[1], u, u, PS);
+  const u4 = imul(u2[0], u2[1], u2[0], u2[1], PS);
+  const r = cdiv(u4[1] * 5n, 96n) + Z2;
+  return {
+    cl: PS - cdiv(u2[1], Z2) - r,
+    ch: PS - ediv(u2[0], Z2) + r,
+    sl: u - cdiv(u3[1], 6n) - r,
+    sh: u - ediv(u3[0], 6n) + r,
+  };
+}
+
+function dblCS(q: CS): CS {
+  const sq = sqI(q.cl, q.ch, PS);
+  const pr = imul(q.sl, q.sh, q.cl, q.ch, PS);
+  return {
+    cl: maxI(-PS, Z2 * sq[0] - PS),
+    ch: minI(PS, Z2 * sq[1] - PS),
+    sl: maxI(-PS, Z2 * pr[0]),
+    sh: minI(PS, Z2 * pr[1]),
+  };
+}
+
+function trigStep(k: number, q: CS): CS {
+  let r = q;
+  for (let i = 0; i < k; i += 1) r = dblCS(r);
+  return r;
+}
+
+function uOf(t: bigint): bigint {
+  return t * ediv(PS, D * (Z2 ** BigInt(KH)));
+}
+
+function trigPt(t: bigint): CS {
+  const q = trigStep(KH, taylorCS(uOf(t)));
+  const s = ediv(PS, D);
+  return { cl: ediv(q.cl, s), ch: cdiv(q.ch, s), sl: ediv(q.sl, s), sh: cdiv(q.sh, s) };
+}
+
+function trigK(a: bigint): bigint {
+  return ediv(a + PI_LO, Z2 * PI_LO);
+}
+
+function trigT1(a: bigint): bigint {
+  const k = trigK(a);
+  return Z0 <= k ? a - Z2 * k * PI_HI : a - Z2 * k * PI_LO;
+}
+
+function trigT2(a: bigint): bigint {
+  const k = trigK(a);
+  return Z0 <= k ? a - Z2 * k * PI_LO : a - Z2 * k * PI_HI;
+}
+
+function trigW(a: bigint, b: bigint): bigint {
+  return b - a + (trigT2(a) - trigT1(a));
+}
+
+function trigI(a: bigint, b: bigint): CS {
+  const t1 = trigT1(a);
+  const w = trigW(a, b);
+  const q = trigPt(t1);
+  if (absI(t1) <= 4n * D) {
+    return {
+      cl: clampU(q.cl - w),
+      ch: clampU(q.ch + w),
+      sl: clampU(q.sl - w),
+      sh: clampU(q.sh + w),
+    };
+  }
+  return { cl: -D, ch: D, sl: -D, sh: D };
+}
+
+function asinSearchLo(fuel: number, s: bigint, lo: bigint, hi: bigint): bigint {
+  let f = fuel, a = lo, b = hi;
+  while (f > 0) {
+    if (b <= a) return a;
+    const mid = ediv(a + b + Z1, Z2);
+    if (trigPt(mid).sh <= s) a = mid;
+    else b = mid - Z1;
+    f -= 1;
+  }
+  return a;
+}
+
+function asinSearchHi(fuel: number, s: bigint, lo: bigint, hi: bigint): bigint {
+  let f = fuel, a = lo, b = hi;
+  while (f > 0) {
+    if (b <= a) return b;
+    const mid = ediv(a + b, Z2);
+    if (s <= trigPt(mid).sl) b = mid;
+    else a = mid + Z1;
+    f -= 1;
+  }
+  return b;
+}
+
+function asinLo(s: bigint): bigint {
+  const th = asinSearchLo(BOX_FUEL, s, -halfPiLo, halfPiLo);
+  return -halfPiLo <= th && th <= halfPiLo && trigPt(th).sh <= s ? th : -halfPiHi;
+}
+
+function asinHi(s: bigint): bigint {
+  const th = asinSearchHi(BOX_FUEL, s, -halfPiLo, halfPiLo);
+  return -halfPiLo <= th && th <= halfPiLo && s <= trigPt(th).sl ? th : halfPiHi;
+}
+
+function nxOf(b: Box): bigint {
+  if (Z0 < b.rl) return b.rl;
+  if (b.rh < Z0) return -b.rh;
+  return Z0;
+}
+
+function nyOf(b: Box): bigint {
+  if (Z0 < b.il) return b.il;
+  if (b.ih < Z0) return -b.ih;
+  return Z0;
+}
+
+function rloOf(b: Box): bigint {
+  const x = nxOf(b), y = nyOf(b);
+  return sqrtLo(x * x + y * y);
+}
+
+function rhiOf(b: Box): bigint {
+  return sqrtHi(maxI(b.rl * b.rl, b.rh * b.rh) + maxI(b.il * b.il, b.ih * b.ih));
+}
+
+function ratioBox(b: Box): [bigint, bigint] {
+  const rlo = rloOf(b), rhi = rhiOf(b);
+  return Z0 < b.rl ? idiv(b.il, b.ih, rlo, rhi) : idiv(b.rl, b.rh, rlo, rhi);
+}
+
+function argLoOf(b: Box): bigint {
+  const s = ratioBox(b);
+  if (Z0 < b.rl) return asinLo(clampU(s[0]));
+  if (Z0 < b.il) return halfPiLo - asinHi(clampU(s[1]));
+  return asinLo(clampU(s[0])) - halfPiHi;
+}
+
+function argHiOf(b: Box): bigint {
+  const s = ratioBox(b);
+  if (Z0 < b.rl) return asinHi(clampU(s[1]));
+  if (Z0 < b.il) return halfPiHi - asinLo(clampU(s[0]));
+  return asinHi(clampU(s[1])) - halfPiLo;
+}
+
 function bExp(b: Box): Box | null {
-  if (b.il !== Z0 || b.ih !== Z0) return null;
   const h = expHi(b.rh);
-  return h === null ? null : { rl: expLo(b.rl), rh: h, il: Z0, ih: Z0 };
+  if (h === null) return null;
+  if (b.il === Z0 && b.ih === Z0) return { rl: expLo(b.rl), rh: h, il: Z0, ih: Z0 };
+  const q = trigI(b.il, b.ih);
+  const lo = expLo(b.rl);
+  const re = imul(lo, h, q.cl, q.ch, D);
+  const im = imul(lo, h, q.sl, q.sh, D);
+  return { rl: re[0], rh: re[1], il: im[0], ih: im[1] };
 }
 
 function bLn(b: Box): Box | null {
-  if (b.il !== Z0 || b.ih !== Z0) return null;
-  if (Z0 < b.rl) return { rl: lnLo(b.rl), rh: lnHi(b.rh), il: Z0, ih: Z0 };
-  if (b.rh < Z0) return { rl: lnLo(-b.rh), rh: lnHi(-b.rl), il: -PI_HI, ih: -PI_LO };
-  return null;
+  if (b.il === Z0 && b.ih === Z0) {
+    if (Z0 < b.rl) return { rl: lnSLo(b.rl), rh: lnSHi(b.rh), il: Z0, ih: Z0 };
+    if (b.rh < Z0) return { rl: lnSLo(-b.rh), rh: lnSHi(-b.rl), il: -PI_HI, ih: -PI_LO };
+    return null;
+  }
+  if (!(Z0 < b.rl || Z0 < b.il || b.ih < Z0)) return null;
+  if (rloOf(b) <= Z0) return null;
+  return { rl: lnSLo(rloOf(b)), rh: lnSHi(rhiOf(b)), il: argLoOf(b), ih: argHiOf(b) };
 }
 
 /** Fixed-point box of `s` (`n` stands for `n / 2^48`), as `Eml.Cert.bnd`. Exported for checks. */

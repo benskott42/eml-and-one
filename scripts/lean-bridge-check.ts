@@ -88,6 +88,10 @@ const samplePrograms = [
 ];
 
 let certMatches = 0;
+// Sharp logarithms and the modulus search are fuelled recursion. The kernel's
+// default depth is not enough once a program nests several of them.
+lines.push("set_option maxRecDepth 1000000");
+lines.push("");
 for (const rpn of samplePrograms) {
   const bits = rpnToLeanBits(rpn);
   const cert = certifyRpnForLean(rpn, 100000);

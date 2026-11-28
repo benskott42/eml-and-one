@@ -1545,4 +1545,302 @@ theorem arg_box {b : Box} {z : ℂ} (hb : b.Has z) (hr : 0 < rloOf b)
       · exact arg_box_im_pos hb him hr hre
       · exact arg_box_im_neg hb hih hr hre him
 
+/-! ### `exp` and `ln` of a box
+
+A zero imaginary part keeps the real bounds. A nonzero imaginary part multiplies
+the real `exp` interval by cosine and sine, and takes `ln` as `log ‖z‖ + i arg`
+off the nonpositive real axis. The real logarithm uses the sharp bisection.
+-/
+
+/-- `exp` of a box. `none` when the real part exceeds the exp cap. -/
+def bExp (b : Box) : Option Box :=
+  match expHi b.rh with
+  | none => none
+  | some h =>
+    if b.il = 0 ∧ b.ih = 0 then some ⟨expLo b.rl, h, 0, 0⟩
+    else
+      let q := trigI b.il b.ih
+      let re := imul (expLo b.rl) h q.cl q.ch D
+      let im := imul (expLo b.rl) h q.sl q.sh D
+      some ⟨re.1, re.2, im.1, im.2⟩
+
+/-- Lower-cut `ln` of a box that stays off the nonpositive real axis, or of a
+real interval that excludes `0`. -/
+def bLn (b : Box) : Option Box :=
+  if b.il = 0 ∧ b.ih = 0 then
+    if 0 < b.rl then some ⟨lnSLo b.rl, lnSHi b.rh, 0, 0⟩
+    else if b.rh < 0 then some ⟨lnSLo (-b.rh), lnSHi (-b.rl), -piHi, -piLo⟩
+    else none
+  else if ¬ (0 < b.rl ∨ 0 < b.il ∨ b.ih < 0) then none
+  else if rloOf b ≤ 0 then none
+  else some ⟨lnSLo (rloOf b), lnSHi (rhiOf b), argLoOf b, argHiOf b⟩
+
+def bnd : Sym → Option Box
+  | .int n => some ⟨n * D, n * D, 0, 0⟩
+  | .e => some ⟨eLo, eHi, 0, 0⟩
+  | .ipi k => some (bIpi k)
+  | .exp a => (bnd a).bind bExp
+  | .ln a => (bnd a).bind bLn
+  | .neg a => (bnd a).map bNeg
+  | .add a b =>
+    match bnd a, bnd b with
+    | some x, some y => some (bAdd x y)
+    | _, _ => none
+  | .sub a b =>
+    match bnd a, bnd b with
+    | some x, some y => some (bSub x y)
+    | _, _ => none
+
+theorem not_isNegReal_of_box {b : Box} {z : ℂ} (hb : b.Has z)
+    (h : 0 < b.rl ∨ 0 < b.il ∨ b.ih < 0) : ¬ isNegReal z := by
+  rintro ⟨hre, him⟩
+  rcases h with hp | hp | hn
+  · linarith [fx_pos hp, hb.1]
+  · linarith [fx_pos hp, hb.2.2.1, him]
+  · have hlt := fx_strict hn
+    rw [fx_zero] at hlt
+    linarith [hb.2.2.2, him]
+
+theorem bExp_has {b c : Box} {z : ℂ} (hb : b.Has z) (h : bExp b = some c) :
+    c.Has (Complex.exp z) := by
+  unfold bExp at h
+  cases hE : expHi b.rh with
+  | none => simp [hE] at h
+  | some eh =>
+    simp only [hE] at h
+    by_cases h0 : b.il = 0 ∧ b.ih = 0
+    · simp only [h0] at h
+      cases h
+      have him := im_zero_of_has hb h0.1 h0.2
+      obtain ⟨h1, h2, -, -⟩ := hb
+      have hre : (Complex.exp z).re = Real.exp z.re := by simp [Complex.exp_re, him]
+      have himz : (Complex.exp z).im = 0 := by simp [Complex.exp_im, him]
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · rw [hre]; exact le_trans (fx_expLo_le _) (Real.exp_le_exp.mpr h1)
+      · rw [hre]; exact le_trans (Real.exp_le_exp.mpr h2) (exp_le_fx_expHi hE)
+      · rw [himz, fx_zero]
+      · rw [himz, fx_zero]
+    · simp only [h0, ite_false] at h
+      cases h
+      obtain ⟨hrl, hrh, hil, hih⟩ := hb
+      have hab : b.il ≤ b.ih := by
+        by_contra hlt
+        exact not_lt_of_ge (le_trans hil hih) (fx_strict (lt_of_not_ge hlt))
+      have htrig := trigI_sound hab hil hih
+      have hexpLo : fx (expLo b.rl) ≤ Real.exp z.re :=
+        le_trans (fx_expLo_le _) (Real.exp_le_exp.mpr hrl)
+      have hexpHi : Real.exp z.re ≤ fx eh :=
+        le_trans (Real.exp_le_exp.mpr hrh) (exp_le_fx_expHi hE)
+      have hreI := imul_sound D_pos (by simpa [sc_D] using hexpLo) (by simpa [sc_D] using hexpHi)
+        (by simpa [sc_D] using htrig.cl) (by simpa [sc_D] using htrig.ch)
+      have himI := imul_sound D_pos (by simpa [sc_D] using hexpLo) (by simpa [sc_D] using hexpHi)
+        (by simpa [sc_D] using htrig.sl) (by simpa [sc_D] using htrig.sh)
+      have hre : (Complex.exp z).re = Real.exp z.re * Real.cos z.im := by simp [Complex.exp_re]
+      have himz : (Complex.exp z).im = Real.exp z.re * Real.sin z.im := by simp [Complex.exp_im]
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · rw [hre]; exact hreI.1
+      · rw [hre]; exact hreI.2
+      · rw [himz]; exact himI.1
+      · rw [himz]; exact himI.2
+
+theorem bLn_has {b c : Box} {z : ℂ} (hb : b.Has z) (h : bLn b = some c) :
+    c.Has (lowerLog z) := by
+  unfold bLn at h
+  by_cases h0 : b.il = 0 ∧ b.ih = 0
+  · rw [if_pos h0] at h
+    by_cases hp : 0 < b.rl
+    · rw [if_pos hp] at h
+      cases h
+      have him := im_zero_of_has hb h0.1 h0.2
+      obtain ⟨h1, h2, -, -⟩ := hb
+      have hr0 : 0 < z.re := lt_of_lt_of_le (fx_pos hp) h1
+      rw [eq_ofReal_re him, lowerLog_ofReal_pos hr0]
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · simpa using fx_lnSLo_le hp h1
+      · simpa using log_le_fx_lnSHi hr0 h2
+      · simp [fx_zero]
+      · simp [fx_zero]
+    · rw [if_neg hp] at h
+      by_cases hn : b.rh < 0
+      · rw [if_pos hn] at h
+        cases h
+        have him := im_zero_of_has hb h0.1 h0.2
+        obtain ⟨h1, h2, -, -⟩ := hb
+        have hneg : 0 < -b.rh := by omega
+        have hr0 : z.re < 0 := lt_of_le_of_lt h2 (by have := fx_strict hn; rwa [fx_zero] at this)
+        rw [eq_ofReal_re him, lowerLog_ofReal_neg hr0]
+        have hpos : 0 < -z.re := by linarith
+        have hlo : fx (-b.rh) ≤ -z.re := by rw [fx_neg]; linarith
+        have hhi : -z.re ≤ fx (-b.rl) := by rw [fx_neg]; linarith
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · simpa using fx_lnSLo_le hneg hlo
+        · simpa using log_le_fx_lnSHi hpos hhi
+        · simp only [Complex.sub_im, Complex.ofReal_im, Complex.mul_im, Complex.ofReal_re,
+            Complex.I_re, Complex.I_im, mul_zero, mul_one, zero_sub, fx_neg]
+          linarith [fx_piHi]
+        · simp only [Complex.sub_im, Complex.ofReal_im, Complex.mul_im, Complex.ofReal_re,
+            Complex.I_re, Complex.I_im, mul_zero, mul_one, zero_sub, fx_neg]
+          linarith [fx_piLo]
+      · simp [hn] at h
+  · rw [if_neg h0] at h
+    by_cases hcut : 0 < b.rl ∨ 0 < b.il ∨ b.ih < 0
+    · have hne : ¬ ¬ (0 < b.rl ∨ 0 < b.il ∨ b.ih < 0) := fun hnd => hnd hcut
+      rw [if_neg hne] at h
+      by_cases hrlo : rloOf b ≤ 0
+      · simp [hrlo] at h
+      · rw [if_neg hrlo] at h
+        cases h
+        have hrpos : 0 < rloOf b := by
+          push_neg at hrlo
+          exact hrlo
+        have hnot := not_isNegReal_of_box hb hcut
+        have hnorm := norm_mem_rlo hb hrpos
+        rw [lowerLog_eq_log_of_not_isNegReal hnot]
+        have harg := arg_box hb hrpos hcut
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [Complex.log_re]; exact fx_lnSLo_le hrpos hnorm.1
+        · rw [Complex.log_re]; exact log_le_fx_lnSHi hnorm.2.2 hnorm.2.1
+        · rw [Complex.log_im]; exact harg.1
+        · rw [Complex.log_im]; exact harg.2
+    · simp [hcut] at h
+
+/-- **Box soundness.** -/
+theorem bnd_sound : ∀ (s : Sym) {b : Box}, bnd s = some b → b.Has s.denote
+  | .int n, b, h => by
+    cases h
+    refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [Sym.denote, fx_mulD, fx_zero]
+  | .e, b, h => by
+    cases h
+    have hre : (Sym.e.denote).re = Real.exp 1 := by
+      simp [Sym.denote, Complex.exp_re]
+    have him : (Sym.e.denote).im = 0 := by
+      simp [Sym.denote, Complex.exp_im]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [hre]; exact fx_eLo.le
+    · rw [hre]; exact fx_eHi.le
+    · rw [him, fx_zero]
+    · rw [him, fx_zero]
+  | .ipi k, b, h => by cases h; exact bIpi_has k
+  | .exp a, b, h => by
+    obtain ⟨x, hx, hb⟩ := Option.bind_eq_some_iff.mp h
+    exact bExp_has (bnd_sound a hx) hb
+  | .ln a, b, h => by
+    obtain ⟨x, hx, hb⟩ := Option.bind_eq_some_iff.mp h
+    exact bLn_has (bnd_sound a hx) hb
+  | .neg a, b, h => by
+    obtain ⟨x, hx, rfl⟩ := Option.map_eq_some_iff.mp h
+    exact bNeg_has (bnd_sound a hx)
+  | .add a c, b, h => by
+    simp only [bnd] at h
+    split at h
+    next x y hx hy => cases h; exact bAdd_has (bnd_sound a hx) (bnd_sound c hy)
+    next => cases h
+  | .sub a c, b, h => by
+    simp only [bnd] at h
+    split at h
+    next x y hx hy => cases h; exact bSub_has (bnd_sound a hx) (bnd_sound c hy)
+    next => cases h
+
+/-! ### What the checker asks of a box -/
+
+/-- `0` lies outside the box. -/
+def Box.nz (b : Box) : Bool :=
+  decide (0 < b.rl) || decide (b.rh < 0) || decide (0 < b.il) || decide (b.ih < 0)
+
+/-- The box is a positive real interval. -/
+def Box.pos (b : Box) : Bool := decide (b.il = 0) && decide (b.ih = 0) && decide (0 < b.rl)
+
+/-- The box is a negative real interval. -/
+def Box.neg (b : Box) : Bool := decide (b.il = 0) && decide (b.ih = 0) && decide (b.rh < 0)
+
+/-- The box lies in the strip `−π ≤ Im < π`. -/
+def Box.strip (b : Box) : Bool := decide (-piLo ≤ b.il) && decide (b.ih < piLo)
+
+theorem Box.nz_sound {b : Box} {z : ℂ} (hb : b.Has z) (h : b.nz = true) : z ≠ 0 := by
+  obtain ⟨h1, h2, h3, h4⟩ := hb
+  unfold Box.nz at h
+  simp only [Bool.or_eq_true, decide_eq_true_eq] at h
+  intro hz
+  subst hz
+  simp only [Complex.zero_re, Complex.zero_im] at h1 h2 h3 h4
+  rcases h with ((h | h) | h) | h
+  · linarith [fx_pos h]
+  · linarith [fx_strict h, fx_zero]
+  · linarith [fx_pos h]
+  · linarith [fx_strict h, fx_zero]
+
+theorem Box.pos_sound {b : Box} {z : ℂ} (hb : b.Has z) (h : b.pos = true) :
+    ∃ r : ℝ, 0 < r ∧ z = r := by
+  unfold Box.pos at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨h0, h1⟩, hp⟩ := h
+  have him := im_zero_of_has hb h0 h1
+  exact ⟨z.re, lt_of_lt_of_le (fx_pos hp) hb.1, eq_ofReal_re him⟩
+
+theorem Box.neg_sound {b : Box} {z : ℂ} (hb : b.Has z) (h : b.neg = true) :
+    ∃ r : ℝ, r < 0 ∧ z = r := by
+  unfold Box.neg at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨h0, h1⟩, hn⟩ := h
+  have him := im_zero_of_has hb h0 h1
+  have := fx_strict hn
+  rw [fx_zero] at this
+  exact ⟨z.re, lt_of_le_of_lt hb.2.1 this, eq_ofReal_re him⟩
+
+theorem Box.strip_sound {b : Box} {z : ℂ} (hb : b.Has z) (h : b.strip = true) :
+    -Real.pi ≤ z.im ∧ z.im < Real.pi := by
+  unfold Box.strip at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨-, -, h3, h4⟩ := hb
+  have hl := fx_mono h.1
+  have hh := fx_strict h.2
+  rw [fx_neg] at hl
+  constructor <;> linarith [fx_piLo]
+
+/-- `s` is provably nonzero by its box. -/
+def boxNz (s : Sym) : Bool := ((bnd s).map Box.nz).getD false
+
+/-- `s` is provably a positive real by its box. -/
+def boxPos (s : Sym) : Bool := ((bnd s).map Box.pos).getD false
+
+/-- `s` is provably a negative real by its box. -/
+def boxNeg (s : Sym) : Bool := ((bnd s).map Box.neg).getD false
+
+/-- `s` is provably in the strip `−π ≤ Im < π` by its box. -/
+def boxStrip (s : Sym) : Bool := ((bnd s).map Box.strip).getD false
+
+theorem boxNz_sound {s : Sym} (h : boxNz s = true) : s.denote ≠ 0 := by
+  unfold boxNz at h
+  cases hb : bnd s with
+  | none => simp [hb] at h
+  | some b => simp only [hb, Option.map_some, Option.getD_some] at h; exact Box.nz_sound (bnd_sound s hb) h
+
+theorem boxPos_sound {s : Sym} (h : boxPos s = true) : ∃ r : ℝ, 0 < r ∧ s.denote = r := by
+  unfold boxPos at h
+  cases hb : bnd s with
+  | none => simp [hb] at h
+  | some b => simp only [hb, Option.map_some, Option.getD_some] at h; exact Box.pos_sound (bnd_sound s hb) h
+
+theorem boxNeg_sound {s : Sym} (h : boxNeg s = true) : ∃ r : ℝ, r < 0 ∧ s.denote = r := by
+  unfold boxNeg at h
+  cases hb : bnd s with
+  | none => simp [hb] at h
+  | some b => simp only [hb, Option.map_some, Option.getD_some] at h; exact Box.neg_sound (bnd_sound s hb) h
+
+theorem boxStrip_sound {s : Sym} (h : boxStrip s = true) :
+    -Real.pi ≤ s.denote.im ∧ s.denote.im < Real.pi := by
+  unfold boxStrip at h
+  cases hb : bnd s with
+  | none => simp [hb] at h
+  | some b =>
+    simp only [hb, Option.map_some, Option.getD_some] at h; exact Box.strip_sound (bnd_sound s hb) h
+
+/-! ### Sanity checks (kernel-evaluated) -/
+
+/-- `e − exp e ≠ 0`, via `exp e ≥ 15.15`. -/
+example : boxNz (.sub .e (.exp .e)) = true := by decide
+
+/-- `exp(e − ln 2) − exp e ≠ 0`. -/
+example : boxNz (.sub (.exp (.sub .e (.ln (.int 2)))) (.exp .e)) = true := by decide
+
 end Eml.Cert
