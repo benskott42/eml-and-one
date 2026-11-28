@@ -1805,10 +1805,15 @@ function exactReportCore(
     // cancelled sum was not established; a zero the re-read or the pole
     // itself produced stays.
     // tan(−π/2 − 10^(−64)) + 1 rebuilds the sum, so the pole note is gone on
-    // the app and on the wire. The lost square is still both parts at the cap
-    // (10^64 − 10^(−353) i). A real one-sided offset such as tan(π/2 + 10^(−64)) + 1
-    // has no such square and stays.
-    const pastCapSquare = !r.value.re.isZero() && !r.value.im.isZero() && (r.absorb2 ?? 0) + 48 > PRECISION_CAP;
+    // the app and on the wire. The read already sits at the 480-digit cap and
+    // the lost square is still both parts (10^64 − 10^(−353) i). A square that
+    // was absorbed on the way up, as in (10^400 + i)/7, is a real value.
+    // tan(π/2 + 10^(−64)) + 1 has no such square and stays.
+    const pastCapSquare =
+      (r.digits ?? 0) >= PRECISION_CAP &&
+      !r.value.re.isZero() &&
+      !r.value.im.isZero() &&
+      (r.absorb2 ?? 0) + 48 > PRECISION_CAP;
     if (fromPoleReread || r.singular === SINGULAR_POLE || below || pastCapSquare) return certifyZero(r);
     return r;
   };
