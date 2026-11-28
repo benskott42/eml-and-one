@@ -13,6 +13,7 @@
   answer fails the check and falls back to a bound that is still sound.
 -/
 import Mathlib.Analysis.Complex.Trigonometric
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds
 import Eml.CertBox
 
 namespace Eml.Cert
@@ -1089,5 +1090,184 @@ theorem trigPt_sound {t : Int} (ht : |fx t| ≤ 4) : CSHas D (trigPt t) (fx t) :
   · exact le_trans hhas.ch (sc_le_fx_cdiv_ps (n := (trigStep KH (taylorCS (uOf t))).ch))
   · exact le_trans (fx_ediv_ps (n := (trigStep KH (taylorCS (uOf t))).sl)) hhas.sl
   · exact le_trans hhas.sh (sc_le_fx_cdiv_ps (n := (trigStep KH (taylorCS (uOf t))).sh))
+
+/-! ### Cosine and sine on an interval
+
+Any integer multiple of `2π` is a sound reduction. `trigK` tries to land near
+`[-π, π]`. If the reduced endpoint is still outside `[-4, 4]`, the box is the
+trivial `[-1, 1]`.
+-/
+
+/-- Reduction integer `(a + π₋) / (2π₋)`. -/
+def trigK (a : Int) : Int := (a + piLo) / (2 * piLo)
+
+/-- Lower reduced endpoint. -/
+def trigT1 (a : Int) : Int :=
+  let k := trigK a
+  if 0 ≤ k then a - 2 * k * piHi else a - 2 * k * piLo
+
+/-- Upper reduced endpoint. -/
+def trigT2 (a : Int) : Int :=
+  let k := trigK a
+  if 0 ≤ k then a - 2 * k * piLo else a - 2 * k * piHi
+
+/-- Lipschitz radius from `fx a` to `fx b`, plus the `π` rounding gap. -/
+def trigW (a b : Int) : Int := (b - a) + (trigT2 a - trigT1 a)
+
+theorem fx_mul_two (k a : Int) : fx ((2 * k) * a) = 2 * (k : ℝ) * fx a := by
+  rw [fx_mul_int]
+  push_cast
+  ring
+
+theorem reduced_sandwich (a : Int) :
+    fx (trigT1 a) ≤ fx a - (trigK a : ℝ) * (2 * Real.pi) ∧
+      fx a - (trigK a : ℝ) * (2 * Real.pi) ≤ fx (trigT2 a) := by
+  set k : Int := trigK a
+  have hswap : (k : ℝ) * (2 * Real.pi) = 2 * (k : ℝ) * Real.pi := by ring
+  by_cases hk : 0 ≤ k
+  · have hk0 : (0 : ℝ) ≤ 2 * (k : ℝ) := by exact_mod_cast (mul_nonneg (by decide : (0 : Int) ≤ 2) hk)
+    have hlo : 2 * (k : ℝ) * Real.pi ≤ 2 * (k : ℝ) * fx piHi :=
+      mul_le_mul_of_nonneg_left (le_of_lt fx_piHi) hk0
+    have hhi : 2 * (k : ℝ) * fx piLo ≤ 2 * (k : ℝ) * Real.pi :=
+      mul_le_mul_of_nonneg_left (le_of_lt fx_piLo) hk0
+    refine ⟨?_, ?_⟩
+    · rw [trigT1, if_pos hk, fx_sub, fx_mul_two, hswap]
+      linarith
+    · rw [trigT2, if_pos hk, fx_sub, fx_mul_two, hswap]
+      linarith
+  · push_neg at hk
+    have hk0 : 2 * (k : ℝ) ≤ 0 := by exact_mod_cast (mul_nonpos_of_nonneg_of_nonpos (by decide : (0 : Int) ≤ 2) hk.le)
+    have hlo : 2 * (k : ℝ) * Real.pi ≤ 2 * (k : ℝ) * fx piLo :=
+      mul_le_mul_of_nonpos_left (le_of_lt fx_piLo) hk0
+    have hhi : 2 * (k : ℝ) * fx piHi ≤ 2 * (k : ℝ) * Real.pi :=
+      mul_le_mul_of_nonpos_left (le_of_lt fx_piHi) hk0
+    refine ⟨?_, ?_⟩
+    · rw [trigT1, if_neg (not_le_of_gt hk), fx_sub, fx_mul_two, hswap]
+      linarith
+    · rw [trigT2, if_neg (not_le_of_gt hk), fx_sub, fx_mul_two, hswap]
+      linarith
+
+/-- Cosine and sine of every real in `[fx a, fx b]`. -/
+def trigI (a b : Int) : CS :=
+  let t1 := trigT1 a
+  let w := trigW a b
+  let q := trigPt t1
+  if |t1| ≤ 4 * D then
+    ⟨clampU (q.cl - w), clampU (q.ch + w), clampU (q.sl - w), clampU (q.sh + w)⟩
+  else
+    ⟨-D, D, -D, D⟩
+
+theorem trigI_sound {a b : Int} (hab : a ≤ b) {y : ℝ} (hy1 : fx a ≤ y) (hy2 : y ≤ fx b) :
+    CSHas D (trigI a b) y := by
+  set k : Int := trigK a
+  set t1 : Int := trigT1 a
+  set t2 : Int := trigT2 a
+  set w : Int := trigW a b
+  have hs := reduced_sandwich a
+  have ht1 : fx t1 ≤ fx a - (k : ℝ) * (2 * Real.pi) := by simpa [t1, k] using hs.1
+  have ht2 : fx a - (k : ℝ) * (2 * Real.pi) ≤ fx t2 := by simpa [t2, k] using hs.2
+  have hba : fx a ≤ fx b := fx_mono hab
+  set ρ : ℝ := y - (k : ℝ) * (2 * Real.pi)
+  have hρ1 : fx t1 ≤ ρ := by
+    unfold ρ
+    linarith [ht1, hy1]
+  have hρw : ρ - fx t1 ≤ fx w := by
+    have hspan : (fx b - (k : ℝ) * (2 * Real.pi)) - fx t1 ≤ fx w := by
+      have hmid : (fx a - (k : ℝ) * (2 * Real.pi)) - fx t1 ≤ fx t2 - fx t1 := by
+        linarith
+      calc (fx b - (k : ℝ) * (2 * Real.pi)) - fx t1
+          = (fx b - fx a) + ((fx a - (k : ℝ) * (2 * Real.pi)) - fx t1) := by ring
+        _ ≤ fx (b - a) + (fx t2 - fx t1) := by
+            rw [fx_sub]
+            linarith [hmid, hba]
+        _ = fx ((b - a) + (t2 - t1)) := by rw [← fx_sub, fx_add]
+        _ = fx w := by simp [w, trigW, t1, t2]
+    unfold ρ
+    linarith [hy2, hspan]
+  have hdist : |ρ - fx t1| ≤ fx w := by
+    have hnn : 0 ≤ ρ - fx t1 := by linarith
+    rw [abs_of_nonneg hnn]
+    exact hρw
+  have hcosEq : Real.cos ρ = Real.cos y := by
+    simp [ρ, Real.cos_sub_int_mul_two_pi]
+  have hsinEq : Real.sin ρ = Real.sin y := by
+    simp [ρ, Real.sin_sub_int_mul_two_pi]
+  by_cases hr : |t1| ≤ 4 * D
+  · have hfx : |fx t1| ≤ 4 := by
+      have habs : -(4 * D) ≤ t1 ∧ t1 ≤ 4 * D := abs_le.mp hr
+      have hlo : (-4 : ℝ) ≤ fx t1 := by
+        have hmono := fx_mono habs.1
+        rw [fx_neg, fx_mul_int, fx_one] at hmono
+        norm_num at hmono
+        exact hmono
+      have hhi : fx t1 ≤ 4 := by
+        have hmono := fx_mono habs.2
+        rw [fx_mul_int, fx_one] at hmono
+        norm_num at hmono
+        exact hmono
+      exact abs_le.mpr ⟨hlo, hhi⟩
+    have hpt := trigPt_sound (t := t1) hfx
+    have hcl : fx ((trigPt t1).cl - w) ≤ Real.cos y := by
+      rw [fx_sub, ← hcosEq]
+      have hlip : Real.cos (fx t1) - fx w ≤ Real.cos ρ := by
+        have habs : |Real.cos ρ - Real.cos (fx t1)| ≤ fx w :=
+          le_trans (Real.abs_cos_sub_cos_le ρ (fx t1)) hdist
+        have hself : Real.cos (fx t1) - Real.cos ρ ≤ |Real.cos (fx t1) - Real.cos ρ| :=
+          le_abs_self _
+        rw [abs_sub_comm] at hself
+        have hsub : Real.cos (fx t1) - Real.cos ρ ≤ fx w := le_trans hself habs
+        linarith
+      have hpt' : fx (trigPt t1).cl ≤ Real.cos (fx t1) := by simpa [sc_D] using hpt.cl
+      exact le_trans (sub_le_sub_right hpt' (fx w)) hlip
+    have hch : Real.cos y ≤ fx ((trigPt t1).ch + w) := by
+      rw [fx_add, ← hcosEq]
+      have hlip : Real.cos ρ ≤ Real.cos (fx t1) + fx w := by
+        have habs : |Real.cos ρ - Real.cos (fx t1)| ≤ fx w :=
+          le_trans (Real.abs_cos_sub_cos_le ρ (fx t1)) hdist
+        have hsub : Real.cos ρ - Real.cos (fx t1) ≤ fx w :=
+          le_trans (le_abs_self _) habs
+        linarith
+      have hpt' : Real.cos (fx t1) ≤ fx (trigPt t1).ch := by simpa [sc_D] using hpt.ch
+      exact le_trans hlip (add_le_add hpt' (le_refl (fx w)))
+    have hsl : fx ((trigPt t1).sl - w) ≤ Real.sin y := by
+      rw [fx_sub, ← hsinEq]
+      have hlip : Real.sin (fx t1) - fx w ≤ Real.sin ρ := by
+        have habs : |Real.sin ρ - Real.sin (fx t1)| ≤ fx w :=
+          le_trans (Real.abs_sin_sub_sin_le ρ (fx t1)) hdist
+        have hself : Real.sin (fx t1) - Real.sin ρ ≤ |Real.sin (fx t1) - Real.sin ρ| :=
+          le_abs_self _
+        rw [abs_sub_comm] at hself
+        have hsub : Real.sin (fx t1) - Real.sin ρ ≤ fx w := le_trans hself habs
+        linarith
+      have hpt' : fx (trigPt t1).sl ≤ Real.sin (fx t1) := by simpa [sc_D] using hpt.sl
+      exact le_trans (sub_le_sub_right hpt' (fx w)) hlip
+    have hsh : Real.sin y ≤ fx ((trigPt t1).sh + w) := by
+      rw [fx_add, ← hsinEq]
+      have hlip : Real.sin ρ ≤ Real.sin (fx t1) + fx w := by
+        have habs : |Real.sin ρ - Real.sin (fx t1)| ≤ fx w :=
+          le_trans (Real.abs_sin_sub_sin_le ρ (fx t1)) hdist
+        have hsub : Real.sin ρ - Real.sin (fx t1) ≤ fx w :=
+          le_trans (le_abs_self _) habs
+        linarith
+      have hpt' : Real.sin (fx t1) ≤ fx (trigPt t1).sh := by simpa [sc_D] using hpt.sh
+      exact le_trans hlip (add_le_add hpt' (le_refl (fx w)))
+    have hdef : trigI a b =
+        ⟨clampU ((trigPt t1).cl - w), clampU ((trigPt t1).ch + w),
+          clampU ((trigPt t1).sl - w), clampU ((trigPt t1).sh + w)⟩ := by
+      simp [trigI, t1, w, hr]
+    rw [hdef]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · exact clampU_lo hcl (Real.neg_one_le_cos y) (Real.cos_le_one y)
+    · exact clampU_hi hch (Real.neg_one_le_cos y) (Real.cos_le_one y)
+    · exact clampU_lo hsl (Real.neg_one_le_sin y) (Real.sin_le_one y)
+    · exact clampU_hi hsh (Real.neg_one_le_sin y) (Real.sin_le_one y)
+  · have hdef : trigI a b = ⟨-D, D, -D, D⟩ := by
+      simp [trigI, t1, hr]
+    rw [hdef]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [sc_D, fx_neg, fx_one]; exact Real.neg_one_le_cos y
+    · rw [sc_D, fx_one]; exact Real.cos_le_one y
+    · rw [sc_D, fx_neg, fx_one]; exact Real.neg_one_le_sin y
+    · rw [sc_D, fx_one]; exact Real.sin_le_one y
 
 end Eml.Cert
