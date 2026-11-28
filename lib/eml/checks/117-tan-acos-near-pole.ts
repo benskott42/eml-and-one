@@ -24,6 +24,11 @@ const D = Decimal.clone({ precision: 40 });
 type Want = { pole: true } | { re: Decimal; im: Decimal; must?: boolean };
 
 const probes: string[] = [
+  "tan(-pi/2-1e-64)+1",
+  "tan(-pi/2-1e-64)+2",
+  "tan(-pi/2-1e-64)-1",
+  "tan(-pi/2-1e-64)+exp(1)",
+  "(tan(-pi/2-1e-64)+1)*i",
   "tan(pi/2-1e-130)+tan(-pi/2+1e-130)",
   "tan(pi/2-1e-126)+tan(-pi/2+1e-126)",
   "tan(pi/2-1e-130)-tan(3*pi/2-1e-130)",
@@ -151,6 +156,11 @@ function wantOf(src: string): Want {
     return { re: new D(0), im: new D(0) };
   }
   if (src === "-tan(-pi/2-1e-64)") return { re: new D("-1e64"), im: new D(0) };
+  if (src === "tan(-pi/2-1e-64)+1") return { re: new D("1e64").plus(1), im: new D(0) };
+  if (src === "tan(-pi/2-1e-64)+2") return { re: new D("1e64").plus(2), im: new D(0) };
+  if (src === "tan(-pi/2-1e-64)-1") return { re: new D("1e64").minus(1), im: new D(0) };
+  if (src === "tan(-pi/2-1e-64)+exp(1)") return { re: new D("1e64").plus(new D(1).exp()), im: new D(0) };
+  if (src === "(tan(-pi/2-1e-64)+1)*i") return { re: new D(0), im: new D("1e64").plus(1) };
   if (src === "tan(pi/2)" || src === "tanh(i*pi/2)") return { pole: true };
   if (src === "sin(2/exp(200))") return { re: new D(2).div(new D(200).exp()), im: new D(0) };
   if (src === "sqrt(1+1e-130)-1-0.5e-130") return { re: new D("-1.25e-261"), im: new D(0) };

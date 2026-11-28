@@ -1804,7 +1804,12 @@ function exactReportCore(
     // re-read under a parent, must not certify a stray part. A zero on a
     // cancelled sum was not established; a zero the re-read or the pole
     // itself produced stays.
-    if (fromPoleReread || r.singular === SINGULAR_POLE || below) return certifyZero(r);
+    // tan(−π/2 − 10^(−64)) + 1 rebuilds the sum, so the pole note is gone on
+    // the app and on the wire. The lost square is still both parts at the cap
+    // (10^64 − 10^(−353) i). A real one-sided offset such as tan(π/2 + 10^(−64)) + 1
+    // has no such square and stays.
+    const pastCapSquare = !r.value.re.isZero() && !r.value.im.isZero() && (r.absorb2 ?? 0) + 48 > PRECISION_CAP;
+    if (fromPoleReread || r.singular === SINGULAR_POLE || below || pastCapSquare) return certifyZero(r);
     return r;
   };
   // cosSin snaps an angle within 10^(−(P−8)) of a quarter turn onto that axis, so a genuine
