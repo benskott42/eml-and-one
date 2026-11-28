@@ -35,6 +35,8 @@ import {
   tLn,
   tLogBase,
   tMul,
+  productOf,
+  isZeroExponent,
   tPi,
   tPow,
   tSqrt,
@@ -441,7 +443,7 @@ function foldAstBuild(ast: Ast): Node {
       } else flat.push(item);
     }
     const parts = flat.map(foldAst);
-    return refuseFrom(parts, balanced(ast.k, parts));
+    return refuseFrom(parts, ast.k === "*" ? productOf(parts) : balanced("+", parts));
   }
   if (ast.k === "pre") {
     const arg = foldAst(ast.arg);
@@ -456,7 +458,10 @@ function foldAstBuild(ast: Ast): Node {
   const pair = [left, right];
   if (ast.name === "-") return refuseFrom(pair, userSub(left, right));
   if (ast.name === "/") return refuseFrom(pair, tDiv(left, right));
-  return refuseFrom(pair, tPow(left, right));
+  // x^0 is 1 even when the exponent's sign was refused. refuseFrom would drop that 1.
+  const powered = tPow(left, right);
+  if (isZeroExponent(right)) return powered;
+  return refuseFrom(pair, powered);
 }
 
 export function compileExpression(source: string, variables: Record<string, Node>): Node {
