@@ -126,7 +126,7 @@ const maxI = (a: bigint, b: bigint) => (a >= b ? a : b);
 const absI = (a: bigint) => (a < Z0 ? -a : a);
 
 const KH = 4;
-const PS = Z1 << 64n;
+const PS = Z1 << BigInt(64);
 const BOX_FUEL = 16;
 const halfPiLo = ediv(PI_LO, Z2);
 const halfPiHi = cdiv(PI_HI, Z2);
@@ -221,12 +221,12 @@ function taylorCS(u: bigint): CS {
   const u2 = imul(u, u, u, u, PS);
   const u3 = imul(u2[0], u2[1], u, u, PS);
   const u4 = imul(u2[0], u2[1], u2[0], u2[1], PS);
-  const r = cdiv(u4[1] * 5n, 96n) + Z2;
+  const r = cdiv(u4[1] * BigInt(5), BigInt(96)) + Z2;
   return {
     cl: PS - cdiv(u2[1], Z2) - r,
     ch: PS - ediv(u2[0], Z2) + r,
-    sl: u - cdiv(u3[1], 6n) - r,
-    sh: u - ediv(u3[0], 6n) + r,
+    sl: u - cdiv(u3[1], BigInt(6)) - r,
+    sh: u - ediv(u3[0], BigInt(6)) + r,
   };
 }
 
@@ -279,7 +279,7 @@ function trigI(a: bigint, b: bigint): CS {
   const t1 = trigT1(a);
   const w = trigW(a, b);
   const q = trigPt(t1);
-  if (absI(t1) <= 4n * D) {
+  if (absI(t1) <= BigInt(4) * D) {
     return {
       cl: clampU(q.cl - w),
       ch: clampU(q.ch + w),
