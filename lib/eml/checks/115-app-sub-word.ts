@@ -56,7 +56,80 @@ const expected: Record<string, (x: Cx, y: Cx) => Cx | null> = {
     const im2 = 2 * x.re * x.im;
     return { re: re2 * x.re - im2 * x.im, im: re2 * x.im + im2 * x.re };
   },
+  sigma: (x) => cdiv(one, cadd(one, cexp(cneg(x)))),
+  sinh: (x) => cmul(cmul(cexp(x), csub(one, cexp(cneg(cadd(x, x))))), half),
+  cosh: (x) => cmul(cmul(cexp(x), csub(one, cneg(cexp(cneg(cadd(x, x)))))), half),
+  artanh: (x) => {
+    const den = csqrt(csub(one, x));
+    const num = csqrt(cadd(one, x));
+    const q = cdiv(num, den);
+    return q ? cln(q) : null;
+  },
+  arcosh: (x) => cln(cadd(x, cmul(csqrt(csub(x, one)), csqrt(cadd(x, one))))),
+  sin: (x) => {
+    const ix = cmul(iu, x);
+    return cdiv(csub(cexp(ix), cexp(cneg(ix))), cmul(two, iu));
+  },
+  cos: (x) => {
+    const ix = cmul(iu, x);
+    return cmul(cadd(cexp(ix), cexp(cneg(ix))), half);
+  },
+  tan: (x) => {
+    const grown = cexp(cmul(two, cmul(iu, x)));
+    const den = cadd(grown, one);
+    const quot = cdiv(two, den);
+    return quot ? cmul(cneg(iu), csub(one, quot)) : null;
+  },
+  tanh: (x) => {
+    const grown = cexp(cadd(x, x));
+    return cdiv(csub(grown, one), cadd(grown, one));
+  },
+  arctan: (x) => {
+    const ix = cmul(iu, x);
+    const den = csqrt(csub(one, ix));
+    const num = csqrt(cadd(one, ix));
+    const q = cdiv(num, den);
+    if (!q) return null;
+    const w = cln(q);
+    return w ? cmul(cneg(iu), w) : null;
+  },
 };
+
+const one: Cx = { re: 1, im: 0 };
+const half: Cx = { re: 0.5, im: 0 };
+const two: Cx = { re: 2, im: 0 };
+const iu: Cx = { re: 0, im: 1 };
+
+function cneg(z: Cx): Cx {
+  return { re: -z.re, im: -z.im };
+}
+function cadd(a: Cx, b: Cx): Cx {
+  return { re: a.re + b.re, im: a.im + b.im };
+}
+function csub(a: Cx, b: Cx): Cx {
+  return { re: a.re - b.re, im: a.im - b.im };
+}
+function cmul(a: Cx, b: Cx): Cx {
+  return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+function cdiv(a: Cx, b: Cx): Cx | null {
+  const d = b.re * b.re + b.im * b.im;
+  if (d === 0) return null;
+  return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d };
+}
+function cexp(z: Cx): Cx {
+  return { re: Math.exp(z.re) * Math.cos(z.im), im: Math.exp(z.re) * Math.sin(z.im) };
+}
+function csqrt(z: Cx): Cx {
+  const r = Math.hypot(z.re, z.im);
+  const re = Math.sqrt((r + z.re) / 2);
+  const im = Math.sqrt((r - z.re) / 2);
+  return { re, im: z.im < 0 || (z.im === 0 && Object.is(z.im, -0) && z.re < 0) ? -im : im };
+}
+function cln(z: Cx): Cx | null {
+  if (z.re === 0 && z.im === 0) return null;
+  return { re: Math.log(Math.hypot(z.re, z.im)), im: Math.atan2(z.im, z.re) };
+}
 
 const points: [Cx, Cx][] = [
   [{ re: 3, im: 0 }, { re: 5, im: 0 }],
@@ -80,7 +153,7 @@ const checkModule: CheckModule = {
     ];
     for (const [name, source, want] of words) {
       const node = compileExpression(source, { x, y });
-      const word = variableRpnFromNode(node);
+      const word = variableRpnFromNode(node, 40000);
       if (word !== want) {
         ctx.fail(`FAIL ${source} circuit changed (K ${word?.length ?? "?"}, Lean proves K ${want.length}): update export.ts and formal/lean/Eml/App*.lean`);
         continue;

@@ -30,7 +30,7 @@ function sources(n: number): Array<[string, string]> {
 }
 
 const checkModule: CheckModule = {
-  id: 113,
+  id: 118,
   weight: 67244,
   run(ctx) {
     const judge = (source: string, want: string, allowRefusal: boolean) => {

@@ -6,8 +6,8 @@ import { EmlError, onCircuitIsolate, type Node, nodeFromRpn, substitute } from "
  * Lengths that are proven minimal say so in best-known.json. Anything else
  * there is shortest known. A record that uses ln 0 = −∞ says so. None of
  * these records depend on Schanuel's conjecture.
- * i (K 57), π (K 93), √2 (K 61), and ln 2 (K 25) are constructions, not
- * search records. −2, ±1/2, and 3 have the same value under both branch
+ * i (K 57), π (K 93), and √2 (K 61) are constructions, not search records.
+ * ln 2 at K 25 is proved minimal. −2, ±1/2, and 3 have the same value under both branch
  * conventions. A program is used by the library only after lib/eml/check.ts
  * accepts it under the lower-bank branch (arg = −π on a negative real).
  * minus, sub, add, sqrt, and pow are the short words, not the full

@@ -11,17 +11,19 @@ and returns Im W - 2*pi*n for an integer n, as a 128-bit interval. The evaluatio
 uses only identities that hold exactly: exp(x - ln y) = exp(x) / y, so T4 / z is
 exp(T3) / z and T4 is shared; ln(exp x) = x when Im x is in [-pi, pi); ln 1 = 0; and
 the principal log on the lower cut (Arg in [-pi, pi)), refused when the enclosure
-touches the cut. Past 50000 bits, exp is Newton's method on mpmath's ln, each
-enclosure checked with directed-rounding logs; ln, atan2, cos and sin are mpmath's
-interval functions. A word whose value needs exp of something beyond 2^31 (a phase
-that is a tower itself, such as Im exp(T4 / z)) is refused: no precision reaches it.
+touches the cut. Past 50000 bits, exp, ln, atan, cos and sin are python-flint arb balls whose
+endpoints are rounded outward into an mpmath interval. exp, ln and atan are
+monotone, so each endpoint is evaluated on its own. cos and sin are one ball
+over the whole interval. A word
+whose value needs exp of something beyond 2^31 (a phase that is a tower itself,
+such as Im exp(T4 / z)) is refused: no precision reaches it.
 
 run() decides a list of words in parallel worker processes. The workers share every
 result above 50000 bits through files in a temporary directory, so T2, T3 and T4 are
 computed once, by whichever worker needs them first, while the others wait.
 
 usage: python deep.py [word ...]   (default: the K 23 and K 25 programs that need it;
-                                    5.5 million bits, about 90 minutes)
+                                    5.5 million bits, one arb.exp of T3)
 """
 import hashlib
 import os
@@ -31,11 +33,11 @@ import sys
 import tempfile
 import time
 from mpmath import iv, mp, mpf
-from mpmath.libmp import mpf_atan, mpf_cmp, mpf_log, round_ceiling, round_floor
+from mpmath.libmp import from_man_exp, round_ceiling, round_floor
 
 STEP = 1 << 16          # precisions are multiples of this, so words share their exps
 MAX_BITS = 6_000_000    # T4 / z needs about 5.5 million
-BIG = 50_000            # above this: Newton exp, and results shared between workers
+BIG = 50_000            # above this: arb, and results shared between workers
 HUGE = mpf(2) ** 31     # exp of anything larger is refused
 SHARE = None            # directory shared by the workers of run()
 MEMO = {}
@@ -47,85 +49,108 @@ class Refused(Exception):
     pass
 
 
-def newton_exp(x, prec):
-    """exp(x) to about prec bits by Newton's method on ln (not rigorous by itself).
-    mpmath's ln is much faster than its exp at millions of bits."""
-    p = 2000
-    with mp.workprec(p):
-        y = mp.exp(x)
-    while p < prec:
-        p = min(2 * p, prec)
-        with mp.workprec(p + 64):
-            y = y * (1 + x - mp.log(y))
-    return y
+def _raw_to_arb(raw):
+    """Exact arb for an mpmath raw mpf (sign, man, exp, bc). man * 2^exp, no rounding."""
+    import flint
+    sign, man, exp, bc = raw
+    if not man:
+        return flint.arb(0)
+    saved = flint.ctx.prec
+    # The power of two has |exp| + 1 bits, and man has bc bits. Both have to be exact.
+    flint.ctx.prec = max(saved, int(bc) + abs(int(exp)) + 64, 64)
+    try:
+        a = flint.arb(int(man))
+        if exp > 0:
+            a = a * flint.arb(1 << int(exp))
+        elif exp < 0:
+            a = a / flint.arb(1 << int(-exp))
+        if sign:
+            a = -a
+        if not a.is_exact():
+            raise ArithmeticError("endpoint did not convert exactly")
+        return a
+    finally:
+        flint.ctx.prec = saved
+
+
+def _exact_bound(ball, prec, downward):
+    """Outward raw mpf for an exact arb endpoint, rounded to prec bits."""
+    if not ball.is_exact():
+        ball = ball.lower() if downward else ball.upper()
+    if not ball.is_exact():
+        raise ArithmeticError("arb bound did not resolve")
+    man, exp = ball.man_exp()
+    rnd = round_floor if downward else round_ceiling
+    return from_man_exp(int(man), int(exp), prec, rnd)
+
+
+def _mono_iv(method, X, prec):
+    """An interval containing method(X) for a monotone arb function (exp, log, atan).
+
+    Each endpoint is evaluated on its own, and that ball's outward endpoint is
+    rounded outward again into an mpmath interval.
+    """
+    import flint
+    saved = flint.ctx.prec
+    flint.ctx.prec = prec + 64
+    try:
+        lo = getattr(_raw_to_arb(X._mpi_[0]), method)().lower()
+        hi = getattr(_raw_to_arb(X._mpi_[1]), method)().upper()
+        return iv.make_mpf((_exact_bound(lo, prec, True), _exact_bound(hi, prec, False)))
+    finally:
+        flint.ctx.prec = saved
+
+
+def _range_iv(method, X, prec):
+    """An interval containing method(X). One ball covers X, so this stays valid
+    for cos and sin, which are not monotone."""
+    import flint
+    saved = flint.ctx.prec
+    flint.ctx.prec = prec + 64
+    try:
+        ball = _raw_to_arb(X._mpi_[0]).union(_raw_to_arb(X._mpi_[1]))
+        ball = getattr(ball, method)()
+        return iv.make_mpf((_exact_bound(ball.lower(), prec, True),
+                            _exact_bound(ball.upper(), prec, False)))
+    finally:
+        flint.ctx.prec = saved
 
 
 def exp_iv(X, prec):
-    """An interval containing exp(X) for a real interval X, made rigorous by checking
-    ln(lower) <= X.a and ln(upper) >= X.b with directed-rounding logs."""
-    with mp.workprec(X._mpi_[0][3] + X._mpi_[1][3] + prec + 64):  # exact endpoints
-        xa, xb = mpf(X._mpi_[0]), mpf(X._mpi_[1])
-    with mp.workprec(prec + 64):
-        y = newton_exp((xa + xb) / 2, prec + 32)
-        d = (xb - xa) / 2  # exp(x) = y * exp(x - mid), |x - mid| <= d
-        if d >= mpf("0.25"):
-            raise Refused("exp of a wide interval")
-        lo = y * (1 - 2 * d - mpf(2) ** -prec)
-        hi = y * (1 + 2 * d + mpf(2) ** -prec)
-    # One directed-rounding log: ln(lo) <= ell <= xa, and
-    # ln(hi) = ln(lo) + ln(1 + u) >= ell - ulp + u / (1 + u) >= xb, with u = hi/lo - 1.
-    ell = mpf_log(lo._mpf_, prec + 64, round_ceiling)
-    if mpf_cmp(ell, xa._mpf_) > 0:
-        raise ArithmeticError("exp enclosure check failed (lower end)")
-    saved = iv.prec
-    iv.prec = prec + 64
+    """An interval containing exp(X)."""
+    return _mono_iv("exp", X, prec)
+
+
+def arb_cos_sign(th):
+    """+1 if an arb enclosure of cos(th) is > 0, -1 if < 0, else None.
+
+    th is a real iv interval. The sign is returned only when that ball lies
+    entirely on one side of 0. A ball that contains 0, or whose comparison with
+    0 is not decided, is not a sign.
+    """
+    import flint
+    saved = flint.ctx.prec
+    flint.ctx.prec = max(256, saved)
     try:
-        U = iv.make_mpf((hi._mpf_, hi._mpf_)) / iv.make_mpf((lo._mpf_, lo._mpf_)) - 1
-        low = iv.make_mpf((ell, ell)) - _ulp(ell, prec + 64) + U / (1 + U)
-        ok = mpf_cmp(low._mpi_[0], xb._mpf_) >= 0
+        ball = _raw_to_arb(th._mpi_[0]).union(_raw_to_arb(th._mpi_[1]))
+        c = ball.cos()
+        if c > 0:
+            return 1
+        if c < 0:
+            return -1
+        return None
     finally:
-        iv.prec = saved
-    if not ok:
-        raise ArithmeticError("exp enclosure check failed (upper end)")
-    return iv.mpf([lo, hi])
-
-
-def _ulp(x, w):
-    """The gap above a raw mpf x rounded to w bits: 2^(e + bc - w) for x = m * 2^e with
-    a bc-bit mantissa m (an upper bound when trailing zeros were stripped)."""
-    if not x[1]:
-        raise Refused("ulp of zero")
-    return iv.make_mpf(((0, 1, x[2] + x[3] - w, 1),) * 2)
+        flint.ctx.prec = saved
 
 
 def log_iv(X):
-    """ln of a positive narrow interval with one directed-rounding log instead of two:
-    ln(a) is in [ell, ell + ulp), and ln(b) <= ln(a) + (b - a)/a."""
-    p = iv.prec
-    a, b = X._mpi_
-    ell = mpf_log(a, p + 64, round_floor)
-    iv.prec = p + 64
-    try:
-        A, B = iv.make_mpf((a, a)), iv.make_mpf((b, b))
-        top = iv.make_mpf((ell, ell)) + _ulp(ell, p + 64) + (B - A) / A
-        out = iv.make_mpf((ell, top._mpi_[1]))
-    finally:
-        iv.prec = p
-    return +out
+    """An interval containing ln(X), X > 0."""
+    return _mono_iv("log", X, iv.prec)
 
 
 def atan_iv(X):
-    """atan of a narrow interval with one directed-rounding atan: atan' <= 1."""
-    p = iv.prec
-    a, b = X._mpi_
-    t = mpf_atan(a, p + 64, round_floor)
-    iv.prec = p + 64
-    try:
-        top = iv.make_mpf((t, t)) + _ulp(t, p + 64) + (iv.make_mpf((b, b)) - iv.make_mpf((a, a)))
-        out = iv.make_mpf((t, top._mpi_[1]))
-    finally:
-        iv.prec = p
-    return +out
+    """An interval containing atan(X)."""
+    return _mono_iv("atan", X, iv.prec)
 
 
 # ---------------------------------------------------------------- shared primitives
@@ -164,14 +189,21 @@ def _prim(op, fn, *args):
             continue
         try:
             out = ("ok", fn(*args)._mpi_)
-        except BaseException as why:  # the waiting workers must not hang, even on KeyboardInterrupt
+        except (Refused, ArithmeticError, ZeroDivisionError, ValueError, OverflowError) as why:
+            # A mathematical refusal is the same for every worker. Publish it so the others
+            # stop waiting. An alarm or interrupt is not: drop the lock and let the next
+            # worker compute, instead of caching a failure of a value that can be computed.
             out = ("error", f"{type(why).__name__}: {why}")
             with open(res + ".tmp", "wb") as f:
                 pickle.dump(out, f)
             os.replace(res + ".tmp", res)
-            if not isinstance(why, Exception):
-                raise
-            raise Refused(out[1])
+            raise Refused(out[1]) from why
+        except BaseException:
+            try:
+                os.remove(lock)
+            except OSError:
+                pass
+            raise
         with open(res + ".tmp", "wb") as f:
             pickle.dump(out, f)
         os.replace(res + ".tmp", res)
@@ -208,10 +240,16 @@ def rarg(y, x):
 
 
 def rcos(x):
+    if iv.prec >= BIG:
+        p = iv.prec
+        return _prim("cos", lambda y: _range_iv("cos", y, p), x)
     return _prim("cos", iv.cos, x)
 
 
 def rsin(x):
+    if iv.prec >= BIG:
+        p = iv.prec
+        return _prim("sin", lambda y: _range_iv("sin", y, p), x)
     return _prim("sin", iv.sin, x)
 
 

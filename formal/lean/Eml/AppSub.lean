@@ -19,6 +19,9 @@
   * `dirCIpi_eq`: the K 21 word is `iπ` in `EmlDir`.
   * `appSub_correct`: for all `a b : ℂ`, `b = 0` included, the circuit evaluates to
     `a − b` in `EmlDir` (directed infinities and signed zero).
+  * `Tok.subst` and `evalTok_subst`: replacing the `x` and `y` slots of a word by
+    sub-words evaluates as that word on the sub-words' results. The trigonometric
+    words are built this way, rather than by unfolding a token list with `rfl`.
 
   `appSubToks` is checked against what the compiler emits for `x − y` by check 115
   and by `scripts/lean-bridge-check.ts` (`APP_SUB_WORD` in `lib/eml/export.ts`).
@@ -49,6 +52,92 @@ def evalTok {α : Type} (one x y : α) (op : α → α → α) : List Tok → Li
   | .y :: rest, st => evalTok one x y op rest (y :: st)
   | .gate :: rest, b :: a :: st => evalTok one x y op rest (op a b :: st)
   | .gate :: _, _ => none
+
+/-- Replace the variables of a template by token lists. `1` and the gate stay put. -/
+def Tok.subst (X Y : List Tok) : List Tok → List Tok
+  | [] => []
+  | .x :: rest => X ++ Tok.subst X Y rest
+  | .y :: rest => Y ++ Tok.subst X Y rest
+  | t :: rest => t :: Tok.subst X Y rest
+
+theorem evalTok_append {α : Type} (one x y : α) (op : α → α → α) (A B : List Tok) (st : List α) :
+    evalTok one x y op (A ++ B) st = (evalTok one x y op A st).bind (evalTok one x y op B) := by
+  induction A generalizing st with
+  | nil => rfl
+  | cons t rest ih =>
+    cases t with
+    | one => exact ih (one :: st)
+    | x => exact ih (x :: st)
+    | y => exact ih (y :: st)
+    | gate =>
+      cases st with
+      | nil => rfl
+      | cons b st1 =>
+        cases st1 with
+        | nil => rfl
+        | cons a st2 => exact ih (op a b :: st2)
+
+/-- A token list that returns `pre` on `base` returns `pre` in front of any extra stack,
+    and never reads that extra stack. -/
+theorem evalTok_detach {α : Type} (one x y : α) (op : α → α → α) :
+    ∀ (A : List Tok) (base extra : List α) {pre : List α},
+      evalTok one x y op A base = some pre →
+      evalTok one x y op A (base ++ extra) = some (pre ++ extra)
+  | [], _, extra, _, h => by
+      simp [evalTok] at h
+      subst h
+      rfl
+  | .one :: rest, base, extra, _, h => by
+      simp [evalTok] at h
+      simpa [evalTok, List.cons_append] using evalTok_detach one x y op rest (one :: base) extra h
+  | .x :: rest, base, extra, _, h => by
+      simp [evalTok] at h
+      simpa [evalTok, List.cons_append] using evalTok_detach one x y op rest (x :: base) extra h
+  | .y :: rest, base, extra, _, h => by
+      simp [evalTok] at h
+      simpa [evalTok, List.cons_append] using evalTok_detach one x y op rest (y :: base) extra h
+  | .gate :: rest, base, extra, _, h => by
+      cases base with
+      | nil => simp [evalTok] at h
+      | cons b base1 =>
+        cases base1 with
+        | nil => simp [evalTok] at h
+        | cons a base2 =>
+          simp [evalTok] at h
+          simpa [evalTok, List.cons_append] using
+            evalTok_detach one x y op rest (op a b :: base2) extra h
+
+theorem evalTok_stack {α : Type} (one x y : α) (op : α → α → α) (A : List Tok) (st : List α) {v : α}
+    (h : evalTok one x y op A [] = some [v]) :
+    evalTok one x y op A st = some (v :: st) := by
+  simpa using evalTok_detach one x y op A [] st h
+
+theorem evalTok_subst {α : Type} (one x y : α) (op : α → α → α) (X Y T : List Tok) {vx vy : α}
+    (hX : evalTok one x y op X [] = some [vx]) (hY : evalTok one x y op Y [] = some [vy])
+    (st : List α) :
+    evalTok one x y op (Tok.subst X Y T) st = evalTok one vx vy op T st := by
+  induction T generalizing st with
+  | nil => rfl
+  | cons t rest ih =>
+    cases t with
+    | one =>
+      simp only [Tok.subst, evalTok]
+      exact ih (one :: st)
+    | x =>
+      rw [Tok.subst, evalTok_append, evalTok_stack _ _ _ _ _ _ hX]
+      simpa [evalTok] using ih (vx :: st)
+    | y =>
+      rw [Tok.subst, evalTok_append, evalTok_stack _ _ _ _ _ _ hY]
+      simpa [evalTok] using ih (vy :: st)
+    | gate =>
+      cases st with
+      | nil => rfl
+      | cons b st1 =>
+        cases st1 with
+        | nil => rfl
+        | cons a st2 =>
+          simp only [Tok.subst, evalTok]
+          exact ih (op a b :: st2)
 
 /-- What the calculator compiles `x − y` to: 565 tokens, `1`, `x`, `y` and `E` (gate),
     `APP_SUB_WORD` in `lib/eml/export.ts`. The bridge checks this list against the compiler.

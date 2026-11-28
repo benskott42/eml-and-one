@@ -88,6 +88,10 @@ const samplePrograms = [
 ];
 
 let certMatches = 0;
+// Sharp logarithms and the modulus search are fuelled recursion. The kernel's
+// default depth is not enough once a program nests several of them.
+lines.push("set_option maxRecDepth 1000000");
+lines.push("");
 for (const rpn of samplePrograms) {
   const bits = rpnToLeanBits(rpn);
   const cert = certifyRpnForLean(rpn, 100000);
@@ -117,8 +121,12 @@ lines.push("      Eml.AppSub.appSubToks [] = some [.finite (a - b)] := Eml.AppSu
 for (const [name, { source, word }] of Object.entries(APP_WORDS)) {
   const compiled = variableRpnFromNode(compileExpression(source, { x: V("x"), y: V("y") }), 100000);
   if (compiled !== word) throw new Error(`The compiler's ${source} circuit (K ${compiled?.length ?? "?"}) is not APP_WORDS.${name}.`);
-  if (word.length > 200) lines.push("set_option maxRecDepth 100000 in");
-  lines.push(`example : Eml.AppOps.${name}Toks = [${word.split("").map((ch) => tokenName[ch]).join(", ")}] := rfl`);
+  if (word.length > 200) lines.push("set_option maxRecDepth 1000000 in");
+  // A substituted word of a few thousand tokens overflows `rfl` on the default
+  // thread stack. `decide` is the kernel check; the thread stack below is what
+  // sinh and cosh (about 10,000 tokens) need to finish it.
+  const proof = word.length > 1000 ? "by decide" : "rfl";
+  lines.push(`example : Eml.AppOps.${name}Toks = [${word.split("").map((ch) => tokenName[ch]).join(", ")}] := ${proof}`);
 }
 lines.push("#check @Eml.AppOps.add_correct");
 lines.push("#check @Eml.AppOps.mul_correct");
@@ -169,7 +177,7 @@ if (fs.existsSync(elanBin)) {
   env.PATH = `${elanBin}${path.delimiter}${env.PATH || ""}`;
 }
 
-execFileSync("lake", ["env", "lean", outPath], {
+execFileSync("lake", ["env", "lean", "-s", "262144", outPath], {
   cwd: leanDir,
   env,
   stdio: "inherit",

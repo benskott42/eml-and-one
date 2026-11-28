@@ -34,6 +34,13 @@ enclosure is a tower (nonzero) or a rectangle that misses 0, or whose real part,
 without the purely imaginary atoms, is a tower or a rectangle that misses 0. An empty
 combination means the value IS the target, and is reported as such. Anything
 else raises Undecided. ln 0 = -inf and infinities follow decide.py.
+
+The target may be an EML word instead of tre + tk*pi*i. It is evaluated in the
+same reset() scope as the program, so a tower shared with the target is the same
+atom and cancels. Evaluating the target and then the program through evaluate()
+does not do that: evaluate() calls reset(), and approx then raises KeyError on an
+atom the target created. excludes_word snapshots those atoms and registers any
+that a reset dropped, enclosures included, before the comparison.
 """
 from mpmath import iv, mpf
 
@@ -918,8 +925,8 @@ def sub(a, b):
     return NAN
 
 
-def evaluate(word):
-    reset()
+def _eval(word):
+    """Evaluate in the current reset() scope. Does not call reset()."""
     st = []
     for ch in word:
         if ch == "1":
@@ -931,16 +938,49 @@ def evaluate(word):
     return st[0][0]
 
 
-def excludes(word, tre, tk=0):
-    """True: certainly not tre + tk*pi*i. False: equal (exact). Raises Undecided."""
-    v = evaluate(word)
+def evaluate(word):
+    reset()
+    return _eval(word)
+
+
+def scope_snapshot():
+    """Atoms and ln-rewrites in the current scope, copied so a later reset can be undone."""
+    atoms = {}
+    for k, info in ATOMS.items():
+        atoms[k] = {kk: (dict(vv) if isinstance(vv, dict) else vv) for kk, vv in info.items()}
+    lnof = {k: (n, dict(z)) for k, (n, z) in LN_OF.items()}
+    return atoms, lnof
+
+
+def restore_scope(atoms, lnof):
+    """Register any snapshotted atom ATOMS no longer has, with its enclosure.
+
+    new_atom keeps an atom the program already recreated, so a shared tower stays
+    one key and still cancels. An atom whose enclosure is missing (a purely
+    imaginary branch unknown) cannot go through new_atom: isreal(None) is not defined.
+    """
+    for k, info in atoms.items():
+        if k in ATOMS:
+            continue
+        kw = {kk: vv for kk, vv in info.items() if kk not in ("A", "real")}
+        A = info.get("A")
+        if A is None:
+            ATOMS[k] = dict(A=None, real=info.get("real", False), **kw)
+        else:
+            new_atom(k, A, **kw)
+    for k, (n, z) in lnof.items():
+        LN_OF.setdefault(k, (n, z))
+
+
+def excludes_value(v, target):
+    """True: v is certainly not the finite combination target. False: exact equality.
+
+    Both must be forms from the current scope. Raises Undecided.
+    """
+    if not isinstance(target, dict):
+        raise Undecided("target is not a finite combination")
     if v is NAN or v is CINF or isinstance(v, Inf):
         return True
-    target = {}
-    if tre:
-        target["1"] = tre
-    if tk:
-        target["ipi"] = tk
     d = lsub(v, target)
     if not d:
         return False
@@ -967,6 +1007,33 @@ def excludes(word, tre, tk=0):
     raise Undecided(why)
 
 
+def excludes(word, tre, tk=0):
+    """True: certainly not tre + tk*pi*i. False: equal (exact). Raises Undecided."""
+    v = evaluate(word)
+    target = {}
+    if tre:
+        target["1"] = tre
+    if tk:
+        target["ipi"] = tk
+    return excludes_value(v, target)
+
+
+def excludes_word(word, target_word):
+    """excludes against an EML word, in one reset() scope so shared towers cancel.
+
+    The snapshot is what keeps a target atom alive if a reset happens between the
+    two evaluations. evaluate() itself resets; _eval does not. Restoring after
+    the program is the same registration approx needs when the atom was dropped:
+    new_atom with the enclosure captured while the target was evaluated.
+    """
+    reset()
+    target = _eval(target_word)
+    atoms, lnof = scope_snapshot()
+    value = _eval(word)
+    restore_scope(atoms, lnof)
+    return excludes_value(value, target)
+
+
 def decide(word, tre, tk=0):
     """(True, None) excluded, (False, None) equal, (None, reason) undecided."""
     reason = None
@@ -974,6 +1041,20 @@ def decide(word, tre, tk=0):
         iv.prec = bits
         try:
             return excludes(word, tre, tk), None
+        except Undecided as why:
+            reason = str(why)
+        except (ZeroDivisionError, ValueError, OverflowError) as why:
+            reason = f"{type(why).__name__}: {why}"
+    return None, reason
+
+
+def decide_word(word, target_word):
+    """decide against an EML word. Same verdict triple as decide."""
+    reason = None
+    for bits in (128, 512):
+        iv.prec = bits
+        try:
+            return excludes_word(word, target_word), None
         except Undecided as why:
             reason = str(why)
         except (ZeroDivisionError, ValueError, OverflowError) as why:
