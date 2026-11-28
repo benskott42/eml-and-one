@@ -92,6 +92,17 @@ export function useExactJobs({
       const exact = { re: payload.re, im: payload.im };
       if (job.kind === "compare") {
         if (payload.unverified) {
+          // A refused infinity still has a float reading (the log of a rounding
+          // residue). Exact mode shows "—"; float mode must not keep that reading.
+          if (payload.exactInfRe || payload.exactInfIm) {
+            publishWatch(job.watch, {
+              ...current,
+              unverified: true,
+              text: "—",
+              value: { re: Number.NaN, im: Number.NaN },
+            });
+            return;
+          }
           publishWatch(job.watch, { ...current, unverified: true });
           return;
         }
