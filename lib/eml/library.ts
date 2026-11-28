@@ -232,7 +232,11 @@ export function tLn(t: Node): Node {
     if (decade !== undefined && decade <= -8 && -decade + 48 <= 480) noteDecade(node, decade);
     else if (decade === undefined && (isLostTiny(inner) || hiddenUnderflow(inner))) noteLostTiny(node);
   }
-  return markMaybeInfinite(node, t);
+  const logged = markMaybeInfinite(node, t);
+  const argRange = rangeOf(t).re;
+  const lip = argRange && argRange.lo > 0 ? 1 / argRange.lo : 0;
+  if (!(lip > 0) || !Number.isFinite(lip)) return logged;
+  return noteRealImage(logged, t, Math.log, lip, "negative");
 }
 
 export const tE = memo(() => tagReal(programNode("e"), Math.E));
@@ -952,10 +956,124 @@ function factorQuarter(node: Node): number | null {
   return null;
 }
 
+function isUnitImag(node: Node): boolean {
+  return factsOf(node).imaginaryUnit !== undefined;
+}
+
 /**
- * A finite factor whose angle is not a quarter turn. 1+i is one.
- * An unknown range is not this: the product word still has to run.
+ * A finite factor on the imaginary axis, ±i included. The real part is 0 and
+ * the imaginary part stays off 0, so +0 times it is +0 in every order.
  */
+function pureImagFactor(node: Node): boolean {
+  if (isUnitImag(node)) return true;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && (v.re === 0 || Object.is(v.re, -0)) && Number.isFinite(v.im) && !imagZero(v)) return true;
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.re.lo !== 0 || range.re.hi !== 0) return false;
+  if (!Number.isFinite(range.im.lo) || !Number.isFinite(range.im.hi)) return false;
+  return range.im.lo > 0 || range.im.hi < 0;
+}
+
+/** A factor the enclosure proves is off the real axis. A missing range is not this. */
+function definitelyNonReal(node: Node): boolean {
+  if (pureImagFactor(node)) return true;
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im) && v.re !== 0 && !imagZero(v)) return true;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return false;
+  const reOff = range.re.hi < 0 || range.re.lo > 0;
+  const imOff = range.im.hi < 0 || range.im.lo > 0;
+  return reOff && imOff && [range.re.lo, range.re.hi, range.im.lo, range.im.hi].every((end) => Number.isFinite(end));
+}
+
+/**
+ * +0 times positive reals and one pure imaginary factor. Every grouping is +0:
+ * the imaginary factor never meets a negative real, and two imaginary factors
+ * are not this case (i·i is −1).
+ */
+function positiveZeroProduct(parts: Node[]): boolean {
+  let zeros = 0;
+  let nonReal = 0;
+  for (const part of parts) {
+    const z = certifiedZeroSign(part);
+    if (z === -1) return false;
+    if (z === 1) {
+      zeros += 1;
+      continue;
+    }
+    if (definitelyNonReal(part)) {
+      nonReal += 1;
+      // Only the imaginary unit. sqrt(−2) is pure imaginary too, and folding
+      // that product to the shared +0 changes a later sum's sign.
+      if (nonReal > 1 || !isUnitImag(part)) return false;
+      continue;
+    }
+    if (factorIsReal(part) && realFactorSign(part) === 1) continue;
+    return false;
+  }
+  return zeros >= 1 && nonReal === 1;
+}
+
+/** An exponent that is a finite times a certified zero, even when its sign is refused. x^0 is 1 either way. */
+const zeroExponents = new WeakSet<Node>();
+/** An even power of a nonzero real, an odd power of a positive real, or tanh of a positive real. +0 times it is the product word's 0. */
+const positiveReals = new WeakSet<Node>();
+
+export function isZeroExponent(node: Node): boolean {
+  return zeroExponents.has(node);
+}
+
+function refuseZeroProduct(a: Node, b: Node, other: Node): Node {
+  const node = markUnverified(rawMul(a, b));
+  if (provenFinite(other)) zeroExponents.add(node);
+  return node;
+}
+
+function balancedMul(nodes: Node[]): Node {
+  if (nodes.length === 1) {
+    const only = nodes[0];
+    if (!only) throw new EmlError("The expression ended early.");
+    return only;
+  }
+  const mid = Math.floor(nodes.length / 2);
+  return tMul(balancedMul(nodes.slice(0, mid)), balancedMul(nodes.slice(mid)));
+}
+
+function rawProduct(parts: Node[]): Node {
+  const first = parts[0];
+  if (!first) throw new EmlError("The expression ended early.");
+  return parts.slice(1).reduce((acc, part) => rawMul(acc, part), first);
+}
+
+/** The integer 0 or an input +0. A computed zero is not one: folding it to the shared leaf changes a later sign. */
+function literalPositiveZero(node: Node): boolean {
+  if (node === tZero()) return true;
+  return node.type === "input" && certifiedZeroSign(node) === 1;
+}
+
+
+/**
+ * A flat product. The parser rebalances (cos(2)·i)·0 into cos(2)·(i·0), and
+ * that +0 then takes cos(2)'s sign. A zero times a non-real factor has no
+ * certified sign unless every grouping is +0.
+ */
+export function productOf(parts: Node[]): Node {
+  if (parts.length === 1) {
+    const only = parts[0];
+    if (!only) throw new EmlError("The expression ended early.");
+    return only;
+  }
+  const zero = parts.some((part) => certifiedZeroSign(part) !== null);
+  const nonReal = parts.some((part) => definitelyNonReal(part));
+  if (parts.length >= 3 && zero && nonReal) {
+    if (positiveZeroProduct(parts)) return tZero();
+    const node = markUnverified(rawProduct(parts));
+    if (parts.every((part) => certifiedZeroSign(part) !== null || provenFinite(part))) zeroExponents.add(node);
+    return node;
+  }
+  return balancedMul(parts);
+}
+
 function factorIsReal(node: Node): boolean {
   const v = node.type === "input" ? node.value : knownValue(node);
   if (v && imagZero(v) && Number.isFinite(v.re)) return true;
@@ -963,6 +1081,10 @@ function factorIsReal(node: Node): boolean {
   return !!range.re && !!range.im && range.im.lo === 0 && range.im.hi === 0 && Number.isFinite(range.re.lo) && Number.isFinite(range.re.hi);
 }
 
+/**
+ * A finite factor whose angle is not a quarter turn. 1+i is one.
+ * An unknown range is not this: the product word still has to run.
+ */
 function offAxis(node: Node): boolean {
   if (factorQuarter(node) !== null) return false;
   const v = node.type === "input" ? node.value : knownValue(node);
@@ -998,14 +1120,30 @@ function tMulBuild(a: Node, b: Node): Node {
     const other = za !== null ? b : a;
     if (isUnverified(other) || isExactUnsure(other) || dependsOnUnverified(other)) return markUnverified(rawMul(a, b));
     const sign = zeroProductSign(other);
-    // +0 times any certified finite is +0. −0 flips a certified real only:
-    // −0·i is −0i, not the real −0.
-    if (sign === 1 && zSign === 1) return tZero();
-    if (sign !== null && factorIsReal(other)) return zSign === sign ? tZero() : negativeZero();
-    // A finite enclosure that still contains a negative real must not become
-    // the certified +0 the product word would print. A non-real factor times
-    // −0 is not that case: the product word still has to run.
-    if (sign === null && provenFinite(other)) return markUnverified(rawMul(a, b));
+    // A variable is bound later. The product word reads that value, which is
+    // how x·0 keeps the sign of the binding.
+    // +0 times a positive power or tanh(positive) uses that same product word.
+    // A +0 leaf would flip under a later negation, and that −0 is not the 0
+    // the product word certifies. −0 times one of these stays unverified:
+    // the product word's 0 and a −0 leaf are different certificates.
+    const zeroNode = za !== null ? a : b;
+    if (positiveReals.has(other)) {
+      // Literal +0 uses the product word. A computed zero, or −0, stays unverified.
+      if (zSign === -1 || !literalPositiveZero(zeroNode)) return refuseZeroProduct(a, b, other);
+    } else if (other.type !== "var") {
+      // A computed +0 times a pure imaginary factor is not the integer 0·i that
+      // cos(0) needs. (0.1+0.2−0.3)·7 is a real factor and keeps its sign.
+      if (zSign === 1 && !literalPositiveZero(zeroNode) && pureImagFactor(other)) return refuseZeroProduct(a, b, other);
+      // +0 times a certified positive real, a cap-erased tiny, or a pure
+      // imaginary factor. cos(0) multiplies 0 by i and needs that +0.
+      if (sign === 1 && zSign === 1 && (factorIsReal(other) || isLostTiny(other) || pureImagFactor(other))) return tZero();
+      if (!factorIsReal(other)) return refuseZeroProduct(a, b, other);
+      // sign(0·a) = sign(a) for a certified real.
+      if (sign !== null) return zSign === sign ? tZero() : negativeZero();
+      // realFactorSign is null. The enclosure does not decide the sign, whether
+      // or not the factor is proven finite. The product word would print a zero.
+      return refuseZeroProduct(a, b, other);
+    }
   }
   // Carry the angle. Two infinities add their quarter turns. A factor off an
   // axis has no quarter turn, and the product word would still certify a real ∞.
@@ -1123,12 +1261,49 @@ function integerExponent(node: Node): bigint | null {
   return BigInt(v.re);
 }
 
+/** A positive integer power of a positive real. The power word drops that sign. */
+function notePositivePower(node: Node, base: Node, exp: Node): void {
+  if (isUnverified(node) || isExactUnsure(node)) return;
+  const n = integerExponent(exp);
+  if (n === null || n <= BigInt(0) || n > BigInt(32)) return;
+  if (!factorIsReal(base)) return;
+  const sign = realFactorSign(base);
+  // An even power of a negative is positive too. Recording it made 0 times a
+  // quotient certify 0 where that quotient's sign is not the same on every path.
+  if (sign !== 1) return;
+  const range = rangeOf(base).re;
+  if (!range || range.lo === 0 || range.hi === 0) return;
+  positiveReals.add(node);
+}
+
+/**
+ * tanh of a positive real is positive, and the quotient that builds it has no
+ * range. +0 times it is the product word's 0. A negative image is not recorded:
+ * +0 times that image is −0, and (0·π)·tanh(−1) is the product word's 0.
+ */
+function notePositiveImage(node: Node, arg: Node, fn: (x: number) => number, lipschitz: number): void {
+  if (isUnverified(node) || isExactUnsure(node)) return;
+  const range = rangeOf(arg);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return;
+  const lo = range.re.lo;
+  const hi = range.re.hi;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return;
+  const width = hi - lo;
+  if (width > 1e-4) return;
+  const mid = (lo + hi) / 2;
+  if (Math.abs(mid) > 1e8) return;
+  const y = fn(mid);
+  if (!Number.isFinite(y) || !Number.isFinite(lipschitz) || lipschitz < 0) return;
+  const slack = width * lipschitz + 1e-12;
+  if (y > slack && y - slack > 0) positiveReals.add(node);
+}
+
 export function tPow(a: Node, b: Node): Node {
   // x^0 = 1 for every finite x, 0^0 included: the IEEE pow convention, and v1.1's.
   // The power word evaluates ln(0) for a zero base and printed 0^0 as undefined.
   // An infinite base (ln(0)^0) keeps the word and stays undefined.
   // −0 is that zero too: IEEE pow(0, −0) is 1, and 0^−0 printed undefined.
-  if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return recognized(ONE);
+  if ((exactZero(b) || signedZero(b) || zeroExponents.has(b)) && provenFinite(a)) return recognized(ONE);
   // (−0)^b. A positive odd integer keeps −0; every other positive real exponent is +0.
   // A negative odd integer of −0 is −∞; every other negative real exponent is +∞.
   // The power word evaluates exp(b·ln(−0)) and loses the sign, so (−0)^(−1) printed +∞.
@@ -1198,6 +1373,7 @@ export function tPow(a: Node, b: Node): Node {
     return tagInteger(node, ia ** ib);
   }
   derivePow(node, a, b);
+  notePositivePower(node, a, b);
   const va = knownValue(a);
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0 && va.re > 0 && Number.isFinite(vb.re)) {
@@ -1344,7 +1520,10 @@ export function tTanh(t: Node): Node {
   const small = tinyRealArgument(t);
   if (small) return small;
   const series = oddSeries(t, TANH_ODD, SERIES_WIDE);
-  if (series) return series;
+  if (series) {
+    notePositiveImage(series, t, Math.tanh, 1);
+    return series;
+  }
   // (e^{2t} − 1) / (e^{2t} + 1). The +1 is a subtraction of −1, so the huge term is not exponentiated again.
   const e2 = tExp(tAdd(t, t));
   const out = tDiv(tSub(e2, ONE), tSub(e2, tMinusOne()));
@@ -1353,7 +1532,9 @@ export function tTanh(t: Node): Node {
   // A literal 10^20 has no tagged float, and exp(800) overflows one, so the float
   // value decides. Without it, e^(2t) overflowed and tanh(10^20) printed undefined (∞/∞).
   const known = knownValue(t) ?? floatOrNull(t);
-  return known && !Number.isNaN(known.re) && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
+  const built = known && !Number.isNaN(known.re) && Math.abs(known.re) > 100 ? markExactUnsure(out) : out;
+  notePositiveImage(built, t, Math.tanh, 1);
+  return built;
 }
 
 /** The float value of a subtree, or null when it cannot be evaluated. */
@@ -1526,6 +1707,9 @@ export function tSin(t: Node): Node {
 }
 
 export function tCos(t: Node): Node {
+  // cos is even. A certified −0 times i is unverified, so cos of that zero is
+  // cos of +0, which is the same value, before that product is built.
+  if (certifiedZeroSign(t) === -1) return tCos(tZero());
   // cos x = sin(x + π/2).
   const twelfths = piTwelfths(t);
   const special = sinAtPiMultiple(twelfths === null ? null : (twelfths + 6) % 24);

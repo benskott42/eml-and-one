@@ -160,7 +160,7 @@ export function noteRealArctan(node: Node, arg: Node): Node {
  * slack plus the Lipschitz bound over the argument's width. A wide argument,
  * or a value that the pad reaches across zero, keeps the box it had.
  */
-export function noteRealImage(node: Node, arg: Node, fn: (x: number) => number, lipschitz: number): Node {
+export function noteRealImage(node: Node, arg: Node, fn: (x: number) => number, lipschitz: number, side: "any" | "negative" = "any"): Node {
   if (isUnverified(node) || isExactUnsure(node)) return node;
   // Keep a range that already decides the sign, and keep a point. A slack
   // interval in place of cos(0)'s box made acos(cos(0)) unverified.
@@ -182,6 +182,10 @@ export function noteRealImage(node: Node, arg: Node, fn: (x: number) => number, 
   if (!Number.isFinite(y) || !Number.isFinite(lipschitz) || lipschitz < 0) return node;
   const slack = width * lipschitz + 1e-12;
   if (y > slack) {
+    // A positive image is a new sign. ln(2.5)·0 then certifies a zero the
+    // product word prints with the other sign, so a caller can ask for the
+    // negative image only.
+    if (side === "negative") return node;
     const left = y - slack;
     if (!(left > 0)) return node;
     return setRange(node, { re: { lo: left, hi: y + slack }, im: { lo: 0, hi: 0 } });
