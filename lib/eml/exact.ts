@@ -1757,6 +1757,79 @@ function proveRefusedFinite(report: ExactReport, root: Node, env: Record<string,
   return null;
 }
 
+/**
+ * A large finite that touched ln 0 and lost more than the snap (10^−(digits−8))
+ * is the dust band: e − ln(residue), hundreds of units, not a small series term.
+ * Certify it only when the enclosure pins both components. Agreement with the
+ * value already printed keeps that certificate, including its ln0 flag. A
+ * different finite is certified only at 12 digits or more. A short proof, a
+ * failed enclosure, or an exact 0 standing in for a square past the cap is a
+ * refusal. An enclosure that proves an exact infinity replaces the finite.
+ */
+function holdDustBand(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport {
+  if (report.unverified || report.sawLead || report.touchedLn0 !== true) return report;
+  if (!zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN()) return report;
+  const magnitude = D.max(report.value.re.abs(), report.value.im.abs());
+  if (magnitude.lt(20)) return report;
+  const digits = report.digits ?? D.precision;
+  const lost = Math.max(report.lossGap ?? 0, report.surviveLoss ?? 0, report.absorb2 ?? 0, report.absorbRe ?? 0);
+  if (!(lost > digits - 8)) return report;
+  const refuse = (): ExactReport => ({ ...report, unverified: true });
+  let prec = Math.min(PRECISION_CAP, Math.max(digits, D.precision));
+  for (let hop = 0; hop < 2; hop += 1) {
+    let enclosed: ReturnType<typeof ballEnclose>;
+    try {
+      enclosed = ballEnclose(root, env, prec, budget);
+    } catch (err) {
+      rethrowBudget(err);
+      return refuse();
+    }
+    if (enclosed.ok) {
+      const proved = provedByBalls(enclosed.balls);
+      if (proved && proved !== "loose") {
+        if (!zFinite(proved.value)) {
+          return {
+            ...report,
+            value: proved.value,
+            digits: D.precision,
+            singular: SINGULAR_LN0,
+            touchedLn0: true,
+            nearCut: false,
+            unverified: false,
+          };
+        }
+        const provedZero = proved.value.re.isZero() && proved.value.im.isZero();
+        const haveZero = report.value.re.isZero() && report.value.im.isZero();
+        if (provedZero) return haveZero ? report : refuse();
+        // A radius that pins fewer than 12 digits is not a certificate. A tighter
+        // ball may still pin them; otherwise the finite stays refused.
+        // The same 12 digits the pass already printed need no rewrite.
+        if (proved.digits >= 12 && exactClose(proved.value, report.value.re, report.value.im, 12)) return report;
+        if (proved.digits >= 12) {
+          const out: ExactReport = {
+            ...report,
+            value: proved.value,
+            digits: proved.digits,
+            singular: null,
+            touchedLn0: false,
+            nearCut: false,
+            unverified: false,
+          };
+          ballProved.add(out);
+          return out;
+        }
+      }
+      if (proved === null) return refuse();
+    } else if (enclosed.reason !== "fail" && enclosed.reason !== "overflow" && enclosed.reason !== "ln-unconverged") {
+      return refuse();
+    }
+    const next = Math.min(PRECISION_CAP, prec + 48);
+    if (next <= prec) return refuse();
+    prec = next;
+  }
+  return refuse();
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -1794,7 +1867,7 @@ export function exactReport(
   if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
   const squared = squaredTinyPart(root, env, budget, out);
   if (squared.unverified) return squared;
-  return settleCrossedSquare(root, env, budget, squared) ?? squared;
+  return holdDustBand(settleCrossedSquare(root, env, budget, squared) ?? squared, root, env, budget);
 }
 
 /**
