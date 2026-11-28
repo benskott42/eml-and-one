@@ -12,7 +12,9 @@
   Searches take a `Nat` fuel argument and are checked afterwards. A wrong search
   answer fails the check and falls back to a bound that is still sound.
 -/
+import Mathlib.Analysis.Complex.Norm
 import Mathlib.Analysis.Complex.Trigonometric
+import Mathlib.Analysis.SpecialFunctions.Complex.Arg
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Inverse
 import Eml.CertBox
@@ -1396,5 +1398,151 @@ theorem arcsin_le_fx_asinHi (s : Int) {v : ℝ} (hv : v ≤ fx s) :
     exact (Real.arcsin_le_iff_le_sin' hmem).mpr hvsin
   · rw [if_neg hcond]
     exact le_trans (Real.arcsin_le_pi_div_two v) pi_div_two_lt_fx_halfPiHi.le
+
+/-! ### Argument of a box
+
+`arg` is `arcsin(im / ‖z‖)` when the real part is positive, and
+`±(π/2 − arcsin(re / ‖z‖))` when the imaginary part is strictly positive or
+strictly negative. The case order matches the complex logarithm: a positive
+real lower bound wins, then a positive imaginary lower bound, then a negative
+imaginary upper bound.
+-/
+
+/-- Lower bound on `‖z‖`, from the corner nearest the origin. -/
+def rloOf (b : Box) : Int := sqrtLo (nxny b)
+
+/-- Upper bound on `‖z‖`, from the farthest corner. -/
+def rhiOf (b : Box) : Int := sqrtHi (cornerSq b)
+
+theorem norm_mem_rlo {b : Box} {z : ℂ} (hb : b.Has z) (hr : 0 < rloOf b) :
+    fx (rloOf b) ≤ ‖z‖ ∧ ‖z‖ ≤ fx (rhiOf b) ∧ 0 < ‖z‖ := by
+  have hnorm := norm_bounds_of_has hb
+  refine ⟨?_, ?_, ?_⟩
+  · rw [rloOf]; exact hnorm.1
+  · rw [rhiOf]; exact hnorm.2
+  · exact lt_of_lt_of_le (fx_pos hr) (by rw [rloOf]; exact hnorm.1)
+
+theorem abs_div_norm_le_one {t : ℝ} {z : ℂ} (ht : |t| ≤ ‖z‖) (hz : 0 < ‖z‖) :
+    |t / ‖z‖| ≤ 1 := by
+  rw [abs_div]
+  have : |‖z‖| = ‖z‖ := abs_of_nonneg (norm_nonneg z)
+  rw [this]
+  exact (div_le_one hz).mpr ht
+
+/-- `im / ‖z‖` when the real part is positive, otherwise `re / ‖z‖`. -/
+def ratioBox (b : Box) : Int × Int :=
+  if 0 < b.rl then idiv b.il b.ih (rloOf b) (rhiOf b)
+  else idiv b.rl b.rh (rloOf b) (rhiOf b)
+
+theorem ratioBox_im_clamped {b : Box} {z : ℂ} (hb : b.Has z) (hr : 0 < rloOf b)
+    (hre : 0 < b.rl) :
+    fx (clampU (ratioBox b).1) ≤ z.im / ‖z‖ ∧ z.im / ‖z‖ ≤ fx (clampU (ratioBox b).2) := by
+  obtain ⟨hlo, hhi, hm⟩ := norm_mem_rlo hb hr
+  have hs : ratioBox b = idiv b.il b.ih (rloOf b) (rhiOf b) := by
+    unfold ratioBox; rw [if_pos hre]
+  have hid := idiv_sound (a1 := b.il) (a2 := b.ih) (b1 := rloOf b) (b2 := rhiOf b)
+    hb.2.2.1 hb.2.2.2 hlo hhi hr
+  have habs : |z.im / ‖z‖| ≤ 1 := abs_div_norm_le_one (Complex.abs_im_le_norm z) hm
+  have hv : -1 ≤ z.im / ‖z‖ ∧ z.im / ‖z‖ ≤ 1 := abs_le.mp habs
+  rw [hs]
+  exact ⟨clampU_lo hid.1 hv.1 hv.2, clampU_hi hid.2 hv.1 hv.2⟩
+
+theorem ratioBox_re_clamped {b : Box} {z : ℂ} (hb : b.Has z) (hr : 0 < rloOf b)
+    (hre : ¬ 0 < b.rl) :
+    fx (clampU (ratioBox b).1) ≤ z.re / ‖z‖ ∧ z.re / ‖z‖ ≤ fx (clampU (ratioBox b).2) := by
+  obtain ⟨hlo, hhi, hm⟩ := norm_mem_rlo hb hr
+  have hs : ratioBox b = idiv b.rl b.rh (rloOf b) (rhiOf b) := by
+    unfold ratioBox; rw [if_neg hre]
+  have hid := idiv_sound (a1 := b.rl) (a2 := b.rh) (b1 := rloOf b) (b2 := rhiOf b)
+    hb.1 hb.2.1 hlo hhi hr
+  have habs : |z.re / ‖z‖| ≤ 1 := abs_div_norm_le_one (Complex.abs_re_le_norm z) hm
+  have hv : -1 ≤ z.re / ‖z‖ ∧ z.re / ‖z‖ ≤ 1 := abs_le.mp habs
+  rw [hs]
+  exact ⟨clampU_lo hid.1 hv.1 hv.2, clampU_hi hid.2 hv.1 hv.2⟩
+
+/-- Lower bound on `arg`. -/
+def argLoOf (b : Box) : Int :=
+  if 0 < b.rl then asinLo (clampU (ratioBox b).1)
+  else if 0 < b.il then halfPiLo - asinHi (clampU (ratioBox b).2)
+  else asinLo (clampU (ratioBox b).1) - halfPiHi
+
+/-- Upper bound on `arg`. -/
+def argHiOf (b : Box) : Int :=
+  if 0 < b.rl then asinHi (clampU (ratioBox b).2)
+  else if 0 < b.il then halfPiHi - asinLo (clampU (ratioBox b).1)
+  else asinHi (clampU (ratioBox b).2) - halfPiLo
+
+theorem arg_box_re_pos {b : Box} {z : ℂ} (hb : b.Has z) (hre : 0 < b.rl) (hr : 0 < rloOf b) :
+    fx (argLoOf b) ≤ Complex.arg z ∧ Complex.arg z ≤ fx (argHiOf b) := by
+  have hclamp := ratioBox_im_clamped hb hr hre
+  have hre0 : (0 : ℝ) ≤ z.re := le_trans (fx_nonneg (le_of_lt hre)) hb.1
+  have harg : Complex.arg z = Real.arcsin (z.im / ‖z‖) := Complex.arg_of_re_nonneg hre0
+  have hLo : argLoOf b = asinLo (clampU (ratioBox b).1) := by unfold argLoOf; rw [if_pos hre]
+  have hHi : argHiOf b = asinHi (clampU (ratioBox b).2) := by unfold argHiOf; rw [if_pos hre]
+  rw [harg, hLo, hHi]
+  exact ⟨fx_asinLo_le _ hclamp.1, arcsin_le_fx_asinHi _ hclamp.2⟩
+
+theorem arg_box_im_pos {b : Box} {z : ℂ} (hb : b.Has z) (him : 0 < b.il) (hr : 0 < rloOf b)
+    (hre : ¬ 0 < b.rl) :
+    fx (argLoOf b) ≤ Complex.arg z ∧ Complex.arg z ≤ fx (argHiOf b) := by
+  have hclamp := ratioBox_re_clamped hb hr hre
+  have him0 : (0 : ℝ) < z.im := lt_of_lt_of_le (fx_pos him) hb.2.2.1
+  have hratio : Complex.arg z = Real.pi / 2 - Real.arcsin (z.re / ‖z‖) := by
+    rw [Complex.arg_of_im_pos him0, Real.arccos_eq_pi_div_two_sub_arcsin]
+  have hLo : argLoOf b = halfPiLo - asinHi (clampU (ratioBox b).2) := by
+    unfold argLoOf; rw [if_neg hre, if_pos him]
+  have hHi : argHiOf b = halfPiHi - asinLo (clampU (ratioBox b).1) := by
+    unfold argHiOf; rw [if_neg hre, if_pos him]
+  have hsinHi : Real.arcsin (z.re / ‖z‖) ≤ fx (asinHi (clampU (ratioBox b).2)) :=
+    arcsin_le_fx_asinHi _ hclamp.2
+  have hsinLo : fx (asinLo (clampU (ratioBox b).1)) ≤ Real.arcsin (z.re / ‖z‖) :=
+    fx_asinLo_le _ hclamp.1
+  rw [hratio]
+  refine ⟨?_, ?_⟩
+  · rw [hLo, fx_sub]
+    exact add_le_add fx_halfPiLo_lt_pi_div_two.le (neg_le_neg hsinHi)
+  · rw [hHi, fx_sub]
+    exact add_le_add pi_div_two_lt_fx_halfPiHi.le (neg_le_neg hsinLo)
+
+theorem arg_box_im_neg {b : Box} {z : ℂ} (hb : b.Has z) (hih : b.ih < 0) (hr : 0 < rloOf b)
+    (hre : ¬ 0 < b.rl) (hil : ¬ 0 < b.il) :
+    fx (argLoOf b) ≤ Complex.arg z ∧ Complex.arg z ≤ fx (argHiOf b) := by
+  have hclamp := ratioBox_re_clamped hb hr hre
+  have him0 : z.im < 0 := by
+    have hlt := fx_strict hih
+    rw [fx_zero] at hlt
+    exact lt_of_le_of_lt hb.2.2.2 hlt
+  have hratio : Complex.arg z = Real.arcsin (z.re / ‖z‖) - Real.pi / 2 := by
+    rw [Complex.arg_of_im_neg him0, Real.arccos_eq_pi_div_two_sub_arcsin]
+    ring
+  have hLo : argLoOf b = asinLo (clampU (ratioBox b).1) - halfPiHi := by
+    unfold argLoOf; rw [if_neg hre, if_neg hil]
+  have hHi : argHiOf b = asinHi (clampU (ratioBox b).2) - halfPiLo := by
+    unfold argHiOf; rw [if_neg hre, if_neg hil]
+  have hsinLo : fx (asinLo (clampU (ratioBox b).1)) ≤ Real.arcsin (z.re / ‖z‖) :=
+    fx_asinLo_le _ hclamp.1
+  have hsinHi : Real.arcsin (z.re / ‖z‖) ≤ fx (asinHi (clampU (ratioBox b).2)) :=
+    arcsin_le_fx_asinHi _ hclamp.2
+  rw [hratio]
+  refine ⟨?_, ?_⟩
+  · rw [hLo, fx_sub]
+    exact add_le_add hsinLo (neg_le_neg pi_div_two_lt_fx_halfPiHi.le)
+  · rw [hHi, fx_sub]
+    exact add_le_add hsinHi (neg_le_neg fx_halfPiLo_lt_pi_div_two.le)
+
+/-- The three branches cover every box that stays off the nonpositive real axis. -/
+theorem arg_box {b : Box} {z : ℂ} (hb : b.Has z) (hr : 0 < rloOf b)
+    (h : 0 < b.rl ∨ 0 < b.il ∨ b.ih < 0) :
+    fx (argLoOf b) ≤ Complex.arg z ∧ Complex.arg z ≤ fx (argHiOf b) := by
+  rcases h with hre | him | hih
+  · exact arg_box_re_pos hb hre hr
+  · by_cases hre : 0 < b.rl
+    · exact arg_box_re_pos hb hre hr
+    · exact arg_box_im_pos hb him hr hre
+  · by_cases hre : 0 < b.rl
+    · exact arg_box_re_pos hb hre hr
+    · by_cases him : 0 < b.il
+      · exact arg_box_im_pos hb him hr hre
+      · exact arg_box_im_neg hb hih hr hre him
 
 end Eml.Cert
