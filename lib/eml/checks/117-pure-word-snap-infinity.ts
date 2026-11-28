@@ -6,7 +6,7 @@ import { tAdd, tExp, tMul, tNeg, tSub } from "../library";
 import { E, ONE, V, isolateCircuit, nodeFromRpn, SINGULAR_LN0 } from "../node";
 import { reportUnpacked } from "../packed-eval";
 import { compileExpression } from "../parse";
-import { packCircuit } from "../wire";
+import { packCircuit, unpackCircuit } from "../wire";
 import type { CheckModule } from "./_types";
 
 /**
@@ -96,7 +96,7 @@ function breakN4(): { app: ExactReport; wire: ExactReport } {
   const app = isolateCircuit(() => exactReport(build(), env));
   const wire = isolateCircuit(() => {
     const packed = packCircuit(build());
-    return reportUnpacked(packed.tokens, packed.root, 80_000, env).report;
+    return exactReport(unpackCircuit(packed.tokens, packed.root), env);
   });
   return { app, wire };
 }
