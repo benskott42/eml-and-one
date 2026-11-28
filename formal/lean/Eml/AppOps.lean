@@ -33,8 +33,16 @@
   `exp` accepts `−0` (`dirExp .negZero = .finite 1`). The other words do not, when the
   value is `0`: `dirEml (.finite 1) (.finite 0) = .posInf 0` while
   `dirEml (.finite 1) .negZero = .posInf π`, and `ln`, `mul`, `div`, `√`, and `add`
-  (through `(−1)·y`) all start from `eml(1, ·)`. A nonzero complex value already
+  (through `(−1)·y`) all start from `eml(1, ·)`.   A nonzero complex value already
   excludes `−0`, since `toC .negZero = some 0`.
+
+  Composed from those words with `Tok.subst` (the token list is the compiler's word):
+
+  * `sigma x`: `1 / (1 + exp (−x))` when the denominator is not `0`.
+  * `sinh x` and `cosh x`: the value when it is not `0`. `cosh 0 = 1` is included, and
+    the factor `1/2` is the K 29 word (`dirCHalf_eq`), not a `certifyDir` result.
+  * `artanh x`: `log (√(1+x) / √(1−x))` for `x ≠ ±1`.
+  * `arcosh x`: `log (x + √(x−1)·√(x+1))` for every `x` (`arcosh_arg_ne`).
 
   Zero `sorry`, zero custom axioms.
 -/
@@ -954,5 +962,484 @@ theorem cube_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v �
     evalTok (.finite 1) v y dirEml cubeToks [] = some [.finite (a ^ 3)] := by
   rw [toC_finite hv hv0, cubeToks_eval, dirConst_three, dirEmlPowReal (by norm_num) three_ne_exp_exp,
     show ((3 : ℝ) : ℂ) = ((3 : ℕ) : ℂ) by norm_num, Complex.cpow_natCast]
+
+/-! ### Composed words
+
+A trigonometric word is a template with its `x` and `y` slots filled by sub-words
+(`Tok.subst`). The variable and the constant `1` evaluate on their own. -/
+
+theorem evalTok_x (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml [.x] [] = some [x] := rfl
+
+theorem evalTok_oneTok (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml [.one] [] = some [.finite 1] := rfl
+
+theorem evalAt {X Y T : List Tok} {vx vy x y : EmlDir}
+    (hX : evalTok (.finite 1) x y dirEml X [] = some [vx])
+    (hY : evalTok (.finite 1) x y dirEml Y [] = some [vy]) :
+    evalTok (.finite 1) x y dirEml (Tok.subst X Y T) [] =
+      evalTok (.finite 1) vx vy dirEml T [] :=
+  evalTok_subst (.finite 1) x y dirEml X Y T hX hY []
+
+/-- The K 29 word for `1/2`, through `ln 0`. -/
+def halfToks : List Tok :=
+  [.one, .one, .one, .gate, .one, .one, .one, .one, .one, .gate, .one, .gate, .gate, .gate, .gate,
+    .one, .one, .gate, .one, .gate, .one, .gate, .gate, .one, .gate, .gate, .gate, .one, .gate]
+
+noncomputable def dirCHalf : EmlDir :=
+  dirEml
+    (dirEml (.finite 1)
+      (dirEml (dirEml (.finite 1) (.finite 1))
+        (dirEml
+          (dirEml
+            (dirEml (.finite 1)
+              (dirEml (.finite 1)
+                (dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)))))
+            (dirEml (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1)))
+          (.finite 1))))
+    (.finite 1)
+
+theorem halfToks_eval (x y : EmlDir) :
+    evalTok (.finite 1) x y dirEml halfToks [] = some [dirCHalf] := by
+  rfl
+
+theorem dirCHalf_eq : dirCHalf = .finite ((1 : ℂ) / 2) := by
+  have he1_im : (Complex.exp (1 : ℂ)).im = 0 := by rw [Complex.exp_im]; simp
+  have h0 : dirEml (.finite 1) (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) =
+      .finite 0 := by
+    rw [dirEml_finite one_ne_zero, dirEml_finite one_ne_zero,
+      dirEml_finite (by rw [eml, lowerLog_one, sub_zero]; exact Complex.exp_ne_zero _)]
+    congr 1; exact cZero_eq_zero
+  have hnegInf : dirEml (.finite 1) (dirEml (.finite 1) (.finite 0)) = .negInf 0 := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, he1_im]
+  have htree : dirEml (dirEml (dirEml (.finite 1) (.finite 1)) (.finite 1)) (.finite 1) =
+      .finite (Complex.exp (Complex.exp (Complex.exp 1))) := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, lowerLog_one]
+  have he : dirEml (.finite 1) (.finite 1) = .finite (Complex.exp 1) := by
+    rw [dirEml_finite one_ne_zero]; congr 1; exact cE_eq_exp_one
+  have hee_im : (Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp, Complex.ofReal_im]
+  have hinner : dirEml (.negInf 0) (.finite (Complex.exp (Complex.exp (Complex.exp 1)))) =
+      .finite (-Complex.exp (Complex.exp 1)) := by
+    have h10 : ¬ ((1 : ℝ) < 0) := by norm_num
+    simp [dirEml, dirExp, dirLowerLog, dirSub, Complex.exp_ne_zero,
+      lowerLog_exp_of_im_zero hee_im, h10]
+  unfold dirCHalf
+  rw [h0, hnegInf, htree, hinner, he]
+  have h1 : dirEml (.finite (-Complex.exp (Complex.exp 1))) (.finite 1) =
+      .finite (Complex.exp (-Complex.exp (Complex.exp 1))) := by
+    rw [dirEml_finite one_ne_zero]
+    congr 1
+    unfold eml
+    rw [lowerLog_one, sub_zero]
+  rw [h1]
+  have hneg_ee_im : (-Complex.exp (Complex.exp (1 : ℂ))).im = 0 := by simp [hee_im]
+  have h2 : dirEml (.finite (Complex.exp 1))
+      (.finite (Complex.exp (-Complex.exp (Complex.exp 1)))) =
+      .finite (2 * Complex.exp (Complex.exp 1)) := by
+    rw [dirEml_finite (Complex.exp_ne_zero _)]
+    congr 1
+    unfold eml
+    rw [lowerLog_exp_of_im_zero hneg_ee_im]
+    ring
+  rw [h2]
+  have h2ee_pos : (0 : ℝ) < 2 * Real.exp (Real.exp 1) := by positivity
+  have h2ee_cast : (2 : ℂ) * Complex.exp (Complex.exp 1) =
+      ((2 * Real.exp (Real.exp 1) : ℝ) : ℂ) := by
+    rw [← Complex.ofReal_one, ← Complex.ofReal_exp, ← Complex.ofReal_exp]; push_cast; rfl
+  have h2ee_ne : (2 : ℂ) * Complex.exp (Complex.exp 1) ≠ 0 := by
+    rw [h2ee_cast]; exact Complex.ofReal_ne_zero.mpr (ne_of_gt h2ee_pos)
+  rw [dirEml_finite h2ee_ne, dirEml_finite one_ne_zero]
+  congr 1
+  unfold eml
+  rw [lowerLog_one, sub_zero, h2ee_cast, lowerLog_ofReal_pos h2ee_pos,
+    Real.log_mul (by norm_num) (ne_of_gt (Real.exp_pos _)), Real.log_exp]
+  rw [← Complex.ofReal_one, ← Complex.ofReal_exp]
+  have hsub : ((Real.exp 1 : ℝ) : ℂ) - ((Real.log 2 + Real.exp 1 : ℝ) : ℂ) =
+      ((-Real.log 2 : ℝ) : ℂ) := by
+    push_cast; ring
+  rw [hsub, ← Complex.ofReal_exp, Real.exp_neg, Real.exp_log (by norm_num)]
+  push_cast; ring
+
+/-- `σ(x) = 1 / (1 + exp(−x))`, the compiler's word: `div(1, add(1, exp(neg x)))`. -/
+def sigmaToks : List Tok :=
+  Tok.subst [.one]
+    (Tok.subst [.one] (Tok.subst (Tok.subst [.x] [.one] negToks) [.one] expToks) addToks)
+    divToks
+
+theorem neg_at (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml (Tok.subst [.x] [.one] negToks) [] =
+      some [dirEmlMul dirCNegOne (.finite a)] := by
+  rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), negToks_eval]
+
+theorem toC_neg_finite (a : ℂ) :
+    toC (dirEmlMul dirCNegOne (.finite a)) = some (-a) := by
+  have h := neg_correct a 0
+  rw [negToks_eval] at h
+  exact h
+
+/-- **`σ(x)`** is `1 / (1 + exp(−a))` when that denominator is not `0`. -/
+theorem sigma_correct {a : ℂ} (hden : (1 : ℂ) + Complex.exp (-a) ≠ 0) (y : EmlDir) :
+    valueOf (evalTok (.finite 1) (.finite a) y dirEml sigmaToks []) =
+      some (1 / (1 + Complex.exp (-a))) := by
+  have hneg := neg_at a y
+  have hexp : evalTok (.finite 1) (.finite a) y dirEml
+      (Tok.subst (Tok.subst [.x] [.one] negToks) [.one] expToks) [] =
+      some [.finite (Complex.exp (-a))] := by
+    rw [evalAt hneg (evalTok_oneTok _ _), exp_correct_toC (toC_neg_finite a)]
+  have hadd : evalTok (.finite 1) (.finite a) y dirEml
+      (Tok.subst [.one] (Tok.subst (Tok.subst [.x] [.one] negToks) [.one] expToks) addToks) [] =
+      some [.finite (1 + Complex.exp (-a))] := by
+    rw [evalAt (evalTok_oneTok _ _) hexp, addToks_eval, appAdd_finite]
+  rw [sigmaToks, evalAt (evalTok_oneTok _ _) hadd, divToks_eval]
+  exact toC_dirEmlDiv 1 hden
+
+theorem sinh_formula (a : ℂ) :
+    Complex.exp a * (1 - Complex.exp (-(a + a))) * ((1 : ℂ) / 2) = Complex.sinh a := by
+  have hsum : -(a + a) = -a + -a := by ring
+  have hmul : Complex.exp a * Complex.exp (-(a + a)) = Complex.exp (-a) := by
+    rw [← Complex.exp_add, hsum]
+    congr 1
+    ring
+  rw [Complex.sinh, mul_sub, mul_one, hmul]
+  ring
+
+/-- `exp(a) / 2 · (1 − exp(−2a))`. The factor `1/2` is the K 29 word. -/
+def sinhTwoX : List Tok := Tok.subst [.x] [.x] addToks
+
+def sinhEm2 : List Tok :=
+  Tok.subst (Tok.subst sinhTwoX [.one] negToks) [.one] expToks
+
+def sinhGap : List Tok := Tok.subst [.one] sinhEm2 appSubToks
+
+def sinhProd : List Tok :=
+  Tok.subst (Tok.subst [.x] [.one] expToks) sinhGap mulToks
+
+def sinhToks : List Tok := Tok.subst sinhProd halfToks mulToks
+
+/-- **`sinh`** is `Complex.sinh a` when that value is not `0`
+(the zero values pass through a signed zero). -/
+theorem sinh_correct {a : ℂ} (hs : Complex.sinh a ≠ 0) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml sinhToks [] = some [.finite (Complex.sinh a)] := by
+  have ha : a ≠ 0 := by
+    intro ha0
+    apply hs
+    simp [ha0, Complex.sinh_zero]
+  have hsum_ne : a + a ≠ 0 := by
+    rw [show a + a = (2 : ℂ) * a by ring]
+    exact mul_ne_zero two_ne_zero ha
+  have htwo : evalTok (.finite 1) (.finite a) y dirEml sinhTwoX [] = some [.finite (a + a)] := by
+    rw [sinhTwoX, evalAt (evalTok_x _ _) (evalTok_x _ _), addToks_eval, appAdd_finite]
+  have hneg : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst sinhTwoX [.one] negToks) [] =
+      some [.finite (-(a + a))] := by
+    rw [evalAt htwo (evalTok_oneTok _ _), negToks_eval, dirCNegOne_eq_negOne,
+      dirEmlMul_eq_of_ne_zero (by norm_num) hsum_ne, neg_one_mul]
+  have hexp : evalTok (.finite 1) (.finite a) y dirEml sinhEm2 [] =
+      some [.finite (Complex.exp (-(a + a)))] := by
+    rw [sinhEm2, evalAt hneg (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+    rfl
+  have hgap : evalTok (.finite 1) (.finite a) y dirEml sinhGap [] =
+      some [.finite (1 - Complex.exp (-(a + a)))] := by
+    rw [sinhGap, evalAt (evalTok_oneTok _ _) hexp, appSubToks_eval, appSub_finite]
+  have hpos : Complex.exp a ≠ 0 := Complex.exp_ne_zero _
+  have hdiff : 1 - Complex.exp (-(a + a)) ≠ 0 := by
+    intro h0
+    apply hs
+    rw [← sinh_formula]
+    rw [h0, mul_zero, zero_mul]
+  have hprod : evalTok (.finite 1) (.finite a) y dirEml sinhProd [] =
+      some [.finite (Complex.exp a * (1 - Complex.exp (-(a + a))))] := by
+    have hexpa : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst [.x] [.one] expToks) [] =
+        some [.finite (Complex.exp a)] := by
+      rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+      rfl
+    rw [sinhProd, evalAt hexpa hgap, mulToks_eval,
+      dirEmlMul_eq_of_ne_zero hpos hdiff]
+  have hprod_ne : Complex.exp a * (1 - Complex.exp (-(a + a))) ≠ 0 :=
+    mul_ne_zero hpos hdiff
+  have hhalf_ne : (1 : ℂ) / 2 ≠ 0 := by norm_num
+  rw [sinhToks, evalAt hprod (halfToks_eval _ _), mulToks_eval, dirCHalf_eq,
+    dirEmlMul_eq_of_ne_zero hprod_ne hhalf_ne, sinh_formula]
+
+theorem cosh_formula (a : ℂ) :
+    Complex.exp a * (1 - -Complex.exp (-(a + a))) * ((1 : ℂ) / 2) = Complex.cosh a := by
+  have hmul : Complex.exp a * Complex.exp (-(a + a)) = Complex.exp (-a) := by
+    rw [← Complex.exp_add]
+    congr 1
+    ring
+  have hleft : Complex.exp a * (1 - -Complex.exp (-(a + a))) =
+      Complex.exp a + Complex.exp (-a) := by
+    rw [mul_sub, mul_one, mul_neg, hmul, sub_neg_eq_add]
+  rw [Complex.cosh, hleft]
+  ring
+
+/-- `exp(a) / 2 · (1 + exp(−2a))`. -/
+def coshEm2 : List Tok := sinhEm2
+
+def coshNeg : List Tok := Tok.subst coshEm2 [.one] negToks
+
+def coshGap : List Tok := Tok.subst [.one] coshNeg appSubToks
+
+def coshProd : List Tok :=
+  Tok.subst (Tok.subst [.x] [.one] expToks) coshGap mulToks
+
+def coshToks : List Tok := Tok.subst coshProd halfToks mulToks
+
+/-- **`cosh`** is `Complex.cosh a` when that value is not `0`. -/
+theorem cosh_correct {a : ℂ} (hc : Complex.cosh a ≠ 0) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml coshToks [] = some [.finite (Complex.cosh a)] := by
+  -- `a = 0` makes `a + a = 0`, so the negation is `−0`. `exp` accepts it, and `cosh 0 = 1`.
+  by_cases ha : a = 0
+  · subst ha
+    have htwo0 : evalTok (.finite 1) (.finite 0) y dirEml sinhTwoX [] = some [.finite 0] := by
+      rw [sinhTwoX, evalAt (evalTok_x _ _) (evalTok_x _ _), addToks_eval, appAdd_finite]
+      simp
+    have hneg0 : evalTok (.finite 1) (.finite 0) y dirEml (Tok.subst sinhTwoX [.one] negToks) [] =
+        some [.negZero] := by
+      rw [evalAt htwo0 (evalTok_oneTok _ _), negToks_eval, dirCNegOne_eq_negOne, dirEmlMul_negOne_zero]
+    have hexp0 : evalTok (.finite 1) (.finite 0) y dirEml coshEm2 [] = some [.finite 1] := by
+      rw [coshEm2, sinhEm2, evalAt hneg0 (evalTok_oneTok _ _),
+        exp_correct_toC (by rfl : toC .negZero = some 0)]
+      simp [Complex.exp_zero]
+    have hneg1 : evalTok (.finite 1) (.finite 0) y dirEml coshNeg [] = some [.finite (-1)] := by
+      rw [coshNeg, evalAt hexp0 (evalTok_oneTok _ _), negToks_eval, dirCNegOne_eq_negOne,
+        dirEmlMul_eq_of_ne_zero (by norm_num) one_ne_zero, neg_one_mul]
+    have hgap0 : evalTok (.finite 1) (.finite 0) y dirEml coshGap [] = some [.finite (1 - -1)] := by
+      rw [coshGap, evalAt (evalTok_oneTok _ _) hneg1, appSubToks_eval, appSub_finite]
+    have hexpa : evalTok (.finite 1) (.finite 0) y dirEml (Tok.subst [.x] [.one] expToks) [] =
+        some [.finite 1] := by
+      rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+      simp [dirExp, Complex.exp_zero]
+    have hprod0 : evalTok (.finite 1) (.finite 0) y dirEml coshProd [] =
+        some [.finite (1 * (1 - -1))] := by
+      rw [coshProd, evalAt hexpa hgap0, mulToks_eval,
+        dirEmlMul_eq_of_ne_zero one_ne_zero (by norm_num : (1 - -1 : ℂ) ≠ 0)]
+    rw [coshToks, evalAt hprod0 (halfToks_eval _ _), mulToks_eval, dirCHalf_eq,
+      dirEmlMul_eq_of_ne_zero (by norm_num) (by norm_num), Complex.cosh_zero]
+    norm_num
+  have hsum_ne : a + a ≠ 0 := by
+    rw [show a + a = (2 : ℂ) * a by ring]
+    exact mul_ne_zero two_ne_zero ha
+  have htwo : evalTok (.finite 1) (.finite a) y dirEml sinhTwoX [] = some [.finite (a + a)] := by
+    rw [sinhTwoX, evalAt (evalTok_x _ _) (evalTok_x _ _), addToks_eval, appAdd_finite]
+  have hneg2 : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst sinhTwoX [.one] negToks) [] =
+      some [.finite (-(a + a))] := by
+    rw [evalAt htwo (evalTok_oneTok _ _), negToks_eval, dirCNegOne_eq_negOne,
+      dirEmlMul_eq_of_ne_zero (by norm_num) hsum_ne, neg_one_mul]
+  have hexp : evalTok (.finite 1) (.finite a) y dirEml coshEm2 [] =
+      some [.finite (Complex.exp (-(a + a)))] := by
+    rw [coshEm2, sinhEm2, evalAt hneg2 (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+    rfl
+  have hneg : evalTok (.finite 1) (.finite a) y dirEml coshNeg [] =
+      some [.finite (-Complex.exp (-(a + a)))] := by
+    rw [coshNeg, evalAt hexp (evalTok_oneTok _ _), negToks_eval, dirCNegOne_eq_negOne,
+      dirEmlMul_eq_of_ne_zero (by norm_num) (Complex.exp_ne_zero _), neg_one_mul]
+  have hgap : evalTok (.finite 1) (.finite a) y dirEml coshGap [] =
+      some [.finite (1 - -Complex.exp (-(a + a)))] := by
+    rw [coshGap, evalAt (evalTok_oneTok _ _) hneg, appSubToks_eval, appSub_finite]
+  have hpos : Complex.exp a ≠ 0 := Complex.exp_ne_zero _
+  have hdiff : 1 - -Complex.exp (-(a + a)) ≠ 0 := by
+    intro h0
+    apply hc
+    rw [← cosh_formula, h0, mul_zero, zero_mul]
+  have hprod : evalTok (.finite 1) (.finite a) y dirEml coshProd [] =
+      some [.finite (Complex.exp a * (1 - -Complex.exp (-(a + a))))] := by
+    have hexpa : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst [.x] [.one] expToks) [] =
+        some [.finite (Complex.exp a)] := by
+      rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), expToks_eval, dirEmlExp_eq]
+      rfl
+    rw [coshProd, evalAt hexpa hgap, mulToks_eval, dirEmlMul_eq_of_ne_zero hpos hdiff]
+  have hprod_ne : Complex.exp a * (1 - -Complex.exp (-(a + a))) ≠ 0 :=
+    mul_ne_zero hpos hdiff
+  rw [coshToks, evalAt hprod (halfToks_eval _ _), mulToks_eval, dirCHalf_eq,
+    dirEmlMul_eq_of_ne_zero hprod_ne (by norm_num : (1 : ℂ) / 2 ≠ 0), cosh_formula]
+
+/-- `(√z)² = z`, principal square root. -/
+theorem sq_sqrt (z : ℂ) : (z ^ ((1 : ℂ) / 2)) ^ 2 = z := by
+  by_cases hz : z = 0
+  · subst hz
+    simp
+  · rw [Complex.cpow_def_of_ne_zero hz, sq, ← Complex.exp_add]
+    have hcoef : Complex.log z * (1 / 2) + Complex.log z * (1 / 2) = Complex.log z := by ring
+    rw [hcoef, Complex.exp_log hz]
+
+theorem sqrt_ne_zero {z : ℂ} (hz : z ≠ 0) : z ^ ((1 : ℂ) / 2) ≠ 0 := by
+  rw [Complex.cpow_def_of_ne_zero hz]
+  exact Complex.exp_ne_zero _
+
+/-- The argument of `arcosh` is never `0`. -/
+theorem arcosh_arg_ne (a : ℂ) :
+    a + (a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2) ≠ 0 := by
+  intro h
+  have hmul : (a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2) = -a := by
+    apply eq_neg_of_add_eq_zero_left
+    rw [add_comm]
+    exact h
+  have hsq : ((a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2)) ^ 2 = a ^ 2 := by
+    rw [hmul]
+    ring
+  rw [mul_pow, sq_sqrt, sq_sqrt] at hsq
+  have : (a - 1) * (a + 1) = a * a := by
+    simpa [sq] using hsq
+  have : a * a - 1 = a * a := by
+    linear_combination this
+  norm_num at this
+
+/-- `ln(√(1 + x) / √(1 − x))`. -/
+def artanhAdd : List Tok := Tok.subst [.one] [.x] addToks
+
+def artanhSub : List Tok := Tok.subst [.one] [.x] appSubToks
+
+def artanhNum : List Tok := Tok.subst artanhAdd [.one] sqrtToks
+
+def artanhDen : List Tok := Tok.subst artanhSub [.one] sqrtToks
+
+def artanhQuot : List Tok := Tok.subst artanhNum artanhDen divToks
+
+def artanhToks : List Tok := Tok.subst artanhQuot [.one] lnToks
+
+/-- **`artanh`** is `log(√(1+a) / √(1−a))` for `a ≠ ±1`. -/
+theorem artanh_correct {a : ℂ} (hp : a ≠ 1) (hm : a ≠ -1) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml artanhToks [] =
+      some [.finite (Complex.log (((1 + a) ^ ((1 : ℂ) / 2)) / ((1 - a) ^ ((1 : ℂ) / 2))))] := by
+  have hadd_ne : 1 + a ≠ 0 := by
+    intro h
+    apply hm
+    calc a = (1 + a) - 1 := by ring
+      _ = 0 - 1 := by rw [h]
+      _ = -1 := by ring
+  have hsub_ne : 1 - a ≠ 0 := by
+    intro h
+    apply hp
+    calc a = 1 - (1 - a) := by ring
+      _ = 1 - 0 := by rw [h]
+      _ = 1 := by ring
+  have hadd : evalTok (.finite 1) (.finite a) y dirEml artanhAdd [] = some [.finite (1 + a)] := by
+    rw [artanhAdd, evalAt (evalTok_oneTok _ _) (evalTok_x _ _), addToks_eval, appAdd_finite]
+  have hsub : evalTok (.finite 1) (.finite a) y dirEml artanhSub [] = some [.finite (1 - a)] := by
+    rw [artanhSub, evalAt (evalTok_oneTok _ _) (evalTok_x _ _), appSubToks_eval, appSub_finite]
+  have hnum : evalTok (.finite 1) (.finite a) y dirEml artanhNum [] =
+      some [.finite ((1 + a) ^ ((1 : ℂ) / 2))] := by
+    rw [artanhNum, evalAt hadd (evalTok_oneTok _ _), sqrtToks_eval, dirEmlSqrt_all]
+  have hden : evalTok (.finite 1) (.finite a) y dirEml artanhDen [] =
+      some [.finite ((1 - a) ^ ((1 : ℂ) / 2))] := by
+    rw [artanhDen, evalAt hsub (evalTok_oneTok _ _), sqrtToks_eval, dirEmlSqrt_all]
+  have hnum_ne := sqrt_ne_zero hadd_ne
+  have hden_ne := sqrt_ne_zero hsub_ne
+  have hquot_val : (1 + a) ^ ((1 : ℂ) / 2) / (1 - a) ^ ((1 : ℂ) / 2) ≠ 0 :=
+    div_ne_zero hnum_ne hden_ne
+  have hquot : evalTok (.finite 1) (.finite a) y dirEml artanhQuot [] =
+      some [dirEmlDiv (.finite ((1 + a) ^ ((1 : ℂ) / 2)))
+        (.finite ((1 - a) ^ ((1 : ℂ) / 2)))] := by
+    rw [artanhQuot, evalAt hnum hden, divToks_eval]
+  have hto : toC (dirEmlDiv (.finite ((1 + a) ^ ((1 : ℂ) / 2)))
+      (.finite ((1 - a) ^ ((1 : ℂ) / 2)))) =
+      some (((1 + a) ^ ((1 : ℂ) / 2)) / ((1 - a) ^ ((1 : ℂ) / 2))) :=
+    toC_dirEmlDiv _ hden_ne
+  have hfin := toC_of_ne_zero hto hquot_val
+  rw [artanhToks, evalAt hquot (evalTok_oneTok _ _), lnToks_eval, hfin, dirEmlLn_finite_ne_zero hquot_val]
+
+/-- `ln(x + √(x − 1) · √(x + 1))`. -/
+def arcoshRad : List Tok :=
+  Tok.subst (Tok.subst (Tok.subst [.x] [.one] subOneToks) [.one] sqrtToks)
+    (Tok.subst (Tok.subst [.x] [.one] addOneToks) [.one] sqrtToks) mulToks
+
+def arcoshSum : List Tok := Tok.subst [.x] arcoshRad addToks
+
+def arcoshToks : List Tok := Tok.subst arcoshSum [.one] lnToks
+
+/-- `√(−2) = √2 · i`, so its real part is `0`. -/
+theorem sqrt_neg_two : ((-2 : ℂ) ^ ((1 : ℂ) / 2)) = (Real.sqrt 2 : ℂ) * Complex.I := by
+  have hne : (-2 : ℂ) ≠ 0 := by norm_num
+  rw [Complex.cpow_def_of_ne_zero hne, show (-2 : ℂ) = (2 : ℝ) * (-1) by norm_num,
+    Complex.log_ofReal_mul (by norm_num) (by norm_num), Complex.log_neg_one]
+  have hsplit : ((Real.log 2 : ℂ) + Real.pi * Complex.I) * ((1 : ℂ) / 2) =
+      (Real.log 2 / 2 : ℂ) + (Real.pi / 2) * Complex.I := by
+    ring
+  rw [hsplit, Complex.exp_add]
+  have hexp : Complex.exp ((Real.log 2 : ℂ) / 2) = (Real.sqrt 2 : ℂ) := by
+    rw [show (Real.log 2 : ℂ) / 2 = ((Real.log 2 / 2 : ℝ) : ℂ) by push_cast; ring,
+      ← Complex.ofReal_exp]
+    have hx : (Real.exp (Real.log 2 / 2)) ^ 2 = 2 := by
+      rw [sq, ← Real.exp_add]
+      have : Real.log 2 / 2 + Real.log 2 / 2 = Real.log 2 := by ring
+      rw [this, Real.exp_log (by norm_num)]
+    rw [← Real.sqrt_sq (Real.exp_nonneg _), hx]
+  rw [hexp, Complex.exp_pi_div_two_mul_I]
+
+/-- **`arcosh`** is `log(a + √(a−1) · √(a+1))` for every `a`. The sum is never `0`. -/
+theorem arcosh_correct (a : ℂ) (y : EmlDir) :
+    evalTok (.finite 1) (.finite a) y dirEml arcoshToks [] =
+      some [.finite (Complex.log (a + (a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2)))] := by
+  have hsub : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst [.x] [.one] subOneToks) [] =
+      some [.finite (a - 1)] := by
+    rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), subOneToks_eval, appRot_finite]
+  have hadd1 : evalTok (.finite 1) (.finite a) y dirEml (Tok.subst [.x] [.one] addOneToks) [] =
+      some [.finite (a + 1)] := by
+    rw [evalAt (evalTok_x _ _) (evalTok_oneTok _ _), addOneToks_eval, dirCNegOne_eq_negOne,
+      appRot_finite, sub_neg_eq_add]
+  have hs1 : evalTok (.finite 1) (.finite a) y dirEml
+      (Tok.subst (Tok.subst [.x] [.one] subOneToks) [.one] sqrtToks) [] =
+      some [.finite ((a - 1) ^ ((1 : ℂ) / 2))] := by
+    rw [evalAt hsub (evalTok_oneTok _ _), sqrtToks_eval, dirEmlSqrt_all]
+  have hs2 : evalTok (.finite 1) (.finite a) y dirEml
+      (Tok.subst (Tok.subst [.x] [.one] addOneToks) [.one] sqrtToks) [] =
+      some [.finite ((a + 1) ^ ((1 : ℂ) / 2))] := by
+    rw [evalAt hadd1 (evalTok_oneTok _ _), sqrtToks_eval, dirEmlSqrt_all]
+  by_cases h1 : a = 1
+  · subst h1
+    have hleft : ((1 : ℂ) - 1) ^ ((1 : ℂ) / 2) = 0 := by simp
+    have hright_ne : ((1 : ℂ) + 1) ^ ((1 : ℂ) / 2) ≠ 0 :=
+      sqrt_ne_zero (by norm_num : (1 : ℂ) + 1 ≠ 0)
+    have hmul : evalTok (.finite 1) (.finite 1) y dirEml arcoshRad [] = some [.finite 0] := by
+      rw [arcoshRad, evalAt hs1 hs2, mulToks_eval, hleft, dirEmlMul_zero_left hright_ne]
+    have hsum : evalTok (.finite 1) (.finite 1) y dirEml arcoshSum [] = some [.finite 1] := by
+      rw [arcoshSum, evalAt (evalTok_x _ _) hmul, addToks_eval, appAdd_finite]
+      simp
+    rw [arcoshToks, evalAt hsum (evalTok_oneTok _ _), lnToks_eval,
+      dirEmlLn_finite_ne_zero (by norm_num : (1 : ℂ) ≠ 0)]
+    simp [Complex.log_one]
+  · by_cases hm : a = -1
+    · subst hm
+      have hleft : ((-1 : ℂ) - 1) ^ ((1 : ℂ) / 2) = (Real.sqrt 2 : ℂ) * Complex.I := by
+        rw [show ((-1 : ℂ) - 1) = -2 by norm_num]
+        exact sqrt_neg_two
+      have hleft_ne : (Real.sqrt 2 : ℂ) * Complex.I ≠ 0 := by
+        refine mul_ne_zero ?_ Complex.I_ne_zero
+        exact Complex.ofReal_ne_zero.mpr (Real.sqrt_ne_zero'.mpr (by norm_num : (0 : ℝ) < 2))
+      have hre : 0 ≤ ((Real.sqrt 2 : ℂ) * Complex.I).re := by simp
+      have hright : ((-1 : ℂ) + 1) ^ ((1 : ℂ) / 2) = 0 := by simp
+      have hmul : evalTok (.finite 1) (.finite (-1)) y dirEml arcoshRad [] = some [.finite 0] := by
+        rw [arcoshRad, evalAt hs1 hs2, mulToks_eval, hleft, hright,
+          dirEmlMul_eq hleft_ne hre, mul_zero]
+      have hsum : evalTok (.finite 1) (.finite (-1)) y dirEml arcoshSum [] =
+          some [.finite (-1)] := by
+        rw [arcoshSum, evalAt (evalTok_x _ _) hmul, addToks_eval, appAdd_finite]
+        simp
+      rw [arcoshToks, evalAt hsum (evalTok_oneTok _ _), lnToks_eval,
+        dirEmlLn_finite_ne_zero (by norm_num : (-1 : ℂ) ≠ 0)]
+      simp [Complex.log_neg_one]
+    · have hleft_ne : (a - 1) ^ ((1 : ℂ) / 2) ≠ 0 := by
+        apply sqrt_ne_zero
+        intro h
+        apply h1
+        calc a = (a - 1) + 1 := by ring
+          _ = 0 + 1 := by rw [h]
+          _ = 1 := by ring
+      have hright_ne : (a + 1) ^ ((1 : ℂ) / 2) ≠ 0 := by
+        apply sqrt_ne_zero
+        intro h
+        apply hm
+        calc a = (a + 1) - 1 := by ring
+          _ = 0 - 1 := by rw [h]
+          _ = -1 := by ring
+      have hmul : evalTok (.finite 1) (.finite a) y dirEml arcoshRad [] =
+          some [.finite ((a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2))] := by
+        rw [arcoshRad, evalAt hs1 hs2, mulToks_eval, dirEmlMul_eq_of_ne_zero hleft_ne hright_ne]
+      set p : ℂ := (a - 1) ^ ((1 : ℂ) / 2) * (a + 1) ^ ((1 : ℂ) / 2)
+      have hsum : evalTok (.finite 1) (.finite a) y dirEml arcoshSum [] = some [.finite (a + p)] := by
+        rw [arcoshSum, evalAt (evalTok_x _ _) hmul, addToks_eval, appAdd_finite]
+      have harg := arcosh_arg_ne a
+      rw [arcoshToks, evalAt hsum (evalTok_oneTok _ _), lnToks_eval, dirEmlLn_finite_ne_zero harg]
 
 end Eml.AppOps
