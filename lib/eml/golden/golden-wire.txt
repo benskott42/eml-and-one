@@ -189,7 +189,7 @@ expr: sinh(1e-7*i)-1e-7*i | exact: — | exact-notes: couldn't verify,series-sho
 expr: sinh(5e-7)-5e-7 | exact: — | exact-notes: couldn't verify,series-shortcut | float: 0 | float-notes:  | press: 11 | round-trip: OK | eval2: — | eval2-notes: couldn't verify,series-shortcut
 expr: sqrt(-0) | exact: −0 | exact-notes: certified | float: −0 | float-notes:  | press: N/A | round-trip: OK | eval2: −0 | eval2-notes: certified
 expr: sqrt(2) | exact: 1.414213562373 | exact-notes: certified | float: 1.41421356237 | float-notes:  | press: 61+ | round-trip: OK | eval2: 1.414213562373 | eval2-notes: certified
-expr: tan(10^(-20)) | exact: 1×10^−20 | exact-notes: certified,ln0,series-shortcut | float: 1×10^−20 ≈ | float-notes: ln0 | press: 244697+ | round-trip: OK | eval2: 1×10^−20 | eval2-notes: certified,ln0,series-shortcut
+expr: tan(10^(-20)) | exact: 1×10^−20 | exact-notes: certified,ln0,series-shortcut | float: 1×10^−20 ≈ | float-notes: ln0 | press: 244403+ | round-trip: OK | eval2: 1×10^−20 | eval2-notes: certified,ln0,series-shortcut
 expr: tan(10^(-40)) | exact: 1×10^−40 | exact-notes: certified,ln0,series-shortcut | float: 1×10^−40 ≈ | float-notes: ln0 | press: 103355+ | round-trip: OK | eval2: 1×10^−40 | eval2-notes: certified,ln0,series-shortcut
 expr: tan(10^(-5000)) | exact: — | exact-notes: couldn't verify,ln0 | float: −0 | float-notes: ln0,underflowed | press: 18357+ | round-trip: OK | eval2: — | eval2-notes: couldn't verify,ln0
 expr: tan(1e-5000) | exact: 1×10^−5000 | exact-notes: certified,series-shortcut | float: 0 | float-notes: ln0,underflowed,differs-from-exact | press: 530017+ | round-trip: OK | eval2: 1×10^−5000 | eval2-notes: certified,series-shortcut

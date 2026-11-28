@@ -13,6 +13,7 @@ import {
   isLostTiny,
   isNegationPair,
   isNonfiniteNode,
+  certifiedZeroSign,
   knownValue,
   mayBeInfinite,
   markInfiniteSource,
@@ -23,6 +24,8 @@ import {
   noteTinyReal,
   naiveSub,
   negativeZero,
+  noteRealArctan,
+  noteRealImage,
   shieldLift,
   noteExp,
   noteLn,
@@ -40,7 +43,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, derive, dependsOnUnverified, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -562,6 +565,8 @@ export function tSub(a: Node, b: Node): Node {
 }
 
 function tSubBuild(a: Node, b: Node): Node {
+  const zeros = signedZeroSum(a, b, true);
+  if (zeros) return zeros;
   const series = cosMinusOne(a, b) ?? expMinusOne(a, b) ?? sqrtMinusOne(a, b);
   if (series) return derive("sub", markMaybeInfinite(series, a, b), a, b);
   const node = domainSub(a, b);
@@ -606,6 +611,8 @@ export function tAdd(a: Node, b: Node): Node {
 }
 
 function tAddBuild(a: Node, b: Node): Node {
+  const zeros = signedZeroSum(a, b, false);
+  if (zeros) return zeros;
   const cancelled = sumOfNegation(a, b);
   if (cancelled) return cancelled;
   const large = largeRealSum(a, b);
@@ -671,7 +678,10 @@ function userSumBuild(a: Node, b: Node, sub: boolean): Node {
   // An operand refused as unverified can carry a float-known 0 (its overflowed terms read as 0).
   // It is not an identity: dropping it would certify the other operand as the whole sum.
   const refused = isUnverified(a) || isUnverified(b) || isExactUnsure(a) || isExactUnsure(b);
+  // (+0) + (−0) is +0. exactZero used to treat +0 as an identity and return the −0.
   if (!same && !negation && !refused) {
+    const zeros = signedZeroSum(a, b, sub);
+    if (zeros) return zeros;
     if (exactZero(b)) return a;
     if (!sub && exactZero(a)) return b;
     if (sub && exactZero(a)) return tNeg(b);
@@ -693,7 +703,7 @@ export function tInv(b: Node): Node {
 }
 
 function exactZero(node: Node): boolean {
-  if (isUnverified(node) || isExactUnsure(node)) return false;
+  if (isUnverified(node) || isExactUnsure(node) || dependsOnUnverified(node)) return false;
   if (provenInteger(node) === BigInt(0)) return true;
   const known = knownValue(node);
   return !!known && known.im === 0 && known.re === 0 && !Object.is(known.re, -0);
@@ -701,16 +711,60 @@ function exactZero(node: Node): boolean {
 
 /** A known −0 or 0. exactZero leaves −0 out, since −0 is not an identity of a sum. */
 function signedZero(node: Node): boolean {
-  if (isUnverified(node) || isExactUnsure(node)) return false;
+  if (isUnverified(node) || isExactUnsure(node) || dependsOnUnverified(node)) return false;
   const known = knownValue(node);
   return !!known && known.re === 0 && known.im === 0;
 }
 
-function negativeFactor(node: Node): boolean {
-  const v = knownValue(node);
-  if (!v || !(v.im === 0 || Object.is(v.im, -0))) return false;
-  if (!Number.isFinite(v.re)) return false;
-  return v.re < 0 || Object.is(v.re, -0);
+/**
+ * Sum or difference of two certified zeros.
+ * IEEE addition is −0 only when both operands are −0. Subtraction negates the right one first.
+ */
+function signedZeroSum(a: Node, b: Node, sub: boolean): Node | null {
+  const left = certifiedZeroSign(a);
+  const right = certifiedZeroSign(b);
+  if (left === null || right === null) return null;
+  const sign = sub ? -right : right;
+  return left === -1 && sign === -1 ? negativeZero() : tZero();
+}
+
+/**
+ * Sign of a certified finite factor, for the IEEE rule sign(0·a) = sign(a).
+ * −1 is a negative real, including −0. +1 is anything certified not to be one.
+ * null means this node alone does not decide.
+ */
+function realFactorSign(node: Node): -1 | 1 | null {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && Number.isFinite(v.re)) {
+    if (Object.is(v.re, -0) || v.re < 0) return -1;
+    return 1;
+  }
+  if (v && Number.isFinite(v.re) && Number.isFinite(v.im) && !imagZero(v)) return 1;
+  const range = rangeOf(node);
+  if (!range.re || !range.im) return null;
+  const real = range.im.lo === 0 && range.im.hi === 0;
+  if (real && Number.isFinite(range.re.lo) && Number.isFinite(range.re.hi)) {
+    if (range.re.hi < 0 || (Object.is(range.re.lo, -0) && Object.is(range.re.hi, -0))) return -1;
+    // A real enclosure that never goes negative is +0 under IEEE, 0·0 included.
+    if (range.re.lo > 0 || (range.re.lo === 0 && range.re.hi >= 0 && !Object.is(range.re.lo, -0))) return 1;
+    return null;
+  }
+  if ((range.im.lo > 0 || range.im.hi < 0) && provenFinite(node)) return 1;
+  return null;
+}
+
+/**
+ * Sign of 0·a. One rule for a literal, a computed enclosure, and a variable
+ * bound to either: the sign of a, when that sign is certified.
+ * null means the sign cannot be certified. A cap-collapsed tiny has no sign
+ * left; 0 times it stays the certified +0.
+ */
+function zeroProductSign(node: Node): -1 | 1 | null {
+  if (isUnverified(node) || isExactUnsure(node)) return null;
+  // The cap erased this magnitude, so 0 times it is the certified +0.
+  // (0−10^(−500))·0 is that zero, not a signed −0.
+  if (isLostTiny(node)) return 1;
+  return realFactorSign(node);
 }
 
 /** A known infinity, or a node marked non-finite. ln(0) is −∞ and is not marked. */
@@ -902,6 +956,13 @@ function factorQuarter(node: Node): number | null {
  * A finite factor whose angle is not a quarter turn. 1+i is one.
  * An unknown range is not this: the product word still has to run.
  */
+function factorIsReal(node: Node): boolean {
+  const v = node.type === "input" ? node.value : knownValue(node);
+  if (v && imagZero(v) && Number.isFinite(v.re)) return true;
+  const range = rangeOf(node);
+  return !!range.re && !!range.im && range.im.lo === 0 && range.im.hi === 0 && Number.isFinite(range.re.lo) && Number.isFinite(range.re.hi);
+}
+
 function offAxis(node: Node): boolean {
   if (factorQuarter(node) !== null) return false;
   const v = node.type === "input" ? node.value : knownValue(node);
@@ -921,17 +982,31 @@ export function tMul(a: Node, b: Node): Node {
 
 function tMulBuild(a: Node, b: Node): Node {
   // 0 · ∞ is indeterminate. A known −∞ is not a finite negative factor, so it must not become −0.
-  if ((exactZero(a) && nonFiniteFactor(b)) || (exactZero(b) && nonFiniteFactor(a))) {
+  if ((certifiedZeroSign(a) !== null && nonFiniteFactor(b)) || (certifiedZeroSign(b) !== null && nonFiniteFactor(a))) {
     const pole = nonFiniteFactor(a) ? a : b;
     return markMaybeInfinite(naiveIndeterminate(pole), a, b);
   }
-  // 0 · (−1) is the −0 leaf. The product program collapses that sign.
-  if (exactZero(a) && negativeFactor(b)) return negativeZero();
-  if (exactZero(b) && negativeFactor(a)) return negativeZero();
-  // 0 times a finite value is exactly 0. The other factor's cap mark stops here,
-  // so 0·10^(−500) stays a certified 0.
-  if (exactZero(a) && provenFinite(b)) return tZero();
-  if (exactZero(b) && provenFinite(a)) return tZero();
+  // sign(0·a) is sign(a) whenever that sign is certified. The product word
+  // collapses it, so the leaf is chosen here for every path that can see a.
+  const za = certifiedZeroSign(a);
+  const zb = certifiedZeroSign(b);
+  if (za !== null || zb !== null) {
+    // (−0)·(−0) is +0. The product word prints −0 and exact mode refuses it;
+    // negating that refusal certified +0.
+    if (za !== null && zb !== null) return za === zb ? tZero() : negativeZero();
+    const zSign = (za ?? zb) as -1 | 1;
+    const other = za !== null ? b : a;
+    if (isUnverified(other) || isExactUnsure(other) || dependsOnUnverified(other)) return markUnverified(rawMul(a, b));
+    const sign = zeroProductSign(other);
+    // +0 times any certified finite is +0. −0 flips a certified real only:
+    // −0·i is −0i, not the real −0.
+    if (sign === 1 && zSign === 1) return tZero();
+    if (sign !== null && factorIsReal(other)) return zSign === sign ? tZero() : negativeZero();
+    // A finite enclosure that still contains a negative real must not become
+    // the certified +0 the product word would print. A non-real factor times
+    // −0 is not that case: the product word still has to run.
+    if (sign === null && provenFinite(other)) return markUnverified(rawMul(a, b));
+  }
   // Carry the angle. Two infinities add their quarter turns. A factor off an
   // axis has no quarter turn, and the product word would still certify a real ∞.
   const dirA = directionOf(a);
@@ -1025,7 +1100,7 @@ export function tDiv(a: Node, b: Node): Node {
 function tDivBuild(a: Node, b: Node): Node {
   // A finite numerator over a directed infinity is 0. The quotient word can
   // leave a signed zero in the opposite direction.
-  if (directionOf(b) && !directionOf(a) && provenFinite(a)) return tZero();
+  if (directionOf(b) && !directionOf(a) && provenFinite(a) && !isUnverified(a) && !isExactUnsure(a) && !dependsOnUnverified(a)) return tZero();
   // (∞i)/2 is not the real infinity the quotient word prints.
   if (oddDirection(a) && !directionOf(b) && provenFinite(b)) return markUnverified(rawDiv(a, b));
   // exp(u)/exp(v) = exp(u − v) when the exponents are integers or small,
@@ -1054,19 +1129,25 @@ export function tPow(a: Node, b: Node): Node {
   // An infinite base (ln(0)^0) keeps the word and stays undefined.
   // −0 is that zero too: IEEE pow(0, −0) is 1, and 0^−0 printed undefined.
   if ((exactZero(b) || signedZero(b)) && provenFinite(a)) return recognized(ONE);
-  // (−0)^b for a positive real b: −0 for odd positive integers, +0 otherwise (matching IEEE pow).
-  // Without this, applyProgram("pow", −0, 2) evaluates exp(2·ln(−0)) = exp(−∞ + 2πi) and loses its angle.
-  if (signedZero(a) && !isUnverified(b) && !isExactUnsure(b)) {
+  // (−0)^b. A positive odd integer keeps −0; every other positive real exponent is +0.
+  // A negative odd integer of −0 is −∞; every other negative real exponent is +∞.
+  // The power word evaluates exp(b·ln(−0)) and loses the sign, so (−0)^(−1) printed +∞.
+  const baseZero = certifiedZeroSign(a);
+  if (baseZero !== null && !isUnverified(b) && !isExactUnsure(b) && !dependsOnUnverified(b)) {
     const exp = integerExponent(b);
     if (exp !== null && exp > BigInt(0)) {
-      return recognized(exp % BigInt(2) === BigInt(1) ? negativeZero() : tZero());
+      return recognized(baseZero === -1 && exp % BigInt(2) === BigInt(1) ? negativeZero() : tZero());
+    }
+    if (exp !== null && exp < BigInt(0)) {
+      const odd = exp % BigInt(2) !== BigInt(0);
+      return tInv(baseZero === -1 && odd ? negativeZero() : tZero());
     }
     const rb = exactRationalOf(b);
     if (rb && rb.n > BigInt(0)) return recognized(tZero());
+    if (rb && rb.n < BigInt(0)) return tInv(tZero());
     const vb = knownValue(b);
-    if (vb && vb.im === 0 && vb.re > 0 && Number.isFinite(vb.re)) {
-      return recognized(tZero());
-    }
+    if (vb && vb.im === 0 && vb.re > 0 && Number.isFinite(vb.re)) return recognized(tZero());
+    if (vb && vb.im === 0 && vb.re < 0 && Number.isFinite(vb.re)) return tInv(tZero());
   }
   // An integer power multiplies the quarter turn. ^2 was the only case, so
   // (∞i)^3 stayed the power word and came out a real infinity.
@@ -1168,7 +1249,8 @@ export function tSqrt(t: Node): Node {
   if (v && imagZero(v) && v.re === Number.POSITIVE_INFINITY) return rememberDirection(t, 0);
   if (v && imagZero(v) && v.re === Number.NEGATIVE_INFINITY) return rememberDirection(t, 1);
   // sqrt(−0) is −0. The short word returns +0, and 1 over that is the wrong infinity.
-  if (v && Object.is(v.re, -0) && imagZero(v)) return negativeZero();
+  // An unverified −0 is not that leaf: returning it would certify the sign.
+  if (v && Object.is(v.re, -0) && imagZero(v) && !isUnverified(t) && !isExactUnsure(t) && !dependsOnUnverified(t)) return negativeZero();
   // sqrt of an imaginary infinity is off the axis. The square-root word prints a real infinity.
   if (oddDirection(t)) return markUnverified(applyProgram("sqrt", { x: t }));
   const node = applyProgram("sqrt", { x: t });
@@ -1423,6 +1505,7 @@ const ARCTAN_ODD: SignedRatio[] = Array.from({ length: 12 }, (_, i) => ({
  * "couldn't verify", and arcsin(−0) was undefined in float.
  */
 function oddAtZero(t: Node): Node | null {
+  if (isUnverified(t) || isExactUnsure(t) || dependsOnUnverified(t)) return null;
   if (provenInteger(t) === BigInt(0)) return recognized(tZero());
   if (t.type === "input" && Object.is(t.value.re, -0) && t.value.im === 0) return recognized(t);
   return null;
@@ -1439,7 +1522,7 @@ export function tSin(t: Node): Node {
   if (series) return series;
   const it = tMul(tI(), t);
   const num = tSub(tExp(it), tExp(tNeg(it)));
-  return flagAngle(tDiv(num, tMul(tTwo(), tI())), t, false);
+  return noteRealImage(flagAngle(tDiv(num, tMul(tTwo(), tI())), t, false), t, Math.sin, 1);
 }
 
 export function tCos(t: Node): Node {
@@ -1450,7 +1533,7 @@ export function tCos(t: Node): Node {
   const it = tMul(tI(), t);
   const node = flagAngle(tHalfOf(tAdd(tExp(it), tExp(tNeg(it)))), t, false);
   noteBuiltFrom(node, { cosArg: t });
-  return node;
+  return noteRealImage(node, t, Math.cos, 1);
 }
 
 export function tTan(t: Node): Node {
@@ -1474,7 +1557,7 @@ export function tTan(t: Node): Node {
   const grown = isSymbolicTanPole(t) ? expGates(tMul(tTwo(), w)) : tExp(tMul(tTwo(), w));
   const tanh = tSub(ONE, tDiv(tTwo(), tAdd(grown, ONE)));
   const built = flagAngle(tMul(tNeg(tI()), tanh), t, true);
-  if (!isSymbolicTanPole(t)) return built;
+  if (!isSymbolicTanPole(t)) return noteRealImage(built, t, Math.tan, 4);
   // Those gates are a large finite, so tan(π/2) − tan(π/2) would be 0.
   // Dividing by 0 makes this pole a real infinity. The difference is then ∞ − ∞.
   return markInfiniteSource(flagAngle(rawDiv(built, tZero()), t, true));
@@ -1595,7 +1678,19 @@ export function tArcsin(t: Node): Node {
   // while keeping the truncation tail past 124 digits. Below 10^(−60) the x³/6
   // term is not kept beside x: not certified.
   if (box !== null && box < 1e-4) {
-    return box < 1e-60 ? markUnverified(arcsinSeries(t, box)) : markSeries(arcsinSeries(t, box), SMALL_NOTE);
+    const series = arcsinSeries(t, box);
+    // A float range of 0 collapses the product onto the shared integer 0.
+    // Stamping that node unverified poisons π/2, which was built first.
+    // π/2 − 0 folds back to that half, so in-process acos stays certified.
+    // The wire rebuilds the half after the mark, and the refusal climbs.
+    // The collapsed value is the same exact 0 a proven integer takes above.
+    // A refused argument collapses onto that same 0. The refusal has to live
+    // on a fresh node, or arsinh of an overflowed sum is certified 0.
+    if (provenInteger(series) === BigInt(0)) {
+      if (isUnverified(t) || isExactUnsure(t) || dependsOnUnverified(t)) return markUnverified(E(t, ONE));
+      return recognized(series);
+    }
+    return box < 1e-60 ? markUnverified(series) : markSeries(series, SMALL_NOTE);
   }
   const re = realBounds(t);
   const side = provenImagSign(t);
@@ -1610,12 +1705,12 @@ export function tArcsin(t: Node): Node {
   const rad = tMul(sqrtOneMinus(t), sqrtOnePlus(t));
   const it = tMul(tI(), t);
   const upper = side === -1 || (side === 0 && !!re && re.lo >= 0);
-  if (lower) return tMul(tI(), tLn(tSub(rad, it)));
-  if (upper) return tMul(tNeg(tI()), tLn(tAdd(it, rad)));
+  if (lower) return noteRealImage(tMul(tI(), tLn(tSub(rad, it))), t, Math.asin, 2);
+  if (upper) return noteRealImage(tMul(tNeg(tI()), tLn(tAdd(it, rad))), t, Math.asin, 2);
   const lnP = tLn(tAdd(it, rad));
   const z = tAdd(lnP, tMul(integerNode(10), tI()));
   const sigma = tDiv(tSqrt(tSqr(z)), z);
-  return tMul(tMul(tNeg(tI()), sigma), tLn(tAdd(tMul(sigma, it), rad)));
+  return noteRealImage(tMul(tMul(tNeg(tI()), sigma), tLn(tAdd(tMul(sigma, it), rad))), t, Math.asin, 2);
 }
 
 /** −i·Log(z + i·√(1 − z)·√(1 + z)), for z next to 1, where it does not cancel. */
@@ -1636,7 +1731,7 @@ export function tArccos(t: Node): Node {
   if (known && imagZero(known) && known.re === 1) return arccosNearOne(t);
   if (known && imagZero(known) && known.re === -1) return tSub(tPi(), arccosNearOne(tNeg(t)));
   // acos = π/2 − asin, so a real x > 1 has positive imaginary part.
-  return tSub(tHalfOf(tPi()), tArcsin(t));
+  return noteRealImage(tSub(tHalfOf(tPi()), tArcsin(t)), t, Math.acos, 2);
 }
 
 export function tArctan(t: Node): Node {
@@ -1672,7 +1767,7 @@ export function tArctan(t: Node): Node {
   // mpmath's atanh. Bypass tArtanh's < 1e-6 linear shortcut here: tArctan already
   // handled tiny arguments via tinyRealArgument / oddSeries above, so 1e-20 < |z| < 1e-6
   // stays on the exact closed form instead of dropping z³/3.
-  return tMul(tNeg(tI()), tArtanhClosed(tMul(tI(), t)));
+  return noteRealArctan(tMul(tNeg(tI()), tArtanhClosed(tMul(tI(), t))), t);
 }
 
 function asinhBox(t: Node): number | null {
@@ -1701,7 +1796,13 @@ export function tArsinh(t: Node): Node {
   const zero = oddAtZero(t);
   if (zero) return zero;
   const known = knownValue(t);
-  if (!isUnverified(t) && !isExactUnsure(t) && ((known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) || provenInteger(t) === BigInt(0))) return recognized(tZero());
+  const zeroSign = certifiedZeroSign(t);
+  if (zeroSign === -1) return recognized(negativeZero());
+  if (zeroSign === 1) return recognized(tZero());
+  if (!isUnverified(t) && !isExactUnsure(t) && !dependsOnUnverified(t) && known && known.re === 0 && (known.im === 0 || Object.is(known.im, -0))) {
+    // A point whose real part is −0 is arsinh(−0) = −0. The +0 point already returned above.
+    return recognized(Object.is(known.re, -0) ? negativeZero() : tZero());
+  }
   const unit = factsOf(t).imaginaryUnit;
   if (unit) {
     const quarter = tMul(tI(), tHalfOf(tPi()));
@@ -1828,14 +1929,14 @@ export function tHypot(a: Node, b: Node): Node {
   const ra = exactRationalOf(a);
   const rb = exactRationalOf(b);
   if (ra && rb) {
-    if (ra.n === BigInt(0) && rb.n === BigInt(0)) return tZero();
+    if (ra.n === BigInt(0) && rb.n === BigInt(0) && !isUnverified(a) && !isUnverified(b) && !isExactUnsure(a) && !isExactUnsure(b) && !dependsOnUnverified(a) && !dependsOnUnverified(b)) return tZero();
     if (ra.n === BigInt(0)) return rb.n < BigInt(0) ? tNeg(b) : b;
     if (rb.n === BigInt(0)) return ra.n < BigInt(0) ? tNeg(a) : a;
   }
   const va = knownValue(a);
   const vb = knownValue(b);
   if (va && vb && va.im === 0 && vb.im === 0) {
-    if (va.re === 0 && vb.re === 0) return tZero();
+    if (va.re === 0 && vb.re === 0 && !isUnverified(a) && !isUnverified(b) && !isExactUnsure(a) && !isExactUnsure(b) && !dependsOnUnverified(a) && !dependsOnUnverified(b)) return tZero();
     const ma = Math.abs(va.re);
     const mb = Math.abs(vb.re);
     if (ma === 0) return tAbs(b);

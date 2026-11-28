@@ -1,6 +1,6 @@
 import { E, ONE, ROT_IM_MAX, ROT_IM_MIN, input, notePrecision, onCircuitIsolate, type Node } from "./node";
 import { applyProgram, programNode } from "./programs";
-import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, factsOf, inScaledShell, intDecade, intProductFits, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, learn, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBesideSum, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
+import { builtSubOf, builtSumOf, clearProvenInt, decadeOf, dependsOnUnverified, factsOf, inScaledShell, intDecade, intProductFits, isExactUnsure, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isSeriesShortcut, isTwoScaled, isUnverified, learn, markExactUnsure, markInfiniteSource, markMaybeInfinite, markSeriesShortcut, markTwoScaled, markUnverified, mayBeInfinite, noteBesideSum, noteBuiltFrom, noteBuiltSub, noteBuiltSum, noteDecade, noteLiftedCombine, noteLostTiny, noteMarkedExactInt, noteNonfinite, noteOverflow, noteProvenInt, noteScaledShell, provenInteger, recordedPoleSign, resetExpressionFacts } from "./facts";
 
 export { decadeOf, inScaledShell, isLiftedCombine, isLostTiny, isMarkedExactInt, isNonfiniteNode, isTwoScaled, markInfiniteSource, markMaybeInfinite, markTwoScaled, mayBeInfinite, noteDecade, noteLiftedCombine, noteLostTiny, noteNonfinite, noteOverflow, noteScaledShell };
 
@@ -123,6 +123,75 @@ export function rangeOf(node: Node): Range {
     if (Number.isFinite(re) && Number.isFinite(im)) return point(re, im);
   }
   return UNKNOWN;
+}
+
+/**
+ * arctan of a real off zero stays real and keeps that sign, inside (−π/2, π/2).
+ * The closed form does not record a range, so a later 0·arctan could not see it.
+ */
+export function noteRealArctan(node: Node, arg: Node): Node {
+  const range = rangeOf(arg);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return node;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return node;
+  const pad = 1e-12;
+  if (range.re.hi < 0) {
+    const far = Math.atan(range.re.lo);
+    const near = Math.atan(range.re.hi);
+    const hi = Math.min(near + pad, -Number.MIN_VALUE);
+    const lo = far - pad;
+    if (!(hi < 0) || !Number.isFinite(lo)) return node;
+    return setRange(node, { re: { lo: Math.min(lo, hi), hi }, im: { lo: 0, hi: 0 } });
+  }
+  if (range.re.lo > 0) {
+    const near = Math.atan(range.re.lo);
+    const far = Math.atan(range.re.hi);
+    const lo = Math.max(near - pad, Number.MIN_VALUE);
+    const hi = far + pad;
+    if (!(lo > 0) || !Number.isFinite(hi)) return node;
+    return setRange(node, { re: { lo, hi: Math.max(lo, hi) }, im: { lo: 0, hi: 0 } });
+  }
+  return node;
+}
+
+/**
+ * A real image of a narrow real argument, with the sign Math.f records.
+ * cos(1) is built as a complex exponential and its box crosses zero, so
+ * 0·cos(1) could not see that cos(1) is positive. The pad is one ulp of
+ * slack plus the Lipschitz bound over the argument's width. A wide argument,
+ * or a value that the pad reaches across zero, keeps the box it had.
+ */
+export function noteRealImage(node: Node, arg: Node, fn: (x: number) => number, lipschitz: number): Node {
+  if (isUnverified(node) || isExactUnsure(node)) return node;
+  // Keep a range that already decides the sign, and keep a point. A slack
+  // interval in place of cos(0)'s box made acos(cos(0)) unverified.
+  const existing = rangeOf(node);
+  if (existing.re && existing.im && existing.im.lo === 0 && existing.im.hi === 0 && Number.isFinite(existing.re.lo) && Number.isFinite(existing.re.hi)) {
+    if (existing.re.lo === existing.re.hi || existing.re.lo > 0 || existing.re.hi < 0) return node;
+  }
+  const range = rangeOf(arg);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return node;
+  const lo = range.re.lo;
+  const hi = range.re.hi;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return node;
+  const width = hi - lo;
+  if (width > 1e-4) return node;
+  const mid = (lo + hi) / 2;
+  // Past this, a float evaluation of sin or cos no longer has a trustworthy sign.
+  if (Math.abs(mid) > 1e8) return node;
+  const y = fn(mid);
+  if (!Number.isFinite(y) || !Number.isFinite(lipschitz) || lipschitz < 0) return node;
+  const slack = width * lipschitz + 1e-12;
+  if (y > slack) {
+    const left = y - slack;
+    if (!(left > 0)) return node;
+    return setRange(node, { re: { lo: left, hi: y + slack }, im: { lo: 0, hi: 0 } });
+  }
+  if (y < -slack) {
+    const right = y + slack;
+    if (!(right < 0)) return node;
+    return setRange(node, { re: { lo: y - slack, hi: right }, im: { lo: 0, hi: 0 } });
+  }
+  return node;
 }
 
 function ulp(x: number): number {
@@ -465,6 +534,35 @@ function realZeroValue(v: { re: number; im: number } | null): boolean {
   return (Object.is(v.re, 0) || Object.is(v.re, -0)) && (v.im === 0 || Object.is(v.im, -0));
 }
 
+/**
+ * Sign of a zero leaf: the −0 input, a typed ±0, or the integer 0.
+ * A computed point whose float is +0 is not one of these. An underflowed
+ * power prints that point, and dividing it has to keep the exact circuit.
+ */
+function leafZeroSign(node: Node): -1 | 1 | null {
+  if (isUnverified(node) || isExactUnsure(node) || dependsOnUnverified(node)) return null;
+  if (node === negZero) return -1;
+  if (provenInteger(node) === BigInt(0)) return 1;
+  if (node.type === "input") {
+    const { re, im } = node.value;
+    if ((im === 0 || Object.is(im, -0)) && (Object.is(re, 0) || Object.is(re, -0))) {
+      return Object.is(re, -0) ? -1 : 1;
+    }
+  }
+  return null;
+}
+
+/** +1 or −1 when the range is a finite real that does not contain 0. */
+function realSide(node: Node): -1 | 1 | null {
+  if (isUnverified(node) || isExactUnsure(node) || dependsOnUnverified(node)) return null;
+  const range = rangeOf(node);
+  if (!range.re || !range.im || range.im.lo !== 0 || range.im.hi !== 0) return null;
+  if (!Number.isFinite(range.re.lo) || !Number.isFinite(range.re.hi)) return null;
+  if (range.re.lo > 0) return 1;
+  if (range.re.hi < 0) return -1;
+  return null;
+}
+
 export function rawDiv(a: Node, b: Node): Node {
   const num = knownValue(a);
   const den = knownValue(b);
@@ -472,6 +570,9 @@ export function rawDiv(a: Node, b: Node): Node {
     num &&
     den &&
     realZeroValue(num) &&
+    !isUnverified(a) &&
+    !isExactUnsure(a) &&
+    !dependsOnUnverified(a) &&
     (den.im === 0 || Object.is(den.im, -0)) &&
     den.re !== 0 &&
     Number.isFinite(den.re)
@@ -481,22 +582,31 @@ export function rawDiv(a: Node, b: Node): Node {
     const neg = Object.is(num.re, -0) !== den.re < 0;
     return neg ? negativeZero() : zeroNode();
   }
+  // 0 over a real interval that stays positive or stays negative is that
+  // signed zero. The div word is what exact mode then refuses: the denominator
+  // is not a point, so the shortcut above never saw it.
+  const znum = leafZeroSign(a);
+  const side = realSide(b);
+  if (znum !== null && side !== null) return znum === side ? zeroNode() : negativeZero();
   const node = setRange(applyProgram("div", { x: a, y: b }), combine(a, b, "div").range);
   if (provenInteger(b) === BigInt(0) && provenInteger(a) !== BigInt(0)) {
     const numerator = provenInteger(a);
     const neg = numerator !== undefined && numerator < BigInt(0);
     return markQuotient(noteNonfinite(node, neg ? -1 : 1), a, b);
   }
-  if (b.type === "input" && Object.is(b.value.re, -0) && (b.value.im === 0 || Object.is(b.value.im, -0))) {
-    // The div program logs +0, so the gates of 1/(−0) come out +∞.
-    // The reciprocal of this leaf is the opposite infinity, which is what
-    // those keys compute.
+  if (certifiedZeroSign(b) === -1) {
+    // The div program logs +0, so a/(−0) comes out with the sign of a/(+0).
+    // A real numerator is negated after that division, which flips the
+    // infinity and keeps the ln 0 note. i/(−0) is (−i)/(+0): negating the
+    // numerator first keeps the axis, so the result is −∞i and not +∞i.
+    // 0/(−0) is indeterminate. A typed infinity leaf had the sign and dropped the note.
+    if (certifiedZeroSign(a) !== null) return markUnverified(markQuotient(node, a, b));
     const num = knownValue(a);
-    const positive = a.type === "one" || (num !== null && num.re > 0 && (num.im === 0 || Object.is(num.im, -0)));
-    const negative = num !== null && num.re < 0 && (num.im === 0 || Object.is(num.im, -0));
-    if (positive) return noteNonfinite(input({ re: -Infinity, im: 0 }, "−∞"), -1);
-    if (negative) return noteNonfinite(input({ re: Infinity, im: 0 }, "∞"), 1);
-    return markQuotient(noteNonfinite(node, -1), a, b);
+    const real =
+      a.type === "one" ||
+      (num !== null && (num.im === 0 || Object.is(num.im, -0)) && Number.isFinite(num.re) && num.re !== 0 && !Object.is(num.re, -0));
+    if (real) return domainNeg(rawDiv(a, zeroNode()));
+    return rawDiv(domainNeg(a), zeroNode());
   }
   return markQuotient(node, a, b);
 }
@@ -519,6 +629,30 @@ let negZero: Node | undefined;
 export function negativeZero(): Node {
   negZero ??= input({ re: -0, im: 0 }, "-0");
   return negZero;
+}
+
+/**
+ * Sign of a zero whose sign is actually certified: the −0 leaf, an input ±0,
+ * the integer 0, or a computed point whose real part is +0. A magnitude the
+ * cap erased is not one of these: the sign did not survive. A point whose
+ * real part is −0 is not a sign either. That is what two negative zeros used
+ * to print, and exact mode will not stand behind it.
+ */
+export function certifiedZeroSign(node: Node): -1 | 1 | null {
+  if (isUnverified(node) || isExactUnsure(node) || dependsOnUnverified(node)) return null;
+  if (node === negZero) return -1;
+  if (provenInteger(node) === BigInt(0)) return 1;
+  if (node.type === "input") {
+    const { re, im } = node.value;
+    if ((im === 0 || Object.is(im, -0)) && (Object.is(re, 0) || Object.is(re, -0))) {
+      return Object.is(re, -0) ? -1 : 1;
+    }
+  }
+  // A computed point with real part +0 is the exact 0 already used as an identity.
+  // A point whose real part is −0 is not: two negative zeros print that, and it is not a sign.
+  const known = knownValue(node);
+  if (known && (known.im === 0 || Object.is(known.im, -0)) && known.re === 0 && !Object.is(known.re, -0)) return 1;
+  return null;
 }
 
 let minusOne: Node | undefined;
@@ -958,6 +1092,8 @@ function domainSubBuild(a: Node, b: Node, kFrom: Node = b): Node {
     // (and must not feed into further arithmetic as a certified 0).
     if (isSeriesShortcut(a)) return markExactUnsure(markSeriesShortcut(naiveSub(ONE, ONE)));
     if (isExactUnsure(a)) return markExactUnsure(naiveSub(ONE, ONE));
+    // a − a of a refused node is not the certified +0. The fresh difference stays refused.
+    if (isUnverified(a) || dependsOnUnverified(a)) return markUnverified(naiveSub(ONE, ONE));
     return zeroNode();
   }
   const carried = overflowIntDiff(a, b);
@@ -1219,10 +1355,12 @@ function domainAddBuild(a: Node, b: Node): Node {
   // product is the same node as a written 2·exp, so the difference folds to 0.
   if (a === b && decadeOf(a) === undefined && (isLostTiny(a) || underflowedReal(a))) return rawMul(twoNode(), a);
   // (−x) + x is 0. The sum circuit cannot see a past-cap x.
-  if (factsOf(a).builtFrom?.negationOf === b || factsOf(b).builtFrom?.negationOf === a) return zeroNode();
+  // A refused operand is not that cancellation: the shared +0 would drop the refusal.
+  const refusedSum = isUnverified(a) || isUnverified(b) || isExactUnsure(a) || isExactUnsure(b) || dependsOnUnverified(a) || dependsOnUnverified(b);
+  if (!refusedSum && (factsOf(a).builtFrom?.negationOf === b || factsOf(b).builtFrom?.negationOf === a)) return zeroNode();
   // 0 + b is b. The add circuit rounds an underflowed b to exact 0.
-  if (provenInteger(a) === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
-  if (provenInteger(b) === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
+  if (!refusedSum && provenInteger(a) === BigInt(0) && (underflowedReal(b) || isLostTiny(b))) return b;
+  if (!refusedSum && provenInteger(b) === BigInt(0) && (underflowedReal(a) || isLostTiny(a))) return a;
   const { range, int } = combine(a, b, "add");
   const mag = maxMag(a, b);
   let node: Node;
@@ -1264,6 +1402,7 @@ export function sumOfNegation(a: Node, b: Node): Node | null {
   const base = factsOf(b).builtFrom?.negOf === a ? a : factsOf(a).builtFrom?.negOf === b ? b : null;
   if (base === null) return null;
   if (isSeriesShortcut(a) || isSeriesShortcut(b) || isExactUnsure(a) || isExactUnsure(b)) return null;
+  if (isUnverified(a) || isUnverified(b) || dependsOnUnverified(a) || dependsOnUnverified(b)) return null;
   if (mayBeInfinite(base)) return null;
   return zeroNode();
 }
@@ -1276,10 +1415,12 @@ export function domainNeg(b: Node): Node {
 }
 
 function domainNegBuild(b: Node): Node {
-  if (provenInteger(b) === BigInt(0)) return negativeZero();
-  const v = knownValue(b);
-  if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, 0)) return negativeZero();
-  if (v && (v.im === 0 || Object.is(v.im, -0)) && Object.is(v.re, -0)) return zeroNode();
+  // A refused operand stays refused. Returning the shared ±0 leaf here dropped
+  // the refusal and certified the opposite zero.
+  if (isUnverified(b) || isExactUnsure(b) || dependsOnUnverified(b)) return markUnverified(safeNeg(b));
+  const z = certifiedZeroSign(b);
+  if (z === 1) return negativeZero();
+  if (z === -1) return zeroNode();
   // The minus program collapses a tiny value to 0. −x = (−1)·x keeps it.
   const size = extent(b);
   if (size && Math.max(size.re, size.im) > 0 && Math.max(size.re, size.im) < TINY_MAG) return noteNegation(rawMul(oneNeg(), b), b);
