@@ -1423,6 +1423,66 @@ function nestedTrigTooLarge(root: Node, env: Record<string, C | Z>): boolean {
   return false;
 }
 
+/**
+ * x − 1 when x is 1 + iθ plus a square. exp(iθ) − 1 is −θ²/2 + iθ, and the
+ * same square sits under (10^n ± i)/(10^n ± i) − 1 and sqrt(10^(2n) + i)/10^n − 1.
+ * The linear term is the imaginary part. The square is the real part, and it is
+ * rounded into the 1 once −2·e(θ) passes the working precision, so the subtraction
+ * certifies that real part as 0. absorb2 is that gap while the square is still
+ * lost; surviveLoss is the gap after a pass computed the square and the scrub
+ * dropped it for sitting more than 160 decades under its sibling. Read the square
+ * when it fits in 480 digits. When it does not, that vanished component is not certified.
+ * Multiplying by ±i swaps the parts, so either component can be the one that cancelled.
+ */
+function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): ExactReport | null {
+  if (out.sawLead || out.unverified || agreesWithInteger(root, out.value)) return null;
+  const v = out.value;
+  if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() === v.im.isZero()) return null;
+  // The cancelled terms of x − 1 are near 1. A large cancellation is a different gap.
+  const work = out.workExp;
+  // work 0 is a value that did not cancel, such as sin(−10^(−400)). x − 1 cancels near 1.
+  if (work === undefined || !Number.isFinite(work) || work <= 0 || work > 12) return null;
+  const kept = v.re.isZero() ? v.im : v.re;
+  // A pure real from a magnitude inside float range is the leading term, as in (10^300+2)^(−1).
+  // The swapped square is a 10^400 circuit, past float range.
+  if (!v.re.isZero() && passState.firstBig <= 308) return null;
+  const square = -2 * kept.e;
+  if (square <= 24) return null;
+  const near = (gap: number) => gap > 24 && Math.abs(gap - square) <= 16;
+  const absorb = out.absorb2 ?? 0;
+  const absorbHit = near(absorb);
+  const survHit = near(out.surviveLoss ?? 0);
+  if (!absorbHit && !survHit) return null;
+  const digits = out.digits ?? D.precision;
+  if (absorbHit && square + 48 > PRECISION_CAP) return { ...out, unverified: true };
+  const need = Math.min(PRECISION_CAP, Math.max(digits, square + 48));
+  let again: ExactReport;
+  try {
+    again = atPrecision(need, root, env, budget, false);
+  } catch {
+    return { ...out, unverified: true };
+  }
+  if (again.unverified) return again;
+  const real = again.value.re;
+  if (residueMoved(v.im, again.value.im) || !real.isFinite() || real.isZero() || Math.abs(real.e + square) > 8) {
+    if (absorbHit && square > (again.digits ?? need) - 24) return { ...out, unverified: true };
+    return null;
+  }
+  const room = Math.min(PRECISION_CAP, Math.max(need + 24, (again.workRe ?? 0) - real.e + 36));
+  if (room > need) {
+    let check: ExactReport;
+    try {
+      check = atPrecision(room, root, env, budget, false);
+    } catch {
+      return { ...out, unverified: true };
+    }
+    if (check.unverified || residueMoved(again.value.re, check.value.re) || residueMoved(again.value.im, check.value.im)) {
+      return { ...out, unverified: true };
+    }
+  }
+  return again;
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -1446,7 +1506,9 @@ export function exactReport(
     if (top <= crudeErr + 12) return { ...out, singular: null, unverified: true };
   }
   if (refusedResult(root, env, budget, out)) return { ...out, unverified: true };
-  return squaredTinyPart(root, env, budget, out);
+  const squared = squaredTinyPart(root, env, budget, out);
+  if (squared.unverified) return squared;
+  return settleCrossedSquare(root, env, budget, squared) ?? squared;
 }
 
 /**
