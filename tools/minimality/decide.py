@@ -1038,9 +1038,17 @@ def _on_alarm(signum, frame):
 
 
 def _word_batch(payload):
-    """Exclude a batch of programs. Returns the ones that are not certainly excluded."""
+    """Exclude a batch of programs. Returns the ones that are not certainly excluded.
+
+    The pool does not inherit the parent's globals when the start method is spawn
+    or forkserver, which is what the CI runner uses. The phase oracle and the
+    shared-exp directory are installed in this process.
+    """
     import signal
-    target_word, words, strict = payload
+    import deep
+    target_word, words, strict, share = payload
+    deep.SHARE = share
+    towers.PHASE = signed_phase
     signal.signal(signal.SIGALRM, _on_alarm)
     bad = []
     before = STATS["towers"]
@@ -1064,6 +1072,7 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
     """
     import os
     import concurrent.futures
+    import multiprocessing
     wit = witness if witness is not None else target_word
     name = constant_name(wit)
     if name is None:
@@ -1081,20 +1090,23 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
         words.extend(programs(n))
     print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
     batches = [words[i:i + 400] for i in range(0, len(words), 400)]
-    payloads = [(target_word, batch, strict) for batch in batches]
     bad = []
     towers_n = 0
     import tempfile
     import shutil
     import deep
     share = tempfile.mkdtemp(prefix="eml-phase-")
+    payloads = [(target_word, batch, strict, share) for batch in batches]
     saved_share, deep.SHARE = deep.SHARE, share
     saved_phase = towers.PHASE
     towers.PHASE = signed_phase
     try:
         if len(words) >= 800:
             workers = os.cpu_count() or 2
-            with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+            # forkserver, not fork: a worker must not inherit a half-mutated parent,
+            # and Python 3.14 (the CI runner) no longer forks by default.
+            ctx = multiprocessing.get_context("forkserver")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
                 futures = [pool.submit(_word_batch, payload) for payload in payloads]
                 done = 0
                 for fut in concurrent.futures.as_completed(futures):
