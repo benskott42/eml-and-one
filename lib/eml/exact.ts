@@ -1431,16 +1431,22 @@ function nestedTrigTooLarge(root: Node, env: Record<string, C | Z>): boolean {
  * certifies that real part as 0. absorb2 is that gap while the square is still
  * lost; surviveLoss is the gap after a pass computed the square and the scrub
  * dropped it for sitting more than 160 decades under its sibling. Read the square
- * when it fits in 480 digits. When it does not, a pure imaginary result is not certified.
+ * when it fits in 480 digits. When it does not, that vanished component is not certified.
+ * Multiplying by ±i swaps the parts, so either component can be the one that cancelled.
  */
 function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: EvalBudget, out: ExactReport): ExactReport | null {
   if (out.sawLead || out.unverified || agreesWithInteger(root, out.value)) return null;
   const v = out.value;
-  if (!v.re.isFinite() || !v.im.isFinite() || !v.re.isZero() || v.im.isZero()) return null;
+  if (!v.re.isFinite() || !v.im.isFinite() || v.re.isZero() === v.im.isZero()) return null;
   // The cancelled terms of x − 1 are near 1. A large cancellation is a different gap.
   const work = out.workExp;
-  if (work === undefined || !Number.isFinite(work) || work > 12) return null;
-  const square = -2 * v.im.e;
+  // work 0 is a value that did not cancel, such as sin(−10^(−400)). x − 1 cancels near 1.
+  if (work === undefined || !Number.isFinite(work) || work <= 0 || work > 12) return null;
+  const kept = v.re.isZero() ? v.im : v.re;
+  // A pure real from a magnitude inside float range is the leading term, as in (10^300+2)^(−1).
+  // The swapped square is a 10^400 circuit, past float range.
+  if (!v.re.isZero() && passState.firstBig <= 308) return null;
+  const square = -2 * kept.e;
   if (square <= 24) return null;
   const near = (gap: number) => gap > 24 && Math.abs(gap - square) <= 16;
   const absorb = out.absorb2 ?? 0;
