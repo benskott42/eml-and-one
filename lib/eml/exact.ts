@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { installFastMul } from "./fast-mul";
 import type { C } from "./complex";
 import {
   EmlError,
@@ -40,7 +41,7 @@ import { ballConfirmsValue } from "./exact-ball";
 
 const PRECISION = 120;
 
-const D = Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 });
+const D = installFastMul(Decimal.clone({ precision: PRECISION, minE: -9e15, maxE: 9e15 }));
 
 /**
  * exp, ln, cos, sin, hypot and atan2 results by working precision and argument.
@@ -223,7 +224,7 @@ function lnEml(v: Z): Z {
   if (!onCut && !v.im.isZero() && (arg.eq(negPi) || arg.eq(negPi.neg()))) {
     const gap = v.re.e - v.im.e;
     if (Number.isFinite(gap) && gap > 8 && gap < 2000) {
-      const local = D.clone({ precision: D.precision + gap + 8 });
+      const local = installFastMul(D.clone({ precision: D.precision + gap + 8 }));
       arg = new D(local.atan2(new local(v.im.toString()), new local(v.re.toString())).toString());
     }
   }
@@ -243,7 +244,7 @@ function atan2Fast(y: Decimal, x: Decimal): Decimal | null {
   if (x.isNeg() && y.abs().lt(x.abs())) {
     const phi = atan2Core(y.abs(), x.neg(), digits);
     if (!phi) return null;
-    const local = D.clone({ precision: digits + 12 });
+    const local = installFastMul(D.clone({ precision: digits + 12 }));
     const out = local.acos(-1).sub(phi);
     return new D(y.isNeg() ? out.neg() : out);
   }
@@ -252,7 +253,7 @@ function atan2Fast(y: Decimal, x: Decimal): Decimal | null {
 }
 
 function atan2Core(y: Decimal, x: Decimal, digits: number): Decimal | null {
-  const local = D.clone({ precision: digits + 12 });
+  const local = installFastMul(D.clone({ precision: digits + 12 }));
   const shift = Math.max(y.e, x.e);
   const scale = new local(10).pow(-shift);
   const Y = new local(y);
