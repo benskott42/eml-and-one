@@ -1557,6 +1557,9 @@ function squaredTinyPart(root: Node, env: Record<string, C | Z>, budget: EvalBud
   const dependent = usable;
   const floor = Math.min(low, passState.firstTinyParts.re, passState.firstTinyParts.im);
   const need = -2 * floor + 48;
+  // The pass already had room for that square (a near-pole tan re-read at gap+precision).
+  // The zero component is the one that reading produced, not a part still to be found.
+  if ((out.digits ?? D.precision) >= need) return out;
   const first = Math.min(PRECISION_CAP - 24, Math.max(D.precision + 24, need));
   // A reading that fits the square and shows no part settles it: the part is 0.
   // One that cannot fit it (past 480 digits) refuses when the probe saw the part.
@@ -1581,7 +1584,27 @@ function squaredTinyPart(root: Node, env: Record<string, C | Z>, budget: EvalBud
     return dependent ? { ...out, unverified: true } : out;
   }
   // A part that appears and then moves is rounding, and the result is not certified.
-  if (b.unverified || residueMoved(a.value[which], b.value[which]) || residueMoved(a.value[other], b.value[other])) return { ...out, unverified: true };
+  if (b.unverified || residueMoved(a.value[which], b.value[which]) || residueMoved(a.value[other], b.value[other])) {
+    // A part that keeps falling, and already sits more than the working precision below
+    // its sibling, is not a component: tan(acos(10^(−100))) left ~10^(−247) beside 10^100.
+    const sib = a.value[other];
+    const part = a.value[which];
+    const next = b.value[which];
+    if (
+      !b.unverified &&
+      part.isFinite() &&
+      next.isFinite() &&
+      sib.isFinite() &&
+      !sib.isZero() &&
+      !part.isZero() &&
+      part.e < sib.e - D.precision &&
+      next.e < part.e &&
+      !residueMoved(a.value[other], b.value[other])
+    ) {
+      return out;
+    }
+    return { ...out, unverified: true };
+  }
   return { ...out, value: a.value, digits: a.digits };
 }
 
@@ -1648,13 +1671,28 @@ function exactReportCore(
     }
   }
   passState.lossGap = 0;
-  const report = exactReportOnce(root, env, budget);
+  let report = exactReportOnce(root, env, budget);
   if (pass === 0) {
     passState.firstTinyParts = { re: passState.tinyRe, im: passState.tinyIm };
     passState.firstBig = passState.biggest;
   }
   // Pass 3 is a raised pass whose caller judges a tiny part itself, so it is not scrubbed.
   if (pass !== 0) return pass === 3 ? report : present(report);
+  // cosSin snaps an angle within 10^(−(P−8)) of a quarter turn onto that axis, so a genuine
+  // offset smaller than the tolerance becomes a pole: tan(acos(10^(−120))) was NaN, and the
+  // value is 10^120. Read again where the tracked tiny fits. A true pole has no such tiny.
+  if (!zFinite(report.value) && report.singular === SINGULAR_POLE) {
+    const need = demandedTinyDigits(root, env);
+    const digits = report.digits ?? D.precision;
+    if (need > digits && need <= PRECISION_CAP) {
+      try {
+        const again = atPrecision(need, root, env, budget);
+        if (zFinite(again.value) && !again.unverified) report = again;
+      } catch (err) {
+        rethrowBudget(err);
+      }
+    }
+  }
   // A nonzero real term was absorbed into a larger real value inside a gate, and
   // either the result is at or below that absorbed term's scale, or a cancellation
   // uncovered it. Raise precision so the absorbed term is kept, or refuse past cap.
@@ -1673,15 +1711,28 @@ function exactReportCore(
   // A second-order term (x^2/2 of exp, t^2/2 of cos) matters when the result vanished or sits at its
   // scale. A smaller one beside a larger result (sqrt(1 + 1e-130) - 1 - 0.5e-130, sin(2/exp(200)),
   // where the tiny angle is cancellation noise) is hundreds of digits below it and is left alone.
+  // A series shortcut is not an exemption once a later cancellation can amplify that lost square
+  // into a visible component: tan(acos(10^(−100))) is 10^100, and the lost square left a certified −i.
   const secondOrderGap = (r: ExactReport): number => {
     const gap = r.absorb2 ?? 0;
     const digits = r.digits ?? D.precision;
     if (gap <= digits - 12) return 0;
-    if (r.sawLead || agreesWithInteger(root, r.value)) return 0;
+    if (agreesWithInteger(root, r.value)) return 0;
+    const amplified = (r.surviveLoss ?? 0) > 8 || (r.lossGap ?? 0) > 8 || r.absorbExposed === true;
+    if (r.sawLead && !amplified) return 0;
     if (vanished(r.value)) return gap;
     const top = exponentCeil(r.value);
     if (Number.isFinite(top) && top <= 24 - gap) return gap;
-    return 0;
+    // A small result is the square itself (or noise under it) and stays. A large one can be
+    // the near-pole quotient, where dividing by the lost square leaves a spurious component.
+    // A gap far past twice that magnitude is a deeper term, already below the quotient.
+    if (!amplified || !Number.isFinite(top) || top < 0) return 0;
+    if (gap > 2 * top + digits + 24) return 0;
+    // The square does not fit under the cap. A component still sitting beside the
+    // quotient is the lost term and is not certified; a component that already
+    // cleared is the real value (tan(acos(10^(−120))) at the second reading).
+    if (gap + 48 > PRECISION_CAP) return r.value.re.isZero() === r.value.im.isZero() ? gap : 0;
+    return gap;
   };
   const absorbedGap = (r: ExactReport): number => Math.max(firstOrderGap(r), secondOrderGap(r));
   const absorbedMatters = (r: ExactReport): boolean => absorbedGap(r) > 0;
@@ -1804,8 +1855,14 @@ function exactReportCore(
   }
   let settled = initial;
   if (hiddenComponent(initial.value)) {
-    const digits = Math.min(PRECISION_CAP, Math.max(Math.max(initial.value.re.e, initial.value.im.e) + 48, (initial.digits ?? D.precision) + 32));
-    if (digits > (initial.digits ?? D.precision)) settled = atPrecision(digits, root, env, budget);
+    const have = initial.digits ?? D.precision;
+    const cover = Math.max(initial.value.re.e, initial.value.im.e) + 48;
+    // A pass that already covered the missing component (the near-pole re-read) is not
+    // bumped by another 32 digits: that re-opened a square the higher pass had resolved.
+    if (cover > have) {
+      const digits = Math.min(PRECISION_CAP, Math.max(cover, have + 32));
+      if (digits > have) settled = atPrecision(digits, root, env, budget);
+    }
   }
   if (settled.unverified) return settled;
   // A log just off the negative real axis lost its side (see passState.cutGap). Read again where
