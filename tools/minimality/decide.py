@@ -29,13 +29,13 @@ usage: python decide.py [max_K]       the claims in docs/minimality.md (default 
        python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
                                       K 27 without ln 0
        python decide.py --open --deep the same, with deep.py for the programs left open
-       python decide.py --word WORD --upto K [--strict] [--expect NAME] [--witness WORD]
-                                      WORD is the target. Exclude every program with
-                                      K <= upto. --strict allows a hit that takes ln 0.
-                                      --expect NAME (ln2, -e, 1/e, e+1, e^2, 2, ipi, -2)
-                                      requires the witness to be that constant. A missing
-                                      phase of exp(e^W) is used only when arb's cos of
-                                      it is strictly signed.
+       python decide.py --word WORD --upto K --expect NAME [--strict] [--witness WORD]
+                                      WORD is the target. --expect is required.
+                                      Exclude every program with K <= upto. --strict
+                                      allows a hit that takes ln 0. NAME is ln2, -e,
+                                      1/e, e+1, e^2, 2, ipi, or -2, and the witness has
+                                      to be that constant. A missing phase of exp(e^W)
+                                      is used only when arb's cos of it is strictly signed.
 """
 import sys
 import time
@@ -816,8 +816,26 @@ EXPECT = {
     "-2": "-2",
 }
 
-# Cumulative program counts. A scan at one of these lengths has to match.
-PROGRAM_COUNTS = {15: 626, 17: 2056, 19: 6918, 21: 23714, 23: 82500}
+def _program_counts(max_leaves=13):
+    """Cumulative counts through K = 2*leaves - 1, from the Catalan recurrence.
+
+    programs(n) has length C_{n-1}. An even bound adds no programs, so K and K+1
+    share a total. Checked against programs() through K 25 (290512).
+    """
+    c = 1
+    total = 0
+    counts = {}
+    for n in range(max_leaves):
+        total += c
+        k = 2 * (n + 1) - 1
+        counts[k] = total
+        counts[k + 1] = total
+        c = c * (4 * n + 2) // (n + 2)
+    return counts
+
+
+# Every K <= 26. A scan at any other K refuses to print PROVED.
+PROGRAM_COUNTS = _program_counts()
 
 
 def constant_name(word):
@@ -1000,21 +1018,37 @@ def word_target_test():
         pinned = prove_word("swap", "11111E1EEEE11E1EE", 15, expect="ln 2")
     if pinned or "witness is -e, not ln 2" not in held.getvalue():
         bad.append("a -e word passed --expect ln 2")
+    if PROGRAM_COUNTS.get(13) != 197 or PROGRAM_COUNTS.get(16) != 626 or PROGRAM_COUNTS.get(25) != 290512:
+        bad.append("program-count table does not match the Catalan totals")
+    distinct = [str(i) for i in range(626)]
     try:
-        require_program_count(15, [None] * 625, [[None] * 625])
+        require_program_count(15, distinct[:625])
     except AssertionError:
         pass
     else:
         bad.append("a short K <= 15 count was accepted")
     try:
-        require_program_count(15, [None] * 626, [[None] * 400, [None] * 226])
-    except AssertionError as why:
-        bad.append(f"626 programs in two batches raised: {why}")
-    try:
-        require_program_count(15, [None] * 626, [[None] * 400, [None] * 200])
-        bad.append("batches that do not sum to the total were accepted")
+        require_program_count(16, distinct[:625])
     except AssertionError:
         pass
+    else:
+        bad.append("K <= 16 with a dropped program was accepted")
+    try:
+        require_program_count(15, distinct[:625] + ["0"])
+    except AssertionError:
+        pass
+    else:
+        bad.append("a duplicate program was accepted")
+    try:
+        require_program_count(15, distinct)
+    except AssertionError as why:
+        bad.append(f"626 distinct programs raised: {why}")
+    try:
+        require_program_count(27, ["only"])
+    except AssertionError:
+        pass
+    else:
+        bad.append("K <= 27 with no count check was accepted")
     import deep
     iv.prec = 128
     got = deep.exp_iv(iv.mpf("-2.5"), 128)
@@ -1115,17 +1149,19 @@ def _word_batch(payload):
     return bad, STATS["towers"] - before, seen
 
 
-def require_program_count(upto, words, batches):
-    """Fail if a known length has the wrong number of programs, or a batch was dropped."""
+def require_program_count(upto, words):
+    """Fail unless this K has its Catalan total, and the programs are distinct."""
     n = len(words)
-    if upto in PROGRAM_COUNTS and n != PROGRAM_COUNTS[upto]:
+    if upto not in PROGRAM_COUNTS:
+        raise AssertionError(f"K <= {upto}: no program-count check, refusing to prove")
+    if n != PROGRAM_COUNTS[upto]:
         raise AssertionError(
             f"K <= {upto}: counted {n} programs, expected {PROGRAM_COUNTS[upto]}"
         )
-    got = sum(len(batch) for batch in batches)
-    if got != n:
+    distinct = len(set(words))
+    if distinct != n:
         raise AssertionError(
-            f"K <= {upto}: {len(batches)} batches sum to {got} programs, not {n}"
+            f"K <= {upto}: {n} programs, only {distinct} distinct"
         )
 
 
@@ -1157,7 +1193,7 @@ def prove_word(label, target_word, upto, strict=False, witness=None, expect=None
     for n in range(1, (upto + 1) // 2 + 1):
         words.extend(programs(n))
     batches = [words[i:i + 400] for i in range(0, len(words), 400)]
-    require_program_count(upto, words, batches)
+    require_program_count(upto, words)
     print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
     bad = []
     towers_n = 0
@@ -1217,17 +1253,23 @@ def main():
     if not self_test():
         sys.exit(2)
     args = sys.argv[1:]
+    if "--expect" in args:
+        at = args.index("--expect")
+        if at + 1 >= len(args) or args[at + 1].startswith("--"):
+            print("usage: --expect needs a value", flush=True)
+            sys.exit(2)
     if "--word" in args:
         target = args[args.index("--word") + 1]
         upto = int(args[args.index("--upto") + 1]) if "--upto" in args else len(target) - 2
         witness = args[args.index("--witness") + 1] if "--witness" in args else None
-        expect = None
-        if "--expect" in args:
-            token = args[args.index("--expect") + 1]
-            expect = EXPECT.get(token)
-            if expect is None:
-                print(f"unknown --expect {token}", flush=True)
-                sys.exit(1)
+        if "--expect" not in args:
+            print("usage: --word requires --expect NAME", flush=True)
+            sys.exit(2)
+        token = args[args.index("--expect") + 1]
+        expect = EXPECT.get(token)
+        if expect is None:
+            print(f"unknown --expect {token}", flush=True)
+            sys.exit(1)
         t0 = time.time()
         ok = prove_word(target, target, upto, strict="--strict" in args, witness=witness, expect=expect)
         print(f"decided by towers.py: {STATS['towers']}  ({time.time() - t0:.0f} s)", flush=True)
