@@ -40,7 +40,7 @@ import {
 } from "./lowering";
 import { E, EmlError, ONE, circuitStats, evaluateReport, freshInput, freshOne, isolateCircuit, onCircuitIsolate, type Node, V, input, notePrecision } from "./node";
 import { SHORT_PROGRAMS, applyProgram, programNode } from "./programs";
-import { DECIMAL_SCALE_MAX, type Rational, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
+import { DECIMAL_SCALE_MAX, type Rational, dependsOnUnverified, derive, isRecognized, derivePow, exactDecimalOf, exactNthRoot, exactRationalOf, factsOf, isExactUnsure, isUnverified, learn, markExactUnsure, markRecognized, markSeriesError, markSeriesShortcut, markUnverified, maxSeriesErrorExp, noteBuiltFrom, noteExactDecimal, noteProvenInt, provenInteger, recognizedNoteFrom, recordedDirection, seriesShortcutNoteFrom } from "./facts";
 
 /**
  * Every primitive of a scientific calculator, built only from 1 and eml.
@@ -1602,11 +1602,15 @@ export function tArcsin(t: Node): Node {
   if (box !== null && box < 1e-4) {
     const series = arcsinSeries(t, box);
     // A float range of 0 collapses the product onto the shared integer 0.
-    // Stamping that node unverified poisons π/2, which was built first.
-    // π/2 − 0 folds back to that half, so in-process acos stays certified.
-    // The wire rebuilds the half after the mark, and the refusal climbs.
-    // The collapsed value is the same exact 0 a proven integer takes above.
-    if (provenInteger(series) === BigInt(0)) return recognized(series);
+    // A clean exact 0 is that integer. Marking the shared node unverified
+    // poisons π/2, which was built first: in-process, π/2 − 0 folds back to
+    // that half, and the worker rebuilds the half after the mark.
+    // A float 0 that still depends on an unverified operand is not that
+    // integer. The refusal stays on a fresh 0, so the shared node is left alone.
+    if (provenInteger(series) === BigInt(0)) {
+      if (exactZero(t) && !dependsOnUnverified(t)) return recognized(series);
+      return markUnverified(noteProvenInt(freshInput({ re: 0, im: 0 }, "0"), BigInt(0)));
+    }
     return box < 1e-60 ? markUnverified(series) : markSeries(series, SMALL_NOTE);
   }
   const re = realBounds(t);
