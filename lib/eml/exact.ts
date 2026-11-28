@@ -1456,6 +1456,11 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
   const digits = report.digits ?? D.precision;
   if (!(gap > digits - 24)) return null;
   let prec = Math.min(PRECISION_CAP, Math.max(digits, gap + 48));
+  // A plain identity such as e − ln(exp(e)) is already ln 0. The enclosure
+  // fails when that zero still carries a rounding radius, and that failure
+  // is not a counterexample. Only an enclosure that actually opens can
+  // replace the identity.
+  let opened = false;
   for (let hop = 0; hop < 8; hop += 1) {
     let enclosed: ReturnType<typeof ballEnclose>;
     try {
@@ -1465,6 +1470,7 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
       return certifyZero(report);
     }
     if (enclosed.ok) {
+      opened = true;
       const proved = provedByBalls(enclosed.balls);
       if (proved && proved !== "loose") {
         if (!zFinite(proved.value)) {
@@ -1496,10 +1502,10 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
       return certifyZero(report);
     }
     const next = Math.min(PRECISION_CAP, prec + 48);
-    if (next <= prec) return certifyZero(report);
+    if (next <= prec) break;
     prec = next;
   }
-  return certifyZero(report);
+  return opened ? certifyZero(report) : report;
 }
 
 /**
@@ -1511,8 +1517,8 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
 function preferExactInfinity(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport {
   if (report.unverified || report.sawLead || !zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN()) return report;
   // ln of a rounding residue is a large finite. A small recovered term is not that log.
-  const cancelled = Math.max(report.lossGap ?? 0, report.surviveLoss ?? 0);
-  if (cancelled <= 24) return report;
+  // The loss gap is not the test: zw/zw2 cancel by about 6 digits and the enclosure
+  // still proves the result is an exact infinity.
   const large = (part: Decimal) => part.isFinite() && !part.isZero() && part.abs().gte(20);
   if (!large(report.value.re) && !large(report.value.im)) return report;
   let prec = Math.min(PRECISION_CAP, Math.max(report.digits ?? D.precision, (report.lossGap ?? 0) + 48));
@@ -1670,6 +1676,83 @@ function settleCrossedSquare(root: Node, env: Record<string, C | Z>, budget: Eva
   return again;
 }
 
+/**
+ * A pass can refuse a finite it already computed, because a gate lost a tiny
+ * factor, while the enclosure pins that same finite. Certify the digits the
+ * enclosure supports. Fewer than 12 digits is not a certificate: refusing
+ * beats a coarse value. An enclosure that proves an exact infinity replaces
+ * the finite.
+ */
+function proveRefusedFinite(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport | null {
+  if (!zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN()) return null;
+  let prec = Math.min(PRECISION_CAP, Math.max(report.digits ?? D.precision, D.precision));
+  for (let hop = 0; hop < 3; hop += 1) {
+    let enclosed: ReturnType<typeof ballEnclose>;
+    try {
+      enclosed = ballEnclose(root, env, prec, budget);
+    } catch (err) {
+      rethrowBudget(err);
+      return null;
+    }
+    if (enclosed.ok) {
+      const proved = provedByBalls(enclosed.balls);
+      if (proved && proved !== "loose") {
+        if (!zFinite(proved.value)) {
+          return {
+            ...report,
+            value: proved.value,
+            digits: D.precision,
+            singular: SINGULAR_LN0,
+            touchedLn0: true,
+            nearCut: false,
+            unverified: false,
+          };
+        }
+        // A pass can keep only the leading digits (ln(exp(10^(−400)) − 1) is
+        // −921.03404 at a few places) while the enclosure pins the rest.
+        // Fewer than 12 pinned digits is not a certificate yet: try a tighter ball.
+        if (proved.digits >= 12) {
+          const kept = (part: Decimal): number => {
+            if (!part.isFinite() || part.isZero()) return D.precision;
+            const coeff = part.toExponential().replace("-", "").split("e")[0].replace(".", "").replace(/0+$/, "");
+            return Math.max(coeff.length, 1);
+          };
+          const places = Math.min(proved.digits, kept(report.value.re), kept(report.value.im));
+          const agrees = (got: Decimal, want: Decimal): boolean => {
+            if (got.isZero() || want.isZero()) return got.isZero() && want.isZero() && got.isNeg() === want.isNeg();
+            return got.toSignificantDigits(places).eq(want.toSignificantDigits(places));
+          };
+          // The pass has to match on the digits it actually kept. A one-digit
+          // coincidence is not that match.
+          if (places >= 8 && agrees(report.value.re, proved.value.re) && agrees(report.value.im, proved.value.im)) {
+            const out: ExactReport = {
+              ...report,
+              value: proved.value,
+              digits: proved.digits,
+              singular: null,
+              touchedLn0: false,
+              nearCut: false,
+              unverified: false,
+            };
+            ballProved.add(out);
+            return out;
+          }
+          return null;
+        }
+      }
+      // Candidates that name two different values are not a value. A short
+      // proof and a loose one both get another hop.
+      if (proved === null) return null;
+    } else if (enclosed.reason !== "fail" && enclosed.reason !== "overflow" && enclosed.reason !== "ln-unconverged") {
+      return null;
+    }
+    const next = Math.min(PRECISION_CAP, prec + 48);
+    if (next <= prec) return null;
+    prec = next;
+  }
+  return null;
+}
+
 export function exactReport(
   root: Node,
   env: Record<string, C | Z> = {},
@@ -1681,7 +1764,14 @@ export function exactReport(
   passState.firstBig = Number.NEGATIVE_INFINITY;
   const out = exactReportCore(root, env, budget, pass);
   if (overflowNaN(root, env, out)) return { ...out, singular: null, unverified: true };
-  if (out.unverified) return out;
+  if (out.unverified) {
+    const proved = proveRefusedFinite(out, root, env, budget);
+    if (proved) {
+      if (ballProved.has(proved) && nestedTrigTooLarge(root, env)) return { ...proved, unverified: true };
+      return proved;
+    }
+    return out;
+  }
   // A value read off a node refused below the root is not certified either.
   // An undefined result stays: (1 + 1/0) − 1/0 is still the indeterminate ∞ − ∞.
   if (!(out.value.re.isNaN() && out.value.im.isNaN()) && dependsOnUnverified(root)) return { ...out, singular: null, unverified: true };
@@ -2150,9 +2240,7 @@ function exactReportCore(
   }
   const shown = confirmDust(present(settled), root, env, budget);
   // Two agreeing precisions can both print ln(noise) of an exact cancellation.
-  // Only a cancellation this deep is worth an enclosure; a clean value is not.
-  const cancelled = Math.max(shown.lossGap ?? 0, shown.surviveLoss ?? 0);
-  if (shown.sawLead || cancelled <= 24) return shown;
+  // The enclosure is what decides, including a cancellation of only a few digits.
   return preferExactInfinity(shown, root, env, budget);
 }
 
