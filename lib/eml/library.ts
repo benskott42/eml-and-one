@@ -1715,7 +1715,10 @@ export function tArsinh(t: Node): Node {
 /** Principal arcosh: ln(z + sqrt(z−1)·sqrt(z+1)). sqrt(z²−1) flips the real part for Re(z) < −1. */
 export function tArcosh(t: Node): Node {
   const rad = tMul(tSqrt(tSub(t, ONE)), tSqrt(tAdd(t, ONE)));
-  return tLn(tAdd(t, rad));
+  const node = tLn(tAdd(t, rad));
+  // The float product can land just below the cut. Exact keeps this circuit.
+  notePrecision(node, { kind: "arcosh", arg: t });
+  return node;
 }
 
 /**
