@@ -29,6 +29,13 @@ usage: python decide.py [max_K]       the claims in docs/minimality.md (default 
        python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
                                       K 27 without ln 0
        python decide.py --open --deep the same, with deep.py for the programs left open
+       python decide.py --word WORD --upto K --expect NAME [--strict] [--witness WORD]
+                                      WORD is the target. --expect is required.
+                                      Exclude every program with K <= upto. --strict
+                                      allows a hit that takes ln 0. NAME is ln2, -e,
+                                      1/e, e+1, e^2, 2, ipi, or -2, and the witness has
+                                      to be that constant. A missing phase of exp(e^W)
+                                      is used only when arb's cos of it is strictly signed.
 """
 import sys
 import time
@@ -643,6 +650,205 @@ def decide_once(word, tre, tk=0):
     return None, f"{reason}; towers.py: {why}"
 
 
+_TARGET_BOX = {}
+
+
+def target_enclosure(target_word, bits):
+    """Outward enclosure of an EML word at this precision, or None if the pass cannot build one."""
+    key = (target_word, bits)
+    if key in _TARGET_BOX:
+        return _TARGET_BOX[key]
+    saved = iv.prec
+    iv.prec = bits
+    EXP_ARG.clear()
+    LN_ARG.clear()
+    try:
+        _TARGET_BOX[key] = evaluate(target_word)
+    except Undecided:
+        _TARGET_BOX[key] = None
+    finally:
+        iv.prec = saved
+    return _TARGET_BOX[key]
+
+
+def modest_finite(box):
+    """A finite enclosure inside (-10^6, 10^6) on both axes."""
+    if box is None or box.kind != "fin" or box.re is None or box.im is None:
+        return False
+    bound = mpf(10) ** 6
+    return box.re.a > -bound and box.re.b < bound and box.im.a > -bound and box.im.b < bound
+
+
+def excludes_against_box(v, box):
+    """True when v's enclosure is disjoint from a modest finite target enclosure.
+
+    Rectangles are outward, so a miss is certain. A real tower past exp(10^6), an
+    infinity, or a value below exp(-10^6) is disjoint from that box too.
+    """
+    if not modest_finite(box):
+        return False
+    if v.kind in ("nan", "inf", "big", "bigk", "huge"):
+        return True
+    if v.kind == "small":
+        try:
+            rad = iv.exp(-iv.mpf(LIMIT)).b
+        except (OverflowError, ValueError):
+            return False
+        if box.re.a > rad or box.re.b < -rad or box.im.a > rad or box.im.b < -rad:
+            return True
+        return False
+    if v.kind != "fin" or v.re is None or v.im is None:
+        return False
+    if box.re.b < v.re.a or box.re.a > v.re.b:
+        return True
+    if box.im.b < v.im.a or box.im.a > v.im.b:
+        return True
+    return False
+
+
+def decide_word_once(word, target_word):
+    """Interval separation, then towers.decide_word in one shared reset() scope."""
+    reason = None
+    for bits in (128, 1024):
+        iv.prec = bits
+        EXP_ARG.clear()
+        LN_ARG.clear()
+        box = target_enclosure(target_word, bits)
+        try:
+            v = evaluate(word)
+        except Undecided as why:
+            # A structural refusal (a tower the interval layer will not follow)
+            # does not get cheaper at more bits; 1024-bit iv.exp on it can run
+            # for minutes. The exact layer is the next step.
+            reason = str(why)
+            break
+        if excludes_against_box(v, box):
+            return True, None
+        reason = "interval overlaps the target"
+        if not (v.kind == "fin" and box is not None and box.kind == "fin"):
+            break
+    verdict, why = towers.decide_word(word, target_word)
+    if verdict is not None:
+        STATS["towers"] += 1
+        return verdict, None
+    return None, f"{reason}; towers.py: {why}"
+
+
+def decide_word(word, target_word):
+    k = ("W", word, target_word)
+    if k not in VERDICT:
+        VERDICT[k] = decide_word_once(word, target_word)
+    return VERDICT[k]
+
+
+def signed_phase(word):
+    """towers.PHASE: Im(word) mod 2*pi, or None unless arb's cos of it is strictly signed.
+
+    For a value ±exp(e^W) whose only gap is θ = Im W mod 2*pi, a positive cos makes
+    the value huge and excludes a modest target, and a negative cos makes it tiny and
+    excludes a nonzero target. An enclosure of cos that is not strictly signed is not
+    a phase: the word stays undecided.
+
+    The per-word alarm stays off for the call. A phase is a shared multi-minute arb
+    computation, and killing it would leave the word undecided and (before the lock
+    was dropped) cache that failure for every other worker.
+    """
+    import signal
+    import deep
+    remaining = signal.alarm(0)
+    try:
+        th = deep.phase(word)
+    finally:
+        if remaining:
+            signal.alarm(remaining)
+    if th is None or deep.arb_cos_sign(th) is None:
+        return None
+    return th
+
+
+def _form(build):
+    """Exact towers form from build(), with the phase oracle off."""
+    saved = towers.PHASE
+    towers.PHASE = None
+    towers.reset()
+    try:
+        return build()
+    finally:
+        towers.PHASE = saved
+
+
+def canonical_form(name):
+    """The exact-layer form of a named constant, built from 1, exp and ln, not from a word."""
+    if name == "ln 2":
+        return _form(lambda: towers.ln_single("1", 2))
+    if name == "-e":
+        return _form(lambda: {a: -c for a, c in towers.mk_exp({"1": 1}).items()})
+    if name == "1/e":
+        return _form(lambda: towers.mk_exp({"1": -1}))
+    if name == "e + 1":
+        def e1():
+            e = towers.mk_exp({"1": 1})
+            e["1"] = e.get("1", 0) + 1
+            return e
+        return _form(e1)
+    if name == "e^2":
+        return _form(lambda: towers.mk_exp({"1": 2}))
+    if name == "2":
+        return {"1": 2}
+    if name == "+iπ":
+        return {"ipi": 1}
+    if name == "-2":
+        return {"1": -2}
+    raise KeyError(name)
+
+
+NAMED = ("ln 2", "-e", "1/e", "e + 1", "e^2", "2", "+iπ", "-2")
+
+# Tokens for --expect. Each one is a constant built above, not a word.
+EXPECT = {
+    "ln2": "ln 2",
+    "-e": "-e",
+    "1/e": "1/e",
+    "e+1": "e + 1",
+    "e^2": "e^2",
+    "2": "2",
+    "ipi": "+iπ",
+    "-2": "-2",
+}
+
+def _program_counts(max_leaves=13):
+    """Cumulative counts through K = 2*leaves - 1, from the Catalan recurrence.
+
+    programs(n) has length C_{n-1}. An even bound adds no programs, so K and K+1
+    share a total. Checked against programs() through K 25 (290512).
+    """
+    c = 1
+    total = 0
+    counts = {}
+    for n in range(max_leaves):
+        total += c
+        k = 2 * (n + 1) - 1
+        counts[k] = total
+        counts[k + 1] = total
+        c = c * (4 * n + 2) // (n + 2)
+    return counts
+
+
+# Every K <= 26. A scan at any other K refuses to print PROVED.
+PROGRAM_COUNTS = _program_counts()
+
+
+def constant_name(word):
+    """Which named constant word's exact form is, or None."""
+    got = _form(lambda: towers._eval(word))
+    if not isinstance(got, dict):
+        return None
+    for name in NAMED:
+        if got == canonical_form(name):
+            return name
+    return None
+
+
 STATS = {"towers": 0, "deep": 0}
 VERDICT = {}    # (word, tre, tk) -> (verdict, reason)
 PENDING = []    # undecided programs whose verdict a claim needs, for deep.py
@@ -723,6 +929,174 @@ SELF_TEST = [
 ]
 
 
+def word_target_test():
+    """Word targets agree with an exact numeric target, and decide a value a float cannot.
+
+    2 is an integer coefficient of the atom 1, so both forms apply. e is not: a rounded
+    point sits outside the enclosure of exp(1), and towers.decide then excludes the word
+    that is e. The word target cancels that atom exactly. The reset between the two
+    evaluations is the KeyError the snapshot exists for: ATOMS loses E[1*1] until
+    restore_scope registers it again with the enclosure from the target.
+    """
+    from mpmath import exp as mexp
+    two = "111111EEE1EE11EE1EE"
+    e = "11E"
+    also_e = "11111EE1EEE"  # another word whose exact form is exp(1)
+    bad = []
+    for prog in ("1", e, two):
+        num = decide(prog, 2)[0]
+        word = decide_word(prog, two)[0]
+        tnum = towers.decide(prog, 2, 0)[0]
+        tword = towers.decide_word(prog, two)[0]
+        if len({num, word, tnum, tword}) != 1:
+            bad.append(f"{prog}: decide {num}, word {word}, towers {tnum}, towers-word {tword}")
+    if decide_word(also_e, e)[0] is not False or towers.decide_word(also_e, e)[0] is not False:
+        bad.append(f"word target did not accept {also_e} as e")
+    if towers.decide(also_e, mexp(1), 0)[0] is False:
+        bad.append("numeric approximation of e reported equality")
+    if decide_word("1", e)[0] is not True:
+        bad.append("word target did not exclude 1 as e")
+    iv.prec = 128
+    towers.reset()
+    target = towers._eval(e)
+    atoms, lnof = towers.scope_snapshot()
+    towers.reset()
+    if "E[1*1]" in towers.ATOMS:
+        bad.append("reset did not drop the target atom")
+    towers.restore_scope(atoms, lnof)
+    info = towers.ATOMS.get("E[1*1]")
+    if info is None or info.get("A") is None:
+        bad.append("restore did not register the target atom with its enclosure")
+    else:
+        value = towers._eval(also_e)
+        towers.restore_scope(atoms, lnof)
+        try:
+            if towers.excludes_value(value, target) is not False:
+                bad.append("restored target atom did not cancel the other word for e")
+        except (towers.Undecided, KeyError) as why:
+            bad.append(f"restored comparison failed: {why}")
+        towers.reset()
+        towers.restore_scope(atoms, lnof)
+        one = towers._eval("1")
+        towers.restore_scope(atoms, lnof)
+        try:
+            if towers.excludes_value(one, target) is not True:
+                bad.append("restored target atom did not exclude 1")
+        except (towers.Undecided, KeyError) as why:
+            bad.append(f"restored exclusion failed: {why}")
+    hard = "11E1E1111E1E1EEEE1E1E1E"
+    ln2 = "11111111EEE1EE11EE1EEE1EE"
+    saved_phase = towers.PHASE
+    towers.PHASE = None
+    verdict, why = towers.decide_word(hard, ln2)
+    if verdict is False or (verdict is None and why and "KeyError" in why):
+        bad.append(f"T4-phase word against ln 2: {verdict} {why}")
+    named = {
+        ln2: "ln 2",
+        "11111E1EEEE11E1EE": "-e",
+        "1111E11E1EEE1EE11E1E1EE": "-e",
+        "11111E1EEEE11EE1E": "1/e",
+        "11111EEE1EE11E1EE1E": "1/e",
+        "111111E1EEEE11EE1EE": "e + 1",
+        "111111EEE1EE11E1EE1EE": "e + 1",
+        "111111EEE1EE11EE1EE1E": "e^2",
+        "111111EEE1EE11EE1EE": "2",
+        "111111E1EEEE11E1E1EEE": "+iπ",
+        "111111E1E1EEE1EE11E1EEE": "+iπ",
+        "111111E1EEEE11E1E1EEE11EE": "-2",
+    }
+    for word, name in named.items():
+        got = constant_name(word)
+        if got != name:
+            bad.append(f"{word} is {got}, not {name}")
+    if constant_name("1") is not None:
+        bad.append("the word 1 was accepted as a named constant")
+    import io
+    import contextlib
+    held = io.StringIO()
+    with contextlib.redirect_stdout(held):
+        pinned = prove_word("swap", "11111E1EEEE11E1EE", 15, expect="ln 2")
+    if pinned or "witness is -e, not ln 2" not in held.getvalue():
+        bad.append("a -e word passed --expect ln 2")
+    if PROGRAM_COUNTS.get(13) != 197 or PROGRAM_COUNTS.get(16) != 626 or PROGRAM_COUNTS.get(25) != 290512:
+        bad.append("program-count table does not match the Catalan totals")
+    distinct = [str(i) for i in range(626)]
+    try:
+        require_program_count(15, distinct[:625])
+    except AssertionError:
+        pass
+    else:
+        bad.append("a short K <= 15 count was accepted")
+    try:
+        require_program_count(16, distinct[:625])
+    except AssertionError:
+        pass
+    else:
+        bad.append("K <= 16 with a dropped program was accepted")
+    try:
+        require_program_count(15, distinct[:625] + ["0"])
+    except AssertionError:
+        pass
+    else:
+        bad.append("a duplicate program was accepted")
+    try:
+        require_program_count(15, distinct)
+    except AssertionError as why:
+        bad.append(f"626 distinct programs raised: {why}")
+    try:
+        require_program_count(27, ["only"])
+    except AssertionError:
+        pass
+    else:
+        bad.append("K <= 27 with no count check was accepted")
+    import deep
+    iv.prec = 128
+    got = deep.exp_iv(iv.mpf("-2.5"), 128)
+    ref = iv.exp(iv.mpf("-2.5"))
+    if not (got.a <= ref.a and got.b >= ref.b):
+        bad.append("arb exp missed exp(-2.5)")
+    span = iv.mpf(["2", "3"])
+    logged = deep.log_iv(span)
+    ref = iv.log(span)
+    if not (logged.a <= ref.a and logged.b >= ref.b):
+        bad.append("arb log missed log([2, 3])")
+    slope = iv.mpf(["-2", "0.5"])
+    at = deep.atan_iv(slope)
+    ref = iv.atan2(slope, iv.mpf(1))
+    if not (at.a <= ref.a and at.b >= ref.b):
+        bad.append("arb atan missed atan([-2, 0.5])")
+    hump = iv.mpf(["-0.1", "0.1"])
+    covered = deep._range_iv("cos", hump, 128)
+    ref = iv.cos(hump)
+    if not (covered.a <= ref.a and covered.b >= ref.b and covered.a <= 1 <= covered.b):
+        bad.append("arb cos of an interval around 0 missed the maximum")
+    positive = iv.mpf(["-5.395310643879352", "-5.395310643879351"])
+    negative = iv.mpf(["3.141592653589793", "3.141592653589794"])
+    straddle = iv.mpf(["1.0", "2.0"])
+    if deep.arb_cos_sign(positive) != 1 or deep.arb_cos_sign(negative) != -1 or deep.arb_cos_sign(straddle) is not None:
+        bad.append("arb cos sign is not strict exactly when the enclosure is")
+    w_of = "11E1E1111E1E1EEEE1E"
+    towers.PHASE = lambda word: positive if word == w_of else None
+    try:
+        if towers.excludes_word(hard, ln2) is not True:
+            bad.append("strictly positive cos did not exclude ln 2")
+    except towers.Undecided as why:
+        bad.append(f"strictly positive cos stayed undecided: {why}")
+    towers.PHASE = lambda word: straddle if word == w_of else None
+    try:
+        bad.append(f"unsigned cos decided ln 2: {towers.excludes_word(hard, ln2)}")
+    except towers.Undecided:
+        pass
+    towers.PHASE = None
+    if signed_phase("11E1E1111E1E1EEEE1E1E") is not None:
+        bad.append("phase of exp(W) should be refused")
+    towers.PHASE = saved_phase
+    print(f"word-target: {'ok' if not bad else 'FAILED'}  ({len(bad)} problems)")
+    for line in bad:
+        print(f"   {line}")
+    return not bad
+
+
 def self_test():
     bad = [w for w, tre, tk in SELF_TEST if decide(w, tre, tk)[0] is True]
     bad += [w for w, tre, tk in SELF_TEST if towers.decide(w, tre, tk)[0] is True and w not in bad]
@@ -734,13 +1108,172 @@ def self_test():
     print(f"self-test: {len(SELF_TEST) - len(bad)}/{len(SELF_TEST)} known words not excluded for their own value")
     for w in bad:
         print(f"   UNSOUND: excluded {w}")
-    return not bad
+    return word_target_test() and not bad
+
+
+class _Alarm(Exception):
+    pass
+
+
+def _on_alarm(signum, frame):
+    raise _Alarm()
+
+
+def _word_batch(payload):
+    """Exclude a batch of programs. Returns the ones that are not certainly excluded.
+
+    The pool does not inherit the parent's globals when the start method is spawn
+    or forkserver, which is what the CI runner uses. The phase oracle and the
+    shared-exp directory are installed in this process.
+    """
+    import signal
+    import deep
+    target_word, words, strict, share = payload
+    deep.SHARE = share
+    towers.PHASE = signed_phase
+    signal.signal(signal.SIGALRM, _on_alarm)
+    bad = []
+    before = STATS["towers"]
+    seen = 0
+    for w in words:
+        seen += 1
+        signal.alarm(1200)
+        try:
+            verdict, reason = decide_word(w, target_word)
+            if verdict is not True and not (strict and uses_ln0(w) is True):
+                bad.append((w, verdict, reason))
+        except _Alarm:
+            bad.append((w, None, "timeout"))
+        finally:
+            signal.alarm(0)
+    return bad, STATS["towers"] - before, seen
+
+
+def require_program_count(upto, words):
+    """Fail unless this K has its Catalan total, and the programs are distinct."""
+    n = len(words)
+    if upto not in PROGRAM_COUNTS:
+        raise AssertionError(f"K <= {upto}: no program-count check, refusing to prove")
+    if n != PROGRAM_COUNTS[upto]:
+        raise AssertionError(
+            f"K <= {upto}: counted {n} programs, expected {PROGRAM_COUNTS[upto]}"
+        )
+    distinct = len(set(words))
+    if distinct != n:
+        raise AssertionError(
+            f"K <= {upto}: {n} programs, only {distinct} distinct"
+        )
+
+
+def prove_word(label, target_word, upto, strict=False, witness=None, expect=None):
+    """Exclude every program with K <= upto. With strict, a program that takes ln 0 may hit.
+
+    expect is the named constant the witness has to be. Returns True when nothing
+    undecided and no counterexample remains.
+    """
+    import os
+    import concurrent.futures
+    import multiprocessing
+    wit = witness if witness is not None else target_word
+    name = constant_name(wit)
+    if name is None:
+        print(f"{label}: witness is not a named constant", flush=True)
+        return False
+    if expect is not None and name != expect:
+        print(f"{label}: witness is {name}, not {expect}", flush=True)
+        return False
+    if witness is not None and constant_name(target_word) != name:
+        print(f"{label}: target word is not {name}", flush=True)
+        return False
+    print(f"{label}: witness equals {name}", flush=True)
+    if strict and uses_ln0(wit) is True:
+        print(f"{label}: strict witness takes ln 0", flush=True)
+        return False
+    words = []
+    for n in range(1, (upto + 1) // 2 + 1):
+        words.extend(programs(n))
+    batches = [words[i:i + 400] for i in range(0, len(words), 400)]
+    require_program_count(upto, words)
+    print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
+    bad = []
+    towers_n = 0
+    scanned = 0
+    import tempfile
+    import shutil
+    import deep
+    share = tempfile.mkdtemp(prefix="eml-phase-")
+    payloads = [(target_word, batch, strict, share) for batch in batches]
+    saved_share, deep.SHARE = deep.SHARE, share
+    saved_phase = towers.PHASE
+    towers.PHASE = signed_phase
+    try:
+        if len(words) >= 800:
+            workers = os.cpu_count() or 2
+            # forkserver, not fork: a worker must not inherit a half-mutated parent,
+            # and Python 3.14 (the CI runner) no longer forks by default.
+            ctx = multiprocessing.get_context("forkserver")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+                futures = [pool.submit(_word_batch, payload) for payload in payloads]
+                done = 0
+                for fut in concurrent.futures.as_completed(futures):
+                    found, n, seen = fut.result()
+                    bad.extend(found)
+                    towers_n += n
+                    scanned += seen
+                    done += 1
+                    if done % 10 == 0 or done == len(futures):
+                        print(f"   {done}/{len(futures)} batches, {len(bad)} open", flush=True)
+        else:
+            for payload in payloads:
+                found, _n, seen = _word_batch(payload)
+                bad.extend(found)
+                scanned += seen
+    finally:
+        towers.PHASE = saved_phase
+        deep.SHARE = saved_share
+        shutil.rmtree(share, ignore_errors=True)
+    if scanned != len(words):
+        raise AssertionError(
+            f"{label}: workers scanned {scanned} programs, not {len(words)}"
+        )
+    if len(words) >= 800:
+        STATS["towers"] += towers_n
+    equal = [w for w, verdict, _ in bad if verdict is False]
+    undecided = [(w, reason) for w, verdict, reason in bad if verdict is not False]
+    status = "PROVED" if not equal and not undecided else "NOT PROVED"
+    print(f"{label}: {status}  ({len(words)} programs, {len(equal)} not excluded, {len(undecided)} undecided)", flush=True)
+    for w in equal[:10]:
+        print(f"   not excluded: {w}")
+    for w, reason in undecided[:12]:
+        print(f"   undecided: {w}  ({reason})")
+    return status == "PROVED"
 
 
 def main():
     if not self_test():
         sys.exit(2)
     args = sys.argv[1:]
+    if "--expect" in args:
+        at = args.index("--expect")
+        if at + 1 >= len(args) or args[at + 1].startswith("--"):
+            print("usage: --expect needs a value", flush=True)
+            sys.exit(2)
+    if "--word" in args:
+        target = args[args.index("--word") + 1]
+        upto = int(args[args.index("--upto") + 1]) if "--upto" in args else len(target) - 2
+        witness = args[args.index("--witness") + 1] if "--witness" in args else None
+        if "--expect" not in args:
+            print("usage: --word requires --expect NAME", flush=True)
+            sys.exit(2)
+        token = args[args.index("--expect") + 1]
+        expect = EXPECT.get(token)
+        if expect is None:
+            print(f"unknown --expect {token}", flush=True)
+            sys.exit(1)
+        t0 = time.time()
+        ok = prove_word(target, target, upto, strict="--strict" in args, witness=witness, expect=expect)
+        print(f"decided by towers.py: {STATS['towers']}  ({time.time() - t0:.0f} s)", flush=True)
+        sys.exit(0 if ok else 1)
     if "--open" in args:
         # +i*pi on this cut at K 21 (K 23 without ln 0), and -2 at K 25 (K 27 without ln 0).
         global QUIET
