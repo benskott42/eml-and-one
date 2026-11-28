@@ -29,6 +29,13 @@
 
   `valueOf` reads a one-value stack as a complex number, with `−0` as `0`.
 
+  `*_correct_toC` is the form `Tok.subst` needs: the operand is whatever `toC` reads.
+  `exp` accepts `−0` (`dirExp .negZero = .finite 1`). The other words do not, when the
+  value is `0`: `dirEml (.finite 1) (.finite 0) = .posInf 0` while
+  `dirEml (.finite 1) .negZero = .posInf π`, and `ln`, `mul`, `div`, `√`, and `add`
+  (through `(−1)·y`) all start from `eml(1, ·)`. A nonzero complex value already
+  excludes `−0`, since `toC .negZero = some 0`.
+
   Zero `sorry`, zero custom axioms.
 -/
 import Eml.AppSub
@@ -783,6 +790,169 @@ theorem divTwo_correct (a y : ℂ) :
 theorem cube_correct (a y : ℂ) :
     evalTok (.finite 1) (.finite a) (.finite y) dirEml cubeToks [] = some [.finite (a ^ 3)] := by
   rw [cubeToks_eval, dirConst_three, dirEmlPowReal (by norm_num) three_ne_exp_exp,
+    show ((3 : ℝ) : ℂ) = ((3 : ℕ) : ℂ) by norm_num, Complex.cpow_natCast]
+
+/-! ### Operands up to the sign of zero
+
+`toC` identifies `.finite 0` with `.negZero`. The circuits do not. These theorems are
+what a `Tok.subst` proof may apply: `exp` for any `toC` operand, and the others once
+the operand is not `.negZero` (automatic when the complex value is nonzero). -/
+
+theorem toC_eq {v : EmlDir} {a : ℂ} (h : toC v = some a) :
+    v = .finite a ∨ v = .negZero ∧ a = 0 := by
+  cases v with
+  | finite z =>
+      simp only [toC, Option.some.injEq] at h
+      subst h
+      exact Or.inl rfl
+  | negZero =>
+      simp only [toC, Option.some.injEq] at h
+      subst h
+      exact Or.inr ⟨rfl, rfl⟩
+  | posInf _ => simp [toC] at h
+  | negInf _ => simp [toC] at h
+  | dirInf _ => simp [toC] at h
+  | nan => simp [toC] at h
+
+theorem toC_finite {v : EmlDir} {a : ℂ} (h : toC v = some a) (hv : v ≠ .negZero) :
+    v = .finite a := by
+  rcases toC_eq h with hv' | ⟨hv', _⟩
+  · exact hv'
+  · exact absurd hv' hv
+
+theorem toC_of_ne_zero {v : EmlDir} {a : ℂ} (h : toC v = some a) (ha : a ≠ 0) :
+    v = .finite a := by
+  rcases toC_eq h with hv | ⟨_, ha0⟩
+  · exact hv
+  · exact absurd ha0 ha
+
+/-- `eml(1, 0) = +∞`. -/
+theorem dirEml_one_zero : dirEml (.finite 1) (.finite 0) = .posInf 0 := by
+  simp [dirEml, dirExp, dirLowerLog, dirSub, exp_one_im]
+
+/-- `eml(1, −0) = +∞ + iπ`. `ln(−0)` is this phase, not the phase of `ln 0`. -/
+theorem dirEml_one_negZero : dirEml (.finite 1) .negZero = .posInf Real.pi := by
+  simp [dirEml, dirExp, dirLowerLog, dirSub, exp_one_im]
+
+theorem dirEml_one_zero_ne_negZero :
+    dirEml (.finite 1) (.finite 0) ≠ dirEml (.finite 1) .negZero := by
+  rw [dirEml_one_zero, dirEml_one_negZero]
+  intro h
+  injection h with h
+  exact Real.pi_ne_zero h.symm
+
+theorem dirEmlLn_negZero : dirEmlLn .negZero = .negInf Real.pi := by
+  have h1 : dirEml (.finite 1) .negZero = .posInf Real.pi := dirEml_one_negZero
+  have h2 : dirEml (.posInf Real.pi) (.finite 1) = .dirInf Real.pi := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, lowerLog_one]
+  have h3 : dirEml (.finite 1) (.dirInf Real.pi) = .negInf Real.pi := by
+    simp [dirEml, dirExp, dirLowerLog, dirSub, exp_one_im, Real.cos_pi]
+  simp [dirEmlLn, h1, h2, h3]
+
+/-- `ln(−0) = −∞ + iπ`, not `ln 0 = −∞`. -/
+theorem dirEmlLn_negZero_ne_zero : dirEmlLn .negZero ≠ dirEmlLn (.finite 0) := by
+  rw [dirEmlLn_negZero, dirEmlLn_zero]
+  intro h
+  injection h with h
+  exact Real.pi_ne_zero h
+
+theorem sub_correct_toC {v w : EmlDir} {a b : ℂ}
+    (hv : toC v = some a) (hw : toC w = some b) (hv0 : v ≠ .negZero) (hw0 : w ≠ .negZero) :
+    evalTok (.finite 1) v w dirEml appSubToks [] = some [.finite (a - b)] := by
+  rw [toC_finite hv hv0, toC_finite hw hw0, appSubToks_eval, appSub_finite]
+
+theorem add_correct_toC {v w : EmlDir} {a b : ℂ}
+    (hv : toC v = some a) (hw : toC w = some b) (hv0 : v ≠ .negZero) (hw0 : w ≠ .negZero) :
+    evalTok (.finite 1) v w dirEml addToks [] = some [.finite (a + b)] := by
+  rw [toC_finite hv hv0, toC_finite hw hw0, addToks_eval, appAdd_finite]
+
+theorem mul_correct_toC {v w : EmlDir} {a b : ℂ}
+    (hv : toC v = some a) (hw : toC w = some b) (hv0 : v ≠ .negZero) (hw0 : w ≠ .negZero) :
+    valueOf (evalTok (.finite 1) v w dirEml mulToks []) = some (a * b) := by
+  rw [toC_finite hv hv0, toC_finite hw hw0, mulToks_eval]
+  exact toC_dirEmlMul a b
+
+theorem div_correct_toC {v w : EmlDir} {a b : ℂ}
+    (hv : toC v = some a) (hw : toC w = some b) (hb : b ≠ 0) (hv0 : v ≠ .negZero) :
+    valueOf (evalTok (.finite 1) v w dirEml divToks []) = some (a / b) := by
+  rw [toC_finite hv hv0, toC_of_ne_zero hw hb, divToks_eval]
+  exact toC_dirEmlDiv a hb
+
+theorem neg_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    valueOf (evalTok (.finite 1) v y dirEml negToks []) = some (-a) := by
+  rw [toC_finite hv hv0, negToks_eval, dirCNegOne_eq_negOne]
+  show toC _ = _
+  rw [toC_dirEmlMul]
+  simp
+
+theorem sq_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml sqToks [] = some [.finite (a ^ 2)] := by
+  rw [toC_finite hv hv0, sqToks_eval, dirEmlSq]
+
+theorem twoMul_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml twoMulToks [] = some [.finite (2 * a)] := by
+  rw [toC_finite hv hv0, twoMulToks_eval, dirEmlTwoMul]
+
+theorem inv_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (ha : a ≠ 0) (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml invToks [] = some [.finite (1 / a)] := by
+  rw [toC_of_ne_zero hv ha, invToks_eval, dirEmlDiv_eq_of_ne_zero one_ne_zero ha]
+
+theorem sqrt_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml sqrtToks [] = some [.finite (a ^ ((1 : ℂ) / 2))] := by
+  rw [toC_finite hv hv0, sqrtToks_eval, dirEmlSqrt_all]
+
+/-- `exp` is the operator that does accept `−0`: `exp(−0) = 1 = exp 0`. -/
+theorem exp_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml expToks [] = some [.finite (Complex.exp a)] := by
+  rw [expToks_eval, dirEmlExp_eq, dirExp_of_toC hv]
+
+theorem ln_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (ha : a ≠ 0) (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml lnToks [] = some [.finite (Complex.log a)] := by
+  rw [toC_of_ne_zero hv ha, lnToks_eval, dirEmlLn_finite_ne_zero ha]
+
+theorem subOne_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml subOneToks [] = some [.finite (a - 1)] := by
+  rw [toC_finite hv hv0, subOneToks_eval, appRot_finite]
+
+theorem addOne_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml addOneToks [] = some [.finite (a + 1)] := by
+  rw [toC_finite hv hv0, addOneToks_eval, dirCNegOne_eq_negOne, appRot_finite, sub_neg_eq_add]
+
+theorem subTwo_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml subTwoToks [] = some [.finite (a - 2)] := by
+  rw [toC_finite hv hv0, subTwoToks_eval, dirCTwo_eq_two, appRot_finite]
+
+theorem pow_correct_toC {v w : EmlDir} {a b : ℂ}
+    (hv : toC v = some a) (hw : toC w = some b) (ha : a ≠ 0) (hw0 : w ≠ .negZero) :
+    evalTok (.finite 1) v w dirEml powToks [] = some [.finite (a ^ b)] := by
+  rw [toC_of_ne_zero hv ha, toC_finite hw hw0, powToks_eval, dirEmlPow ha]
+
+theorem expE_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml expEToks [] = some [.finite (Complex.exp a)] := by
+  rw [toC_finite hv hv0, expEToks_eval, dirEmlExpE]
+
+theorem mulTwo_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml mulTwoToks [] = some [.finite (a * 2)] := by
+  rw [toC_finite hv hv0, mulTwoToks_eval, dirEmlMulTwo]
+
+theorem divTwo_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml divTwoToks [] = some [.finite (a / 2)] := by
+  rw [toC_finite hv hv0, divTwoToks_eval, dirEmlDivTwo]
+
+theorem cube_correct_toC {v : EmlDir} {a : ℂ} (hv : toC v = some a) (hv0 : v ≠ .negZero)
+    (y : EmlDir) :
+    evalTok (.finite 1) v y dirEml cubeToks [] = some [.finite (a ^ 3)] := by
+  rw [toC_finite hv hv0, cubeToks_eval, dirConst_three, dirEmlPowReal (by norm_num) three_ne_exp_exp,
     show ((3 : ℝ) : ℂ) = ((3 : ℕ) : ℂ) by norm_num, Complex.cpow_natCast]
 
 end Eml.AppOps

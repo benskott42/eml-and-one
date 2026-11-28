@@ -74,6 +74,7 @@ The words the compiler substitutes for closed constants, proved from their prove
 For general operands the compiler lowers `x − y` (`lib/eml/lowering.ts`, `scaledRot`) to a 565-token circuit: `k · rotSub(x/k, y/k)` with `k = √(y²) − (−1)`, the rotation constant `iπ` (the K 21 word), and the `subOfExp` shortcut `eml(H, exp v)` where the left operand is a word `exp H`. Its `mul`, `div`, `sqrt`, `sqr`, `sub` and `−1` words are token for token `dirEmlMul`, `dirEmlDiv`, `dirEmlSqrt`, `dirEmlSqr`, `dirRawSub` and `dirCNegOne`.
 
 - `appSub_correct` — `evalTok (.finite 1) (.finite a) (.finite b) dirEml appSubToks [] = some [.finite (a - b)]` for **all** `a b : ℂ`, `b = 0` included (in `EmlDir`).
+- `Tok.subst` / `evalTok_subst` — a word with its `x` and `y` slots replaced by sub-words evaluates as the word on those results. The trigonometric words are composed this way.
 - `appSubToks_eval` — the token list unfolds to `appSub`, the circuit written with Lean's words; `shortSub_eq` — the shortcut is the raw subtraction whenever `exp H` is finite (not for every `EmlDir` value: an infinity at a general angle does not come back from `exp ∘ ln`; all four uses here have `exp H` finite); `dirCIpi_eq` — the K 21 word is `iπ` in `EmlDir`.
 - `APP_SUB_WORD` in `lib/eml/export.ts` is the same word: check 115 fails if the compiler stops emitting it, and the bridge compares it with `appSubToks` token for token.
 
@@ -88,7 +89,8 @@ With variable operands the compiler emits a single stored word for most operator
 - With a constant: `subOne_correct`, `addOne_correct`, `subTwo_correct` (`x − 1`, `x + 1`, `x − 2` are the unscaled rotation `rotSub(x, c)`, `appRot_finite`), `mulTwo_correct`, `divTwo_correct`, `expE_correct` (`e^x = exp(x·ln e)`), and `cube_correct` (`x³ = exp(3·ln x)`, `0` included, with the `3` word's `EmlDir` value from its certificate): exactly the value.
 - `pow_correct`: `x ^ y = exp(y·ln x)` is exactly the principal `a ^ b` for `a ≠ 0`.
 - Along the way: `dirEmlDiv_eq_of_ne_zero` (no half-plane condition when `a ≠ 0`), `dirEmlMul_zero_left`, `dirEmlMul_negOne_zero` (`(−1)·0 = −0`), `dirEmlMul_pos_negInf` (`r·(−∞) = ∞·e^{iπ}` for real `r > 0`), and `appSubGen_negZero` (`x − (−0) = x` through the whole rotation).
-- [`Eml/CertDir.lean`](Eml/CertDir.lean): `certify_sound_dir` — a certified constant word evaluates to its certificate's value in `EmlDir` too, so certified constants can be used inside compiled circuits (`dirConst_eq`).
+- [`Eml/CertDir.lean`](Eml/CertDir.lean): `certify_sound_dir` — a certified constant word evaluates to its certificate's value in `EmlDir` too, so certified constants can be used inside compiled circuits (`dirConst_eq`). `certifyDir` evaluates a constant bit program directly in `EmlDir`, keeping infinity phases in units of `π/2`, and returns `none` when a zero test or a phase is not decided. The current boxes do not decide `π` or `10`.
+- `*_correct_toC` (`Eml.AppOps`) reads an operand up to the sign of zero. `exp_correct_toC` accepts `−0`. The other operators require the operand not to be `−0` when its value is `0`, because `dirEml 1 0 = +∞` and `dirEml 1 (−0) = +∞ + iπ` (`dirEml_one_zero_ne_negZero`); `ln(−0) = −∞ + iπ`.
 
 ### Proof-carrying certificates ([`Eml/Cert.lean`](Eml/Cert.lean), [`Eml/CertSym.lean`](Eml/CertSym.lean), [`Eml/CertBox.lean`](Eml/CertBox.lean), [`Eml/CertExt.lean`](Eml/CertExt.lean))
 
