@@ -1709,6 +1709,31 @@ function exactReportCore(
     return present(report);
   }
   let initial = report;
+  // A cancellation in the dust band, about 10^-(digits-8), snaps to 0, and a later
+  // ln reads that 0 as ln 0. exp(e − exp(exp(e−1))) − 1 is about 10^(−114): real at
+  // 120 digits, and eml(1, that) is exp(exp(e−1)), not +∞. Rounding noise sits on the
+  // last digit and still snaps after the raise, so a true ln 0 (e − ln(exp(e)), or an
+  // exact 0 with no gap) stays the infinity it is.
+  if (!zFinite(initial.value) && !initial.value.re.isNaN() && !initial.value.im.isNaN() && !initial.sawLead) {
+    const gap = initial.lossGap ?? 0;
+    const digits = initial.digits ?? D.precision;
+    const need = gap + 48;
+    if (gap > digits - 24 && need <= PRECISION_CAP) {
+      const again = atPrecision(need, root, env, budget);
+      if (!again.unverified && zFinite(again.value)) {
+        const next = Math.min(PRECISION_CAP, need + 24);
+        const check = next > need ? atPrecision(next, root, env, budget) : again;
+        if (
+          !check.unverified &&
+          zFinite(check.value) &&
+          !residueMoved(again.value.re, check.value.re) &&
+          !residueMoved(again.value.im, check.value.im)
+        ) {
+          initial = again;
+        }
+      }
+    }
+  }
   if (absorbedMatters(initial)) {
     const raised = raiseForAbsorbed(initial);
     if (raised.unverified) return raised;
