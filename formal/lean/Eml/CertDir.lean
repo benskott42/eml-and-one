@@ -13,7 +13,7 @@
   test or a phase is not decided, which is sound and stricter than the value. The
   boxes do decide `π`, `−iπ`, `i`, `1/2`, and `−∞`. `certifyDir` also decides `10`,
   `−i`, `2i`, and `10i` (`Eml.DirConst`, `Eml.CertDirCall`); `1/2` is `half_dir`
-  (plain `decide` takes 2.7 s).
+  (`decide +kernel`, 2.7 s).
 
   Zero `sorry`, zero custom axioms.
 -/
