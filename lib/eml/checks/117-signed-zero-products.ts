@@ -28,7 +28,16 @@ const rows: Array<[string, string, string, string | null]> = [
   ["(-ln(2)/2)*0", "−0", "−0", null],
   ["((-e)/2)*0", "−0", "−0", null],
   ["(2/(-0.5))*0", "−0", "−0", null],
-  ["(atan(-3))*0", "−0", "−0", null],
+    ["(atan(-3))*0", "−0", "−0", null],
+  ["((-2/3)*0)*((-2/3)*0)", "0", "0", null],
+  ["((-2/3)*0)^-1", "−∞", "−∞", SINGULAR_LN0],
+  ["i/((1/3-1)*0)", "−∞i", "−∞i", SINGULAR_LN0],
+  ["-(((-2/3)*0)*((e*0)*(-3/2)))", "−0", "−0", null],
+  ["(((0)*0*(-3/2))*0*(atan(-2/3)))+((-ln(2)/2)*0)", "0", "0", null],
+  ["0*cos(1)", "0", "0", null],
+  ["0*cos(2)", "−0", "−0", null],
+  ["(-0)+(-0)", "−0", "−0", null],
+  ["0+(-0)", "0", "0", null],
 ];
 
 function show(node: Node): { float: string; exact: string; floatNote: string | null; exactNote: string | null; floatUnverified: boolean; exactUnverified: boolean } {
@@ -94,9 +103,9 @@ const checkModule: CheckModule = {
       ctx.fail("FAIL atan zero wire", wireText, wire.singular);
     }
 
-    // cos(1) is enclosed by a box that contains negative reals. The sign of
-    // 0·cos(1) is not certified, so it is refused instead of printed as +0.
-    const refused = show(compileExpression("0*cos(1)", {}));
+    // 1 − cos(0) is the real 0, but that factor records no sign. 0 times it
+    // must be refused rather than printed as a certified zero.
+    const refused = show(compileExpression("0*(1-1*cos(0))", {}));
     if (!refused.floatUnverified || !refused.exactUnverified) {
       ctx.fail("FAIL uncertified sign", refused.float, refused.floatUnverified, refused.exact, refused.exactUnverified);
     }
