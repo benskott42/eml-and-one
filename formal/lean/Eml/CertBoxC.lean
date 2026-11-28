@@ -14,6 +14,7 @@
 -/
 import Mathlib.Analysis.Complex.Trigonometric
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.Inverse
 import Eml.CertBox
 
 namespace Eml.Cert
@@ -1269,5 +1270,131 @@ theorem trigI_sound {a b : Int} (hab : a ≤ b) {y : ℝ} (hy1 : fx a ≤ y) (hy
     · rw [sc_D, fx_one]; exact Real.cos_le_one y
     · rw [sc_D, fx_neg, fx_one]; exact Real.neg_one_le_sin y
     · rw [sc_D, fx_one]; exact Real.sin_le_one y
+
+/-! ### Arcsin bounds
+
+`halfPiLo` / `halfPiHi` are the outward halves of the six-digit `π` bounds.
+The bisection is untrusted: a candidate is kept only when it lies in
+`[-halfPiLo, halfPiLo]` and `trigPt` certifies the sine comparison.
+-/
+
+/-- Floor of `π₋ / 2`. -/
+def halfPiLo : Int := piLo / 2
+
+/-- Ceiling of `π₊ / 2`. -/
+def halfPiHi : Int := -((-piHi) / 2)
+
+theorem halfPiLo_le_fourD : halfPiLo ≤ 4 * D := by decide
+
+theorem fx_halfPiLo_lt_pi_div_two : fx halfPiLo < Real.pi / 2 := by
+  have hdiv : ((piLo / 2 : Int) : ℝ) ≤ (piLo : ℝ) / 2 := ediv_le piLo 2 (by decide)
+  have hscaled : ((piLo / 2 : Int) : ℝ) / D ≤ ((piLo : ℝ) / 2) / D :=
+    div_le_div_of_nonneg_right hdiv DR_pos.le
+  have hfx : fx halfPiLo ≤ fx piLo / 2 := by
+    unfold fx halfPiLo
+    calc ((piLo / 2 : Int) : ℝ) / D ≤ ((piLo : ℝ) / 2) / D := hscaled
+      _ = ((piLo : ℝ) / D) / 2 := by rw [div_div, mul_comm, ← div_div]
+      _ = fx piLo / 2 := by unfold fx; rfl
+  have h2 : fx halfPiLo * 2 ≤ fx piLo := (le_div_iff₀ (by norm_num : (0 : ℝ) < 2)).mp hfx
+  linarith [fx_piLo]
+
+theorem pi_div_two_lt_fx_halfPiHi : Real.pi / 2 < fx halfPiHi := by
+  have hdiv : (piHi : ℝ) / 2 ≤ ((-((-piHi) / 2) : Int) : ℝ) := le_cdiv piHi 2 (by decide)
+  have hscaled : ((piHi : ℝ) / 2) / D ≤ ((-((-piHi) / 2) : Int) : ℝ) / D :=
+    div_le_div_of_nonneg_right hdiv DR_pos.le
+  have hleft : fx piHi / 2 = ((piHi : ℝ) / 2) / D := by
+    unfold fx
+    rw [div_div, mul_comm, ← div_div]
+  have hfx : fx piHi / 2 ≤ fx halfPiHi := by
+    rw [hleft]
+    unfold fx halfPiHi
+    exact hscaled
+  have h2 : fx piHi ≤ fx halfPiHi * 2 := (div_le_iff₀ (by norm_num : (0 : ℝ) < 2)).mp hfx
+  linarith [fx_piHi]
+
+theorem abs_fx_le_four_of_halfPi {θ : Int} (h1 : -halfPiLo ≤ θ) (h2 : θ ≤ halfPiLo) :
+    |fx θ| ≤ 4 := by
+  have hlo : -fx halfPiLo ≤ fx θ := by
+    have hmono := fx_mono h1
+    rwa [fx_neg] at hmono
+  have hhi : fx θ ≤ fx halfPiLo := fx_mono h2
+  have hbound : fx halfPiLo ≤ 4 := by
+    have hmono := fx_mono halfPiLo_le_fourD
+    rw [fx_mul_int, fx_one] at hmono
+    norm_num at hmono
+    exact hmono
+  exact le_trans (abs_le.mpr ⟨hlo, hhi⟩) hbound
+
+/-- Largest candidate the fuel finds with `(trigPt mid).sh ≤ s`. -/
+def asinSearchLo : Nat → Int → Int → Int → Int
+  | 0, _, lo, _ => lo
+  | fuel + 1, s, lo, hi =>
+    if hi ≤ lo then lo
+    else
+      let mid := (lo + hi + 1) / 2
+      if (trigPt mid).sh ≤ s then asinSearchLo fuel s mid hi
+      else asinSearchLo fuel s lo (mid - 1)
+
+/-- Smallest candidate the fuel finds with `s ≤ (trigPt mid).sl`. -/
+def asinSearchHi : Nat → Int → Int → Int → Int
+  | 0, _, _, hi => hi
+  | fuel + 1, s, lo, hi =>
+    if hi ≤ lo then hi
+    else
+      let mid := (lo + hi) / 2
+      if s ≤ (trigPt mid).sl then asinSearchHi fuel s lo mid
+      else asinSearchHi fuel s (mid + 1) hi
+
+/-- Lower bound for `arcsin`. The fallback is at most `-π/2`. -/
+def asinLo (s : Int) : Int :=
+  let θ := asinSearchLo boxFuel s (-halfPiLo) halfPiLo
+  if -halfPiLo ≤ θ ∧ θ ≤ halfPiLo ∧ (trigPt θ).sh ≤ s then θ else -halfPiHi
+
+/-- Upper bound for `arcsin`. The fallback is at least `π/2`. -/
+def asinHi (s : Int) : Int :=
+  let θ := asinSearchHi boxFuel s (-halfPiLo) halfPiLo
+  if -halfPiLo ≤ θ ∧ θ ≤ halfPiLo ∧ s ≤ (trigPt θ).sl then θ else halfPiHi
+
+theorem fx_asinLo_le (s : Int) {v : ℝ} (hv : fx s ≤ v) : fx (asinLo s) ≤ Real.arcsin v := by
+  dsimp only [asinLo]
+  generalize hθ : asinSearchLo boxFuel s (-halfPiLo) halfPiLo = θ
+  by_cases hcond : -halfPiLo ≤ θ ∧ θ ≤ halfPiLo ∧ (trigPt θ).sh ≤ s
+  · rw [if_pos hcond]
+    rcases hcond with ⟨h1, h2, hsh⟩
+    have hpt := trigPt_sound (t := θ) (abs_fx_le_four_of_halfPi h1 h2)
+    have hsin : Real.sin (fx θ) ≤ fx (trigPt θ).sh := by simpa [sc_D] using hpt.sh
+    have hvsin : Real.sin (fx θ) ≤ v := le_trans hsin (le_trans (fx_mono hsh) hv)
+    have hmem : fx θ ∈ Set.Ioc (-(Real.pi / 2)) (Real.pi / 2) := by
+      refine Set.mem_Ioc.mpr ⟨?_, ?_⟩
+      · have hmono := fx_mono h1
+        rw [fx_neg] at hmono
+        exact lt_of_lt_of_le (neg_lt_neg fx_halfPiLo_lt_pi_div_two) hmono
+      · exact le_trans (fx_mono h2) fx_halfPiLo_lt_pi_div_two.le
+    exact (Real.le_arcsin_iff_sin_le' hmem).mpr hvsin
+  · rw [if_neg hcond]
+    have hfb : fx (-halfPiHi) ≤ -(Real.pi / 2) := by
+      rw [fx_neg]
+      exact neg_le_neg pi_div_two_lt_fx_halfPiHi.le
+    exact le_trans hfb (Real.neg_pi_div_two_le_arcsin v)
+
+theorem arcsin_le_fx_asinHi (s : Int) {v : ℝ} (hv : v ≤ fx s) :
+    Real.arcsin v ≤ fx (asinHi s) := by
+  dsimp only [asinHi]
+  generalize hθ : asinSearchHi boxFuel s (-halfPiLo) halfPiLo = θ
+  by_cases hcond : -halfPiLo ≤ θ ∧ θ ≤ halfPiLo ∧ s ≤ (trigPt θ).sl
+  · rw [if_pos hcond]
+    rcases hcond with ⟨h1, h2, hsl⟩
+    have hpt := trigPt_sound (t := θ) (abs_fx_le_four_of_halfPi h1 h2)
+    have hsin : fx (trigPt θ).sl ≤ Real.sin (fx θ) := by simpa [sc_D] using hpt.sl
+    have hvsin : v ≤ Real.sin (fx θ) := le_trans hv (le_trans (fx_mono hsl) hsin)
+    have hmem : fx θ ∈ Set.Ico (-(Real.pi / 2)) (Real.pi / 2) := by
+      refine Set.mem_Ico.mpr ⟨?_, ?_⟩
+      · have hmono := fx_mono h1
+        rw [fx_neg] at hmono
+        exact le_trans (neg_le_neg fx_halfPiLo_lt_pi_div_two.le) hmono
+      · exact lt_of_le_of_lt (fx_mono h2) fx_halfPiLo_lt_pi_div_two
+    exact (Real.arcsin_le_iff_le_sin' hmem).mpr hvsin
+  · rw [if_neg hcond]
+    exact le_trans (Real.arcsin_le_pi_div_two v) pi_div_two_lt_fx_halfPiHi.le
 
 end Eml.Cert
