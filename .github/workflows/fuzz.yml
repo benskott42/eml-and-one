@@ -48,7 +48,14 @@ jobs:
           if [ "${{ matrix.slot }}" = "0" ]; then echo "seed=1" >> "$GITHUB_OUTPUT";
           else echo "seed=$(( ${{ github.run_number }} * 10 + ${{ matrix.slot }} ))" >> "$GITHUB_OUTPUT"; fi
       - name: Fuzz (in-process vs worker wire)
-        run: npx tsx tools/fuzz/fuzz.ts --count "${{ github.event.inputs.count || '1000' }}" --seed "${{ steps.seed.outputs.seed }}" --json fuzz.json
+        env:
+          FUZZ_COUNT: ${{ github.event.inputs.count || '1000' }}
+        run: |
+          if [[ ! "$FUZZ_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            printf 'count must be a positive integer (got: %s)\n' "$FUZZ_COUNT" >&2
+            exit 1
+          fi
+          npx tsx tools/fuzz/fuzz.ts --count "$FUZZ_COUNT" --seed "${{ steps.seed.outputs.seed }}" --json fuzz.json
       - name: Check certified values against mpmath
         run: python3 tools/fuzz/oracle.py fuzz.json
       - name: Input robustness (parse fuzz)
