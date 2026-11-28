@@ -35,7 +35,7 @@ Ours, labelled as above:
 | value | K | status |
 | --- | --- | --- |
 | −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); the tower programs take runs of up to 5.5 million bits). Without that value, K 27 is shortest known: all but two K 25 programs are excluded. |
-| ln 2 | 25 | proved minimal, with or without ln 0 ([docs/minimality.md](docs/minimality.md)). One K 23 program is the T4/z tower already excluded by the published phase. |
+| ln 2 | 25 | proved minimal, with or without ln 0 ([docs/minimality.md](docs/minimality.md)). `decide.py --word` excludes all 82500 programs with K ≤ 23 and prints PROVED; the last word's phase is computed in that run. |
 | −e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 23 is proved minimal. |
 | 1/e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 19 is proved minimal. |
 | e + 1 | 19 | proved minimal, with ln 0 = −∞. Without ln 0, K 21 is proved minimal. |
@@ -53,7 +53,7 @@ Ours, labelled as above:
 | scaled subtraction | 565 | shortest known construction, with ln 0 = −∞ |
 | scaled addition | 655 | shortest known construction, with ln 0 = −∞ |
 
-The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 47 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, √2 at K 61, and ln 2 at K 25 are constructions, not search records.
+The words are in [lib/eml/best-known.json](lib/eml/best-known.json): −iπ at K 45 is `-ipi`, −iπ without ln 0 at K 47 is `-ipi-strict`, and 1/3 at K 37 is `1/3-strict`. K 21 and K 23 are +iπ on this cut. i at K 57, π at K 93, and √2 at K 61 are constructions, not search records. ln 2 at K 25 is proved minimal.
 
 ## Encoding
 

@@ -29,9 +29,12 @@ usage: python decide.py [max_K]       the claims in docs/minimality.md (default 
        python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
                                       K 27 without ln 0
        python decide.py --open --deep the same, with deep.py for the programs left open
-       python decide.py --word WORD --upto K [--strict]
+       python decide.py --word WORD --upto K [--strict] [--witness WORD]
                                       WORD is the target. Exclude every program with
                                       K <= upto. --strict allows a hit that takes ln 0.
+                                      The witness has to match a named constant in the
+                                      exact layer. A missing phase of exp(e^W) is used
+                                      only when arb's cos of it is strictly signed.
 """
 import sys
 import time
@@ -737,6 +740,75 @@ def decide_word(word, target_word):
     return VERDICT[k]
 
 
+def signed_phase(word):
+    """towers.PHASE: Im(word) mod 2*pi, or None unless arb's cos of it is strictly signed.
+
+    For a value ±exp(e^W) whose only gap is θ = Im W mod 2*pi, a positive cos makes
+    the value huge and excludes a modest target, and a negative cos makes it tiny and
+    excludes a nonzero target. An enclosure of cos that is not strictly signed is not
+    a phase: the word stays undecided.
+
+    The per-word alarm stays off for the call. A phase is a shared multi-minute arb
+    computation, and killing it would leave the word undecided and (before the lock
+    was dropped) cache that failure for every other worker.
+    """
+    import signal
+    import deep
+    remaining = signal.alarm(0)
+    try:
+        th = deep.phase(word)
+    finally:
+        if remaining:
+            signal.alarm(remaining)
+    if th is None or deep.arb_cos_sign(th) is None:
+        return None
+    return th
+
+
+def _form(build):
+    """Exact towers form from build(), with the phase oracle off."""
+    saved = towers.PHASE
+    towers.PHASE = None
+    towers.reset()
+    try:
+        return build()
+    finally:
+        towers.PHASE = saved
+
+
+def canonical_form(name):
+    """The exact-layer form of a named constant, built from 1, exp and ln, not from a word."""
+    if name == "ln 2":
+        return _form(lambda: towers.ln_single("1", 2))
+    if name == "-e":
+        return _form(lambda: {a: -c for a, c in towers.mk_exp({"1": 1}).items()})
+    if name == "1/e":
+        return _form(lambda: towers.mk_exp({"1": -1}))
+    if name == "e + 1":
+        def e1():
+            e = towers.mk_exp({"1": 1})
+            e["1"] = e.get("1", 0) + 1
+            return e
+        return _form(e1)
+    if name == "e^2":
+        return _form(lambda: towers.mk_exp({"1": 2}))
+    raise KeyError(name)
+
+
+NAMED = ("ln 2", "-e", "1/e", "e + 1", "e^2")
+
+
+def constant_name(word):
+    """Which named constant word's exact form is, or None."""
+    got = _form(lambda: towers._eval(word))
+    if not isinstance(got, dict):
+        return None
+    for name in NAMED:
+        if got == canonical_form(name):
+            return name
+    return None
+
+
 STATS = {"towers": 0, "deep": 0}
 VERDICT = {}    # (word, tre, tk) -> (verdict, reason)
 PENDING = []    # undecided programs whose verdict a claim needs, for deep.py
@@ -874,9 +946,69 @@ def word_target_test():
             bad.append(f"restored exclusion failed: {why}")
     hard = "11E1E1111E1E1EEEE1E1E1E"
     ln2 = "11111111EEE1EE11EE1EEE1EE"
+    saved_phase = towers.PHASE
+    towers.PHASE = None
     verdict, why = towers.decide_word(hard, ln2)
     if verdict is False or (verdict is None and why and "KeyError" in why):
         bad.append(f"T4-phase word against ln 2: {verdict} {why}")
+    named = {
+        ln2: "ln 2",
+        "11111E1EEEE11E1EE": "-e",
+        "1111E11E1EEE1EE11E1E1EE": "-e",
+        "11111E1EEEE11EE1E": "1/e",
+        "11111EEE1EE11E1EE1E": "1/e",
+        "111111E1EEEE11EE1EE": "e + 1",
+        "111111EEE1EE11E1EE1EE": "e + 1",
+        "111111EEE1EE11EE1EE1E": "e^2",
+    }
+    for word, name in named.items():
+        got = constant_name(word)
+        if got != name:
+            bad.append(f"{word} is {got}, not {name}")
+    if constant_name("1") is not None:
+        bad.append("the word 1 was accepted as a named constant")
+    import deep
+    iv.prec = 128
+    got = deep.exp_iv(iv.mpf("-2.5"), 128)
+    ref = iv.exp(iv.mpf("-2.5"))
+    if not (got.a <= ref.a and got.b >= ref.b):
+        bad.append("arb exp missed exp(-2.5)")
+    span = iv.mpf(["2", "3"])
+    logged = deep.log_iv(span)
+    ref = iv.log(span)
+    if not (logged.a <= ref.a and logged.b >= ref.b):
+        bad.append("arb log missed log([2, 3])")
+    slope = iv.mpf(["-2", "0.5"])
+    at = deep.atan_iv(slope)
+    ref = iv.atan2(slope, iv.mpf(1))
+    if not (at.a <= ref.a and at.b >= ref.b):
+        bad.append("arb atan missed atan([-2, 0.5])")
+    hump = iv.mpf(["-0.1", "0.1"])
+    covered = deep._range_iv("cos", hump, 128)
+    ref = iv.cos(hump)
+    if not (covered.a <= ref.a and covered.b >= ref.b and covered.a <= 1 <= covered.b):
+        bad.append("arb cos of an interval around 0 missed the maximum")
+    positive = iv.mpf(["-5.395310643879352", "-5.395310643879351"])
+    negative = iv.mpf(["3.141592653589793", "3.141592653589794"])
+    straddle = iv.mpf(["1.0", "2.0"])
+    if deep.arb_cos_sign(positive) != 1 or deep.arb_cos_sign(negative) != -1 or deep.arb_cos_sign(straddle) is not None:
+        bad.append("arb cos sign is not strict exactly when the enclosure is")
+    w_of = "11E1E1111E1E1EEEE1E"
+    towers.PHASE = lambda word: positive if word == w_of else None
+    try:
+        if towers.excludes_word(hard, ln2) is not True:
+            bad.append("strictly positive cos did not exclude ln 2")
+    except towers.Undecided as why:
+        bad.append(f"strictly positive cos stayed undecided: {why}")
+    towers.PHASE = lambda word: straddle if word == w_of else None
+    try:
+        bad.append(f"unsigned cos decided ln 2: {towers.excludes_word(hard, ln2)}")
+    except towers.Undecided:
+        pass
+    towers.PHASE = None
+    if signed_phase("11E1E1111E1E1EEEE1E1E") is not None:
+        bad.append("phase of exp(W) should be refused")
+    towers.PHASE = saved_phase
     print(f"word-target: {'ok' if not bad else 'FAILED'}  ({len(bad)} problems)")
     for line in bad:
         print(f"   {line}")
@@ -913,7 +1045,7 @@ def _word_batch(payload):
     bad = []
     before = STATS["towers"]
     for w in words:
-        signal.alarm(180)
+        signal.alarm(1200)
         try:
             verdict, reason = decide_word(w, target_word)
             if verdict is not True and not (strict and uses_ln0(w) is True):
@@ -932,11 +1064,15 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
     """
     import os
     import concurrent.futures
-    wit = witness or target_word
-    verdict, why = decide_word(wit, target_word)
-    if verdict is not False:
-        print(f"{label}: witness is not the target ({verdict}, {why})", flush=True)
+    wit = witness if witness is not None else target_word
+    name = constant_name(wit)
+    if name is None:
+        print(f"{label}: witness is not a named constant", flush=True)
         return False
+    if witness is not None and constant_name(target_word) != name:
+        print(f"{label}: target word is not {name}", flush=True)
+        return False
+    print(f"{label}: witness equals {name}", flush=True)
     if strict and uses_ln0(wit) is True:
         print(f"{label}: strict witness takes ln 0", flush=True)
         return False
@@ -948,22 +1084,34 @@ def prove_word(label, target_word, upto, strict=False, witness=None):
     payloads = [(target_word, batch, strict) for batch in batches]
     bad = []
     towers_n = 0
-    if len(words) >= 800:
-        workers = os.cpu_count() or 2
-        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_word_batch, payload) for payload in payloads]
-            done = 0
-            for fut in concurrent.futures.as_completed(futures):
-                found, n = fut.result()
+    import tempfile
+    import shutil
+    import deep
+    share = tempfile.mkdtemp(prefix="eml-phase-")
+    saved_share, deep.SHARE = deep.SHARE, share
+    saved_phase = towers.PHASE
+    towers.PHASE = signed_phase
+    try:
+        if len(words) >= 800:
+            workers = os.cpu_count() or 2
+            with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_word_batch, payload) for payload in payloads]
+                done = 0
+                for fut in concurrent.futures.as_completed(futures):
+                    found, n = fut.result()
+                    bad.extend(found)
+                    towers_n += n
+                    done += 1
+                    if done % 10 == 0 or done == len(futures):
+                        print(f"   {done}/{len(futures)} batches, {len(bad)} open", flush=True)
+        else:
+            for payload in payloads:
+                found, _n = _word_batch(payload)
                 bad.extend(found)
-                towers_n += n
-                done += 1
-                if done % 10 == 0 or done == len(futures):
-                    print(f"   {done}/{len(futures)} batches, {len(bad)} open", flush=True)
-    else:
-        for payload in payloads:
-            found, _n = _word_batch(payload)
-            bad.extend(found)
+    finally:
+        towers.PHASE = saved_phase
+        deep.SHARE = saved_share
+        shutil.rmtree(share, ignore_errors=True)
     if len(words) >= 800:
         STATS["towers"] += towers_n
     equal = [w for w, verdict, _ in bad if verdict is False]
