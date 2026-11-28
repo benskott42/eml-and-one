@@ -99,7 +99,7 @@ With variable operands the compiler emits a single stored word for most operator
 
 - Structural rules: integer and `kiπ` arithmetic, `exp(ln u) = u` for provably nonzero `u`, `exp(a ± kiπ) = ±exp a`, `ln(exp u) = u` in the strip, `ln(−u) = ln u − iπ` for positive real `u`, and subtraction rules that keep `iπ` multiples outermost.
 - `Eml.CertBox`: `bnd s` gives integer fixed-point bounds (scale `2^48`) on the real and imaginary parts, proved by `bnd_sound`. `e` and `π` come from Mathlib's decimal bounds, `exp` on real boxes from `(1 ± x/2^16)^(±2^16)` with outward-rounded squarings, and `ln` from `1 − 1/x ≤ log x ≤ x − 1`. The checker uses boxes to prove values nonzero (`e − exp e`, `exp(e − ln 2) − exp e`), positive or negative real, or inside the strip. All of it is `Int` arithmetic, so the kernel evaluates it.
-- `Eml.CertBoxC`: interval product (`imul`) and quotient (`idiv`), the clamp into `[-1, 1]`, fuelled square-root bounds on a box's modulus, and the sharp logarithm `lnSLo` / `lnSHi` (a bisection is kept only when `expHi` / `expLo` certify it). Trig will use `KH = 4` and scale `2^64`, which divides `D · 2^KH` evenly. `exp` and `ln` of a genuinely complex box are not here yet, so `π` and `10` still do not certify.
+- `Eml.CertBoxC`: interval product (`imul`) and quotient (`idiv`), the clamp into `[-1, 1]`, fuelled square-root bounds on a box's modulus, the sharp logarithm `lnSLo` / `lnSHi` (a bisection is kept only when `expHi` / `expLo` certify it), and cosine and sine at one point (`trigPt_sound`, `|fx t| ≤ 4`). Trig uses `KH = 4` and scale `2^64`, which divides `D · 2^KH` evenly. `exp` and `ln` of a genuinely complex box are not here yet, so `π` and `10` still do not certify.
 - `Eml.CertExt`: `certifyExt` runs the same gate in `EmlExt` with `±∞` as symbols (`ln 0 = −∞` for the symbol `0`, `exp(−∞) = 0`, the `extSub` table), and `certifyExt_sound` gives `evalRpn (EmlExt.finite 1) extEml bits [] = some [x.denote]`. It agrees with `certify` wherever that succeeds.
 - Coverage: 23 of the 43 closed stored words certify in `ℂ`, and 17 more in `EmlExt` (check 114). `pi`, `-ipi` and `-ipi-strict` need bounds for `exp` and `ln` of genuinely complex values.
 - `lib/eml/leanCert.ts` is an exact port; the bridge has the kernel re-decide `certify` and `certifyExt` on 237 programs (every program with K ≤ 13 plus every closed stored word) and compares. The inspector shows an EmlExt certificate when there is no `ℂ` one, and `Copy Lean 4` emits a `certifyExt_sound (by decide)` theorem for it.
@@ -132,6 +132,10 @@ Built purely from `extEml` and `.finite 1` (zero smuggled constants):
 - **Minimality lower bounds beyond `0` at K = 7** (excluding all shorter programs for `-1`, `2`, `+iπ`, `-2`): these remain computer-assisted interval/tower certificates in `tools/minimality/`.
 - **Floating-point error bounds / exact-mode precision thresholds**: numerical properties in `docs/rotsub.md` and `docs/known-limitations.md` are not formalized.
 - *(All 45 constant/RPN records in `lib/eml/best-known.json` — including `-ipi` K 45 and `-ipi-strict` K 47 — are machine-checked in `RpnSoundness.lean`, `Records.lean`, `Extended.lean`, and `MoreRecords.lean`, and cross-checked against the UI in CI. `lib/eml/checks/112-lean-record-coverage.ts` fails if a stored word has no theorem link or if a link's stored `lean` value disagrees with the exact engine, `scripts/lean-bridge-check.ts` proves each link's word evaluates to exactly that stored value, and `lean.yml` runs when `best-known.json` changes.)*
+
+## Related work
+
+[nasqret/eml-formalization](https://github.com/nasqret/eml-formalization) proves functional completeness for the paper's primitives and upper bounds on several K counts (code under Apache-2.0, prose under CC BY-SA 4.0). It uses Mathlib's principal logarithm, and it has no exact records and no Schanuel-conditional results.
 
 ## Building and auditing locally
 

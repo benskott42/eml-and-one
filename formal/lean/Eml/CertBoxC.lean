@@ -12,6 +12,7 @@
   Searches take a `Nat` fuel argument and are checked afterwards. A wrong search
   answer fails the check and falls back to a bound that is still sound.
 -/
+import Mathlib.Analysis.Complex.Trigonometric
 import Eml.CertBox
 
 namespace Eml.Cert
@@ -673,5 +674,420 @@ theorem log_le_fx_lnSHi {x : Int} {r : ℝ} (hr0 : 0 < r) (hr : r ≤ fx x) :
     exact (Real.log_le_iff_le_exp hr0).mpr this
   · rw [if_neg hcond]
     exact log_le_fx_lnHi hr0 hr
+
+/-! ### Cosine and sine at one point
+
+`u = fx t / 2^KH` is an integer at scale `PS`, because `PS / (D · 2^KH) = 2^12`.
+The degree-4 Taylor bound is evaluated there and doubled `KH` times. Outward
+rounding already covers the polynomial error; the extra two units in the
+remainder only loosen the box.
+-/
+
+def cdiv (n d : Int) : Int := -((-n) / d)
+
+theorem sc_add {S a b : Int} : sc S (a + b) = sc S a + sc S b := by
+  unfold sc
+  push_cast
+  ring
+
+theorem sc_sub {S a b : Int} : sc S (a - b) = sc S a - sc S b := by
+  unfold sc
+  push_cast
+  ring
+
+theorem sc_mul_int {S k a : Int} : sc S (k * a) = (k : ℝ) * sc S a := by
+  unfold sc
+  push_cast
+  ring
+
+theorem sc_strict {S a b : Int} (hS : 0 < S) (h : a < b) : sc S a < sc S b :=
+  div_lt_div_of_pos_right (by exact_mod_cast h) (by exact_mod_cast hS)
+
+theorem sc_nonneg {S a : Int} (hS : 0 < S) (h : 0 ≤ a) : 0 ≤ sc S a :=
+  div_nonneg (by exact_mod_cast h) (by exact_mod_cast hS.le)
+
+theorem sc_self {S : Int} (hS : S ≠ 0) : sc S S = 1 := by
+  unfold sc
+  exact div_self (by exact_mod_cast hS)
+
+theorem PS_pos : (0 : Int) < PS := by decide
+
+theorem PS_ne : (PS : ℝ) ≠ 0 := by exact_mod_cast PS_pos.ne'
+
+theorem sc_ediv_div {n S d : Int} (hS : 0 < S) (hd : 0 < d) :
+    sc S (n / d) ≤ sc S n / (d : ℝ) := by
+  have hS0 : (0 : ℝ) ≤ S := by exact_mod_cast hS.le
+  unfold sc
+  have h := div_le_div_of_nonneg_right (ediv_le n d hd) hS0
+  calc ((n / d : Int) : ℝ) / S ≤ ((n : ℝ) / d) / S := h
+    _ = (n : ℝ) / ((d : ℝ) * S) := by rw [div_div]
+    _ = (n : ℝ) / (S * d) := by rw [mul_comm]
+    _ = ((n : ℝ) / S) / d := by rw [← div_div]
+
+theorem div_le_sc_cdiv {n S d : Int} (hS : 0 < S) (hd : 0 < d) :
+    sc S n / (d : ℝ) ≤ sc S (cdiv n d) := by
+  have hS0 : (0 : ℝ) ≤ S := by exact_mod_cast hS.le
+  unfold sc cdiv
+  have h := div_le_div_of_nonneg_right (le_cdiv n d hd) hS0
+  calc ((n : ℝ) / S) / d = (n : ℝ) / (S * d) := by rw [div_div]
+    _ = (n : ℝ) / ((d : ℝ) * S) := by rw [mul_comm]
+    _ = ((n : ℝ) / d) / S := by rw [← div_div]
+    _ ≤ ((cdiv n d : Int) : ℝ) / S := h
+
+/-- The argument fed to the Taylor step, in units of `PS`. -/
+def uOf (t : Int) : Int := t * (PS / (D * ((2 : Int) ^ KH)))
+
+theorem sc_uOf (t : Int) : sc PS (uOf t) = fx t / ((2 : ℝ) ^ KH) := by
+  have hs := scale_exact
+  unfold uOf sc fx
+  rw [hs]
+  push_cast
+  have h16 : (2 : ℝ) ^ KH = 16 := by norm_num [KH]
+  rw [h16]
+  unfold PS D
+  norm_num
+  field_simp
+  ring
+
+/-- Cosine and sine bounds at one scale. -/
+structure CS where
+  cl : Int
+  ch : Int
+  sl : Int
+  sh : Int
+
+/-- `q` contains `(cos θ, sin θ)` at scale `S`. -/
+structure CSHas (S : Int) (q : CS) (θ : ℝ) : Prop where
+  cl : sc S q.cl ≤ Real.cos θ
+  ch : Real.cos θ ≤ sc S q.ch
+  sl : sc S q.sl ≤ Real.sin θ
+  sh : Real.sin θ ≤ sc S q.sh
+
+/-- Outward square of an interval. -/
+def sqI (a b S : Int) : Int × Int :=
+  if 0 ≤ a then (a * a / S, cdiv (b * b) S)
+  else if b ≤ 0 then (b * b / S, cdiv (a * a) S)
+  else (0, cdiv (max (a * a) (b * b)) S)
+
+theorem sqI_sound {a b S : Int} (hS : 0 < S) {x : ℝ} (hx1 : sc S a ≤ x) (hx2 : x ≤ sc S b) :
+    sc S (sqI a b S).1 ≤ x ^ 2 ∧ x ^ 2 ≤ sc S (sqI a b S).2 := by
+  have hab : a ≤ b := by
+    by_contra hlt
+    exact not_lt_of_ge (le_trans hx1 hx2) (sc_strict hS (lt_of_not_ge hlt))
+  unfold sqI
+  by_cases ha : 0 ≤ a
+  · rw [if_pos ha]
+    have hx0 : 0 ≤ x := le_trans (sc_nonneg hS ha) hx1
+    refine ⟨?_, ?_⟩
+    · refine le_trans (sc_ediv_le hS) ?_
+      have hsq : ((a * a : Int) : ℝ) / ((S : ℝ) * S) = (sc S a) ^ 2 := by
+        unfold sc
+        push_cast
+        ring
+      rw [hsq]
+      exact pow_le_pow_left₀ (sc_nonneg hS ha) hx1 2
+    · refine le_trans ?_ (sc_le_cdiv hS)
+      have hsq : (sc S b) ^ 2 = ((b * b : Int) : ℝ) / ((S : ℝ) * S) := by
+        unfold sc
+        push_cast
+        ring
+      rw [← hsq]
+      exact pow_le_pow_left₀ hx0 hx2 2
+  · push_neg at ha
+    by_cases hb : b ≤ 0
+    · rw [if_neg (not_le_of_gt ha), if_pos hb]
+      have ha0 : sc S a ≤ 0 := by
+        have := sc_strict hS ha
+        simpa [sc] using this.le
+      have hb0 : sc S b ≤ 0 := by
+        by_cases hbz : b = 0
+        · simp [hbz, sc]
+        · have hlt : b < 0 := lt_of_le_of_ne hb hbz
+          have := sc_strict hS hlt
+          simpa [sc] using this.le
+      have hx0 : x ≤ 0 := le_trans hx2 hb0
+      refine ⟨?_, ?_⟩
+      · refine le_trans (sc_ediv_le hS) ?_
+        have hsq : ((b * b : Int) : ℝ) / ((S : ℝ) * S) = (sc S b) ^ 2 := by
+          unfold sc; push_cast; ring
+        rw [hsq]
+        have hneg : (sc S b) ^ 2 ≤ x ^ 2 := by
+          have := mul_self_le_mul_self (neg_nonneg.mpr hb0) (neg_le_neg hx2)
+          simpa [neg_mul, mul_neg, pow_two] using this
+        exact hneg
+      · refine le_trans ?_ (sc_le_cdiv hS)
+        have hsq : (sc S a) ^ 2 = ((a * a : Int) : ℝ) / ((S : ℝ) * S) := by
+          unfold sc; push_cast; ring
+        rw [← hsq]
+        have hneg : x ^ 2 ≤ (sc S a) ^ 2 := by
+          have := mul_self_le_mul_self (neg_nonneg.mpr hx0) (neg_le_neg hx1)
+          simpa [neg_mul, mul_neg, pow_two] using this
+        exact hneg
+    · rw [if_neg (not_le_of_gt ha), if_neg hb]
+      push_neg at hb
+      refine ⟨?_, ?_⟩
+      · simp [sc]
+        exact sq_nonneg x
+      · refine le_trans ?_ (sc_le_cdiv (n := max (a * a) (b * b)) hS)
+        have hsq := sq_le_endpoint hx1 hx2
+        have ha2 : (sc S a) ^ 2 = ((a * a : Int) : ℝ) / ((S : ℝ) * S) := by
+          unfold sc; push_cast; ring
+        have hb2 : (sc S b) ^ 2 = ((b * b : Int) : ℝ) / ((S : ℝ) * S) := by
+          unfold sc; push_cast; ring
+        have hS0 : (0 : ℝ) ≤ S * S :=
+          mul_nonneg (by exact_mod_cast hS.le : (0 : ℝ) ≤ S) (by exact_mod_cast hS.le : (0 : ℝ) ≤ S)
+        rw [ha2, hb2, max_div_right hS0, ← Int.cast_max] at hsq
+        simpa [pow_two] using hsq
+
+/-- Degree-4 cosine and sine, plus a remainder, at scale `PS`. -/
+def taylorCS (u : Int) : CS :=
+  let u2 := imul u u u u PS
+  let u3 := imul u2.1 u2.2 u u PS
+  let u4 := imul u2.1 u2.2 u2.1 u2.2 PS
+  let r := cdiv (u4.2 * 5) 96 + 2
+  ⟨PS - cdiv u2.2 2 - r, PS - u2.1 / 2 + r, u - cdiv u3.2 6 - r, u - u3.1 / 6 + r⟩
+
+theorem taylorCS_sound {u : Int} (hu : |sc PS u| ≤ 1) : CSHas PS (taylorCS u) (sc PS u) := by
+  set U : ℝ := sc PS u
+  set u2 : Int × Int := imul u u u u PS
+  set u3 : Int × Int := imul u2.1 u2.2 u u PS
+  set u4 : Int × Int := imul u2.1 u2.2 u2.1 u2.2 PS
+  set r : Int := cdiv (u4.2 * 5) 96 + 2
+  have hu2 := imul_sound PS_pos (le_refl U) (le_refl U) (le_refl U) (le_refl U)
+  have hU2 : sc PS u2.1 ≤ U ^ 2 ∧ U ^ 2 ≤ sc PS u2.2 := by
+    simpa [u2, pow_two] using hu2
+  have hu3 := imul_sound PS_pos hU2.1 hU2.2 (le_refl U) (le_refl U)
+  have hU3 : sc PS u3.1 ≤ U ^ 3 ∧ U ^ 3 ≤ sc PS u3.2 := by
+    simpa [u3, pow_three, pow_two, mul_assoc] using hu3
+  have hu4 := imul_sound PS_pos hU2.1 hU2.2 hU2.1 hU2.2
+  have hU4 : U ^ 4 ≤ sc PS u4.2 := by
+    have := hu4.2
+    simpa [u4, pow_two, pow_succ, mul_assoc] using this
+  have hrem : |U| ^ 4 * (5 / 96) ≤ sc PS r := by
+    have h5 : sc PS (u4.2 * 5) / 96 ≤ sc PS (cdiv (u4.2 * 5) 96) :=
+      div_le_sc_cdiv PS_pos (by decide : (0 : Int) < 96)
+    have hmul : sc PS (u4.2 * 5) = 5 * sc PS u4.2 := by
+      rw [mul_comm, sc_mul_int]
+      norm_num
+    have hpow : |U| ^ 4 = U ^ 4 := by
+      rw [show (4 : Nat) = 2 * 2 by rfl, pow_mul, sq_abs, ← pow_mul]
+    have hbase : |U| ^ 4 * (5 / 96) ≤ sc PS (cdiv (u4.2 * 5) 96) := by
+      rw [hpow]
+      calc U ^ 4 * (5 / 96) ≤ sc PS u4.2 * (5 / 96) :=
+            mul_le_mul_of_nonneg_right hU4 (by norm_num)
+        _ = 5 * sc PS u4.2 / 96 := by ring
+        _ = sc PS (u4.2 * 5) / 96 := by rw [hmul]
+        _ ≤ sc PS (cdiv (u4.2 * 5) 96) := h5
+    have hr : sc PS r = sc PS (cdiv (u4.2 * 5) 96) + sc PS 2 := by
+      simp [r, sc_add]
+    have htwo : (0 : ℝ) ≤ sc PS 2 := sc_nonneg PS_pos (by decide)
+    linarith
+  have hshape : taylorCS u =
+      ⟨PS - cdiv u2.2 2 - r, PS - u2.1 / 2 + r, u - cdiv u3.2 6 - r, u - u3.1 / 6 + r⟩ := by
+    simp [taylorCS, u2, u3, u4, r]
+  have hcos := abs_le.mp (Real.cos_bound hu)
+  have hsin := abs_le.mp (Real.sin_bound hu)
+  have hdiv2 : sc PS u2.2 / 2 ≤ sc PS (cdiv u2.2 2) := div_le_sc_cdiv PS_pos (by decide)
+  have hdiv2lo : sc PS (u2.1 / 2) ≤ sc PS u2.1 / 2 := sc_ediv_div PS_pos (by decide)
+  have hdiv6 : sc PS u3.2 / 6 ≤ sc PS (cdiv u3.2 6) := div_le_sc_cdiv PS_pos (by decide)
+  have hdiv6lo : sc PS (u3.1 / 6) ≤ sc PS u3.1 / 6 := sc_ediv_div PS_pos (by decide)
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [hshape]
+    have : sc PS (PS - cdiv u2.2 2 - r) = 1 - sc PS (cdiv u2.2 2) - sc PS r := by
+      rw [sc_sub, sc_sub, sc_self PS_pos.ne']
+    rw [this]
+    have hpoly : 1 - U ^ 2 / 2 - |U| ^ 4 * (5 / 96) ≤ Real.cos U := by
+      have := hcos.1
+      linarith
+    have : 1 - sc PS (cdiv u2.2 2) - sc PS r ≤ 1 - U ^ 2 / 2 - |U| ^ 4 * (5 / 96) := by
+      have hsq : U ^ 2 / 2 ≤ sc PS (cdiv u2.2 2) := by
+        calc U ^ 2 / 2 ≤ sc PS u2.2 / 2 := by
+              exact div_le_div_of_nonneg_right hU2.2 (by norm_num)
+          _ ≤ sc PS (cdiv u2.2 2) := hdiv2
+      linarith
+    linarith
+  · rw [hshape]
+    have : sc PS (PS - u2.1 / 2 + r) = 1 - sc PS (u2.1 / 2) + sc PS r := by
+      rw [sc_add, sc_sub, sc_self PS_pos.ne']
+    rw [this]
+    have hpoly : Real.cos U ≤ 1 - U ^ 2 / 2 + |U| ^ 4 * (5 / 96) := by
+      have := hcos.2
+      linarith
+    have : 1 - U ^ 2 / 2 + |U| ^ 4 * (5 / 96) ≤ 1 - sc PS (u2.1 / 2) + sc PS r := by
+      have hsq : sc PS (u2.1 / 2) ≤ U ^ 2 / 2 := by
+        calc sc PS (u2.1 / 2) ≤ sc PS u2.1 / 2 := hdiv2lo
+          _ ≤ U ^ 2 / 2 := div_le_div_of_nonneg_right hU2.1 (by norm_num)
+      linarith
+    linarith
+  · rw [hshape]
+    have : sc PS (u - cdiv u3.2 6 - r) = U - sc PS (cdiv u3.2 6) - sc PS r := by
+      rw [sc_sub, sc_sub]
+    rw [this]
+    have hpoly : U - U ^ 3 / 6 - |U| ^ 4 * (5 / 96) ≤ Real.sin U := by
+      have := hsin.1
+      linarith
+    have : U - sc PS (cdiv u3.2 6) - sc PS r ≤ U - U ^ 3 / 6 - |U| ^ 4 * (5 / 96) := by
+      have hcube : U ^ 3 / 6 ≤ sc PS (cdiv u3.2 6) := by
+        calc U ^ 3 / 6 ≤ sc PS u3.2 / 6 := div_le_div_of_nonneg_right hU3.2 (by norm_num)
+          _ ≤ sc PS (cdiv u3.2 6) := hdiv6
+      linarith
+    linarith
+  · rw [hshape]
+    have : sc PS (u - u3.1 / 6 + r) = U - sc PS (u3.1 / 6) + sc PS r := by
+      rw [sc_add, sc_sub]
+    rw [this]
+    have hpoly : Real.sin U ≤ U - U ^ 3 / 6 + |U| ^ 4 * (5 / 96) := by
+      have := hsin.2
+      linarith
+    have : U - U ^ 3 / 6 + |U| ^ 4 * (5 / 96) ≤ U - sc PS (u3.1 / 6) + sc PS r := by
+      have hcube : sc PS (u3.1 / 6) ≤ U ^ 3 / 6 := by
+        calc sc PS (u3.1 / 6) ≤ sc PS u3.1 / 6 := hdiv6lo
+          _ ≤ U ^ 3 / 6 := div_le_div_of_nonneg_right hU3.1 (by norm_num)
+      linarith
+    linarith
+
+/-- One double-angle step, then clamp into `[-1, 1]`. -/
+def dblCS (q : CS) : CS :=
+  let sq := sqI q.cl q.ch PS
+  let pr := imul q.sl q.sh q.cl q.ch PS
+  ⟨max (-PS) (2 * sq.1 - PS), min PS (2 * sq.2 - PS),
+    max (-PS) (2 * pr.1), min PS (2 * pr.2)⟩
+
+theorem clampLo_sound {S s : Int} {v : ℝ} (hS : 0 < S) (hs : sc S s ≤ v) (hv : -1 ≤ v) :
+    sc S (max (-S) s) ≤ v := by
+  by_cases h : s < -S
+  · rw [max_eq_left (le_of_lt h)]
+    have : sc S (-S) = -1 := by
+      rw [show (-S : Int) = (-1) * S by ring, sc_mul_int, sc_self hS.ne']
+      norm_num
+    rw [this]
+    exact hv
+  · push_neg at h
+    rw [max_eq_right h]
+    exact hs
+
+theorem clampHi_sound {S s : Int} {v : ℝ} (hS : 0 < S) (hs : v ≤ sc S s) (hv : v ≤ 1) :
+    v ≤ sc S (min S s) := by
+  by_cases h : S < s
+  · rw [min_eq_left (le_of_lt h), sc_self hS.ne']
+    exact hv
+  · push_neg at h
+    rw [min_eq_right h]
+    exact hs
+
+theorem dblCS_sound {q : CS} {θ : ℝ} (h : CSHas PS q θ) : CSHas PS (dblCS q) (2 * θ) := by
+  have hsq := sqI_sound PS_pos h.cl h.ch
+  have hpr := imul_sound PS_pos h.sl h.sh h.cl h.ch
+  have hcos : sc PS (2 * (sqI q.cl q.ch PS).1 - PS) ≤ Real.cos (2 * θ) := by
+    rw [sc_sub, sc_mul_int, sc_self PS_pos.ne', Real.cos_two_mul]
+    exact sub_le_sub_right (mul_le_mul_of_nonneg_left hsq.1 (by norm_num)) 1
+  have hcos' : Real.cos (2 * θ) ≤ sc PS (2 * (sqI q.cl q.ch PS).2 - PS) := by
+    rw [sc_sub, sc_mul_int, sc_self PS_pos.ne', Real.cos_two_mul]
+    exact sub_le_sub_right (mul_le_mul_of_nonneg_left hsq.2 (by norm_num)) 1
+  have hsin : sc PS (2 * (imul q.sl q.sh q.cl q.ch PS).1) ≤ Real.sin (2 * θ) := by
+    rw [sc_mul_int, Real.sin_two_mul]
+    have hmul := mul_le_mul_of_nonneg_left hpr.1 (by norm_num : (0 : ℝ) ≤ 2)
+    rw [← mul_assoc] at hmul
+    exact hmul
+  have hsin' : Real.sin (2 * θ) ≤ sc PS (2 * (imul q.sl q.sh q.cl q.ch PS).2) := by
+    rw [sc_mul_int, Real.sin_two_mul]
+    have hmul := mul_le_mul_of_nonneg_left hpr.2 (by norm_num : (0 : ℝ) ≤ 2)
+    rw [← mul_assoc] at hmul
+    exact hmul
+  have hdef : dblCS q = ⟨max (-PS) (2 * (sqI q.cl q.ch PS).1 - PS),
+      min PS (2 * (sqI q.cl q.ch PS).2 - PS),
+      max (-PS) (2 * (imul q.sl q.sh q.cl q.ch PS).1),
+      min PS (2 * (imul q.sl q.sh q.cl q.ch PS).2)⟩ := by
+    simp [dblCS]
+  rw [hdef]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · exact clampLo_sound PS_pos hcos (Real.neg_one_le_cos (2 * θ))
+  · exact clampHi_sound PS_pos hcos' (Real.cos_le_one (2 * θ))
+  · exact clampLo_sound PS_pos hsin (Real.neg_one_le_sin (2 * θ))
+  · exact clampHi_sound PS_pos hsin' (Real.sin_le_one (2 * θ))
+
+/-- `k` double-angle steps. -/
+def trigStep : Nat → CS → CS
+  | 0, q => q
+  | n + 1, q => dblCS (trigStep n q)
+
+theorem trigStep_sound {k : Nat} {q : CS} {θ : ℝ} (h : CSHas PS q θ) :
+    CSHas PS (trigStep k q) ((2 : ℝ) ^ k * θ) := by
+  induction k with
+  | zero => simpa [trigStep] using h
+  | succ k ih =>
+    have h2 := dblCS_sound ih
+    have hpow : (2 : ℝ) ^ (k + 1) * θ = 2 * ((2 : ℝ) ^ k * θ) := by
+      rw [pow_succ]
+      ring
+    simpa [trigStep, hpow] using h2
+
+/-- Cosine and sine of `fx t`, rescaled from `PS` down to `D`. -/
+def trigPt (t : Int) : CS :=
+  let q := trigStep KH (taylorCS (uOf t))
+  let s := PS / D
+  ⟨q.cl / s, cdiv q.ch s, q.sl / s, cdiv q.sh s⟩
+
+theorem scaleDown_pos : (0 : Int) < PS / D := by decide
+
+theorem ps_div_exact : ((PS / D : Int) : ℝ) * D = PS := by
+  exact_mod_cast (by decide : (PS / D) * D = PS)
+
+theorem fx_ediv_ps {n : Int} : fx (n / (PS / D)) ≤ sc PS n := by
+  have h := ediv_le n (PS / D) scaleDown_pos
+  have hdiv : (n : ℝ) / ((PS / D : Int) : ℝ) = (n : ℝ) * D / PS := by
+    field_simp [DR_pos.ne', scaleDown_pos.ne']
+    rw [mul_assoc, ps_div_exact]
+    exact (mul_div_cancel_right₀ (n : ℝ) PS_ne).symm
+  rw [hdiv] at h
+  unfold fx sc
+  have : ((n / (PS / D) : Int) : ℝ) / D ≤ ((n : ℝ) * D / PS) / D :=
+    div_le_div_of_nonneg_right h DR_pos.le
+  have hcancel : ((n : ℝ) * D / PS) / D = (n : ℝ) / PS := by
+    field_simp [PS_ne, DR_pos.ne']
+  simpa [hcancel] using this
+
+theorem sc_le_fx_cdiv_ps {n : Int} : sc PS n ≤ fx (cdiv n (PS / D)) := by
+  have h := le_cdiv n (PS / D) scaleDown_pos
+  have hdiv : (n : ℝ) / ((PS / D : Int) : ℝ) = (n : ℝ) * D / PS := by
+    field_simp [DR_pos.ne', scaleDown_pos.ne']
+    rw [mul_assoc, ps_div_exact]
+    exact (mul_div_cancel_right₀ (n : ℝ) PS_ne).symm
+  rw [hdiv] at h
+  unfold fx sc cdiv
+  have : ((n : ℝ) * D / PS) / D ≤ ((-(-n / (PS / D)) : Int) : ℝ) / D :=
+    div_le_div_of_nonneg_right h DR_pos.le
+  have hcancel : ((n : ℝ) * D / PS) / D = (n : ℝ) / PS := by
+    field_simp [PS_ne, DR_pos.ne']
+  simpa [hcancel, cdiv] using this
+
+theorem trigPt_sound {t : Int} (ht : |fx t| ≤ 4) : CSHas D (trigPt t) (fx t) := by
+  have hUabs : |sc PS (uOf t)| ≤ 1 := by
+    rw [sc_uOf]
+    have h16 : (2 : ℝ) ^ KH = 16 := by norm_num [KH]
+    rw [h16, abs_div, abs_of_pos (by norm_num : (0 : ℝ) < 16)]
+    have h4 : |fx t| / 16 ≤ 4 / 16 := div_le_div_of_nonneg_right ht (by norm_num)
+    have h1 : 4 / 16 ≤ (1 : ℝ) := by norm_num
+    linarith
+  have htay := taylorCS_sound hUabs
+  have hstep := trigStep_sound (k := KH) htay
+  have hangle : (2 : ℝ) ^ KH * sc PS (uOf t) = fx t := by
+    rw [sc_uOf]
+    have h16 : (2 : ℝ) ^ KH = 16 := by norm_num [KH]
+    rw [h16]
+    field_simp
+  have hhas : CSHas PS (trigStep KH (taylorCS (uOf t))) (fx t) := by
+    simpa [hangle] using hstep
+  have hdef : trigPt t = ⟨(trigStep KH (taylorCS (uOf t))).cl / (PS / D),
+      cdiv (trigStep KH (taylorCS (uOf t))).ch (PS / D),
+      (trigStep KH (taylorCS (uOf t))).sl / (PS / D),
+      cdiv (trigStep KH (taylorCS (uOf t))).sh (PS / D)⟩ := by
+    simp [trigPt]
+  rw [hdef]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · exact le_trans (fx_ediv_ps (n := (trigStep KH (taylorCS (uOf t))).cl)) hhas.cl
+  · exact le_trans hhas.ch (sc_le_fx_cdiv_ps (n := (trigStep KH (taylorCS (uOf t))).ch))
+  · exact le_trans (fx_ediv_ps (n := (trigStep KH (taylorCS (uOf t))).sl)) hhas.sl
+  · exact le_trans hhas.sh (sc_le_fx_cdiv_ps (n := (trigStep KH (taylorCS (uOf t))).sh))
 
 end Eml.Cert
