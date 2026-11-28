@@ -1,6 +1,14 @@
 import { type C, C1, eml } from "./complex";
 import { dependsOnUnverified, isUnverified, noteDependsUnverified } from "./facts";
 
+type ArcoshSign = (node: Node) => boolean | null;
+let readArcoshSign: ArcoshSign | null = null;
+
+/** Registered by exact.ts. A top-level import of that module cycles back through this one. */
+export function registerArcoshSign(fn: ArcoshSign): void {
+  readArcoshSign = fn;
+}
+
 /**
  * A circuit in the grammar S → 1 | var | input | eml(S, S).
  *
@@ -147,6 +155,7 @@ export const SINGULAR_TRIG = "argument too large to reduce";
 
 type PrecisionNote =
   | { kind: "asinh"; arg: Node }
+  | { kind: "arcosh"; arg: Node }
   | { kind: "add"; left: Node; right: Node }
   | { kind: "pole"; arg: Node }
   | { kind: "trig"; arg: Node };
@@ -215,7 +224,7 @@ function structHash(root: Node): HashPair | null {
 }
 
 type StoredPrecisionNote =
-  | { kind: "asinh" | "pole" | "trig"; argKey: string | null; argFallback?: Node }
+  | { kind: "asinh" | "arcosh" | "pole" | "trig"; argKey: string | null; argFallback?: Node }
   | { kind: "add"; leftKey: string | null; leftFallback?: Node; rightKey: string | null; rightFallback?: Node };
 
 const PRECISION_STRUCT_LIMIT = 512;
@@ -272,7 +281,7 @@ export function importPrecisionRegistry(raw: string): number {
         precisionByStruct.set(key, { kind: "add", leftKey: val.leftKey, rightKey: val.rightKey });
         loaded += 1;
       } else if (
-        (val.kind === "asinh" || val.kind === "pole" || val.kind === "trig") &&
+        (val.kind === "asinh" || val.kind === "arcosh" || val.kind === "pole" || val.kind === "trig") &&
         typeof val.argKey === "string"
       ) {
         if (precisionByStruct.size >= PRECISION_STRUCT_LIMIT) break;
@@ -376,6 +385,32 @@ function zeroC(v: C): boolean {
   return (v.re === 0 || Object.is(v.re, -0)) && (v.im === 0 || Object.is(v.im, -0));
 }
 
+/** A finite real on the negative axis, including −0 and −1. */
+function negativeReal(z: C): boolean {
+  if (!Number.isFinite(z.re) || !Number.isFinite(z.im)) return false;
+  if (!(z.im === 0 || Object.is(z.im, -0))) return false;
+  return z.re < 0 || Object.is(z.re, -0);
+}
+
+/**
+ * Which bank arcosh should use. A float ±0 is not the original imaginary sign:
+ * a tiny part underflows or rounds away, and both signs can land on −0.
+ * +0 is the upper bank. −0 asks the exact imaginary part, and a signed zero
+ * there still counts. Null means the sign is not known.
+ */
+function arcoshUpperBank(argNode: Node, arg: C): boolean | null {
+  if (arg.im > 0) return true;
+  if (arg.im < 0) return false;
+  if (!Object.is(arg.im, -0)) return true;
+  const read = readArcoshSign;
+  if (!read) return null;
+  try {
+    return read(argNode);
+  } catch {
+    return null;
+  }
+}
+
 function finiteC(v: C): boolean {
   return Number.isFinite(v.re) && Number.isFinite(v.im);
 }
@@ -431,6 +466,7 @@ function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget
   const visiting = new Set<Node>();
   const stack: { n: Node; seen: boolean }[] = [{ n: root, seen: false }];
   let steps = 0;
+  let arcoshUnsure = false;
 
   while (stack.length) {
     if ((++steps & 63) === 0) {
@@ -502,7 +538,29 @@ function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget
     const angle = trigArg(n);
     const angleValue = angle ? memo.get(angle) : undefined;
     const angleInfinite = !!angleValue && (!Number.isFinite(angleValue.re) || !Number.isFinite(angleValue.im));
-    const value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
+    let value = angleInfinite ? { re: NaN, im: NaN } : eml(a, b);
+    // arcosh near x ≤ −1 can land on either side of the cut. The side follows
+    // the original imaginary part, not a float ±0. A negative real stays upper.
+    const arcosh = precisionNotes.get(n);
+    if (arcosh?.kind === "arcosh") {
+      const arg = memo.get(arcosh.arg);
+      if (arg && Number.isFinite(arg.re) && Number.isFinite(arg.im)) {
+        const near = arg.re <= -1 && nearBranchCut(value);
+        const plain = negativeReal(arg);
+        const resultNeg = value.im < 0 || Object.is(value.im, -0);
+        if (near || (plain && resultNeg)) {
+          const upper = arcoshUpperBank(arcosh.arg, arg);
+          if (upper === null) {
+            arcoshUnsure = true;
+            value = { re: NaN, im: NaN };
+          } else if (upper && resultNeg) {
+            value = { re: value.re, im: -value.im };
+          } else if (!upper && near && value.im > 0) {
+            value = { re: value.re, im: -value.im };
+          }
+        }
+      }
+    }
     const nan = Number.isNaN(value.re) || Number.isNaN(value.im);
     // Logging 0 at this gate is a real pole. An infinity born from two finite
     // inputs that are not that pole is float overflow, even if some other
@@ -534,6 +592,17 @@ function evaluateReportAt(root: Node, env: Record<string, C>, budget: EvalBudget
 
   const out = memo.get(root);
   if (!out) throw new EmlError("Could not evaluate this circuit.");
+  if (arcoshUnsure) {
+    return {
+      value: { re: Number.NaN, im: Number.NaN },
+      singular: null,
+      touchedLn0: false,
+      overflowed: false,
+      underflowed: false,
+      nearCut: false,
+      unverified: true,
+    };
+  }
   let singular = why.get(root) ?? null;
   // A scaled add can rebuild its operands, so a noted term need not be a gate
   // here. Evaluate it on its own: without that, 2x + 1 near x = −1/2 lost the

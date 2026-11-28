@@ -16,6 +16,8 @@ export type Wire =
       trig?: number;
       /** asinh argument, or the two terms of an add whose range is unknown. */
       asinh?: number;
+      /** arcosh argument. Float evaluation uses it to keep Im ≥ 0 on a negative real. */
+      acosh?: number;
       addL?: number;
       addR?: number;
       lift?: 1;
@@ -113,6 +115,7 @@ export function packCircuit(root: Node): { tokens: Wire[]; root: number } {
     if (note?.kind === "pole") token.pole = idOf.get(note.arg);
     else if (note?.kind === "trig") token.trig = idOf.get(note.arg);
     else if (note?.kind === "asinh") token.asinh = idOf.get(note.arg);
+    else if (note?.kind === "arcosh") token.acosh = idOf.get(note.arg);
     else if (note?.kind === "add") {
       token.addL = idOf.get(note.left);
       token.addR = idOf.get(note.right);
@@ -159,6 +162,7 @@ export function unpackCircuit(tokens: Wire[], root: number): Node {
       if (tok.pole !== undefined && nodes[tok.pole]) notePrecision(node, { kind: "pole", arg: nodes[tok.pole] });
       else if (tok.trig !== undefined && nodes[tok.trig]) notePrecision(node, { kind: "trig", arg: nodes[tok.trig] });
       else if (tok.asinh !== undefined && nodes[tok.asinh]) notePrecision(node, { kind: "asinh", arg: nodes[tok.asinh] });
+      else if (tok.acosh !== undefined && nodes[tok.acosh]) notePrecision(node, { kind: "arcosh", arg: nodes[tok.acosh] });
       else if (tok.addL !== undefined && tok.addR !== undefined && nodes[tok.addL] && nodes[tok.addR]) {
         notePrecision(node, { kind: "add", left: nodes[tok.addL], right: nodes[tok.addR] });
       }
