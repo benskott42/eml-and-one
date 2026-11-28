@@ -1600,7 +1600,14 @@ export function tArcsin(t: Node): Node {
   // while keeping the truncation tail past 124 digits. Below 10^(−60) the x³/6
   // term is not kept beside x: not certified.
   if (box !== null && box < 1e-4) {
-    return box < 1e-60 ? markUnverified(arcsinSeries(t, box)) : markSeries(arcsinSeries(t, box), SMALL_NOTE);
+    const series = arcsinSeries(t, box);
+    // A float range of 0 collapses the product onto the shared integer 0.
+    // Stamping that node unverified poisons π/2, which was built first.
+    // π/2 − 0 folds back to that half, so in-process acos stays certified.
+    // The wire rebuilds the half after the mark, and the refusal climbs.
+    // The collapsed value is the same exact 0 a proven integer takes above.
+    if (provenInteger(series) === BigInt(0)) return recognized(series);
+    return box < 1e-60 ? markUnverified(series) : markSeries(series, SMALL_NOTE);
   }
   const re = realBounds(t);
   const side = provenImagSign(t);
