@@ -1,6 +1,6 @@
 # Minimality of 0, −1, and 2
 
-0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. +iπ is proved minimal at K 21, and at K 23 without ln 0, and −2 at K 25 with ln 0 (below). Without ln 0, every K 25 program but two is excluded as −2, so −2 at K 27 without ln 0 is shortest known. Every other record in this project is shortest known.
+0 at K 7, −1 at K 15, and 2 at K 19 are proved minimal. The proof is computer-assisted. It is unconditional: every tower is included, and it does not use Schanuel's conjecture. The setting is the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. +iπ is proved minimal at K 21, and at K 23 without ln 0, and −2 at K 25 with ln 0 (below). Without ln 0, every K 25 program but two is excluded as −2, so −2 at K 27 without ln 0 is shortest known. ln 2 at K 25, −e at K 17 (and at K 23 without ln 0), 1/e at K 17 (and at K 19 without ln 0), e + 1 at K 19 (and at K 21 without ln 0), and e² at K 21 are proved minimal the same way, with the target passed as an EML word (below). Every other record in this project is shortest known.
 
 A program is an RPN word on the alphabet {1, E}. A word with n leaves has length K = 2n − 1, so only odd lengths occur. "K ≤ n" means every odd length up to n. Each program was generated directly and decided on its own. Programs were not grouped by value, so it does not matter whether two forms are the same.
 
@@ -29,7 +29,7 @@ The verification scripts above are not in this repository. [tools/minimality/dec
 
 `python tools/minimality/decide.py --open` also settles lengths that this document did not claim. **+iπ on this cut (−iπ under the principal log) is minimal at K 21 with ln 0 = −∞**: all 6918 programs with K ≤ 19 are excluded, with nothing undecided. Three of them were tower impostors that differ from +iπ by about 10^(−1656519). The script excludes them because it tracks the sign of the term a tower absorbs, not by numerical comparison, which no precision short of a million digits could do.
 
-**Without ln 0, +iπ is minimal at K 23.** Of the 58786 K 21 programs, the only two that are not excluded take ln 0, and both are +iπ. The first pass of decide.py left 16 K 21 programs undecided. [tools/minimality/towers.py](../tools/minimality/towers.py) decides all 16 (2026-11-24); none is +iπ.
+**Without ln 0, +iπ is minimal at K 23.** Of the 16796 K 21 programs, the only two that are not excluded take ln 0, and both are +iπ. The first pass of decide.py left 16 K 21 programs undecided. [tools/minimality/towers.py](../tools/minimality/towers.py) decides all 16 (2026-11-24); none is +iπ.
 
 ## −2 at K 25
 
@@ -62,6 +62,16 @@ On 2026-11-24, `python tools/minimality/decide.py --open --deep` took 79 minutes
 Each phase is known to about 10^(−38) (a 128-bit interval), and every cos is far from 0, so all 14 are excluded. A negative cos makes the value tiny rather than huge, which excludes it as well. A separate run of the four smaller ones, with mpmath's own two-endpoint ln and atan2 in place of the one-evaluation versions, gave the same intervals, and the T4/z phase matches the earlier deep.py runs.
 
 **How deep.py gets a phase.** towers.py keeps exp(Q) as a tower ±exp(W) whose W is an enclosure of Q. When Im W is too wide to reduce mod 2π, towers.py asks deep.py for the phase of the subword whose value is Q. deep.py evaluates that subword with mpmath interval arithmetic at log2|Im Q| + 512 bits, rounded up to a multiple of 65536, using only identities that hold exactly: exp(x − ln y) = exp(x)/y for any branch, so T4/z is computed as exp(T3)/z and T4 is shared; ln(exp x) = x when Im x is in [−π, π); and the principal log on the lower cut, refused when an enclosure touches the cut. Past 50000 bits, exp is Newton's method on mpmath's ln, checked with one directed-rounding log, and each ln or atan takes one directed-rounding evaluation plus the bound ln(b) ≤ ln(a) + (b − a)/a (atan′ ≤ 1). It returns Im Q − 2πn as a 128-bit interval. A subword whose value needs exp of anything past 2^31 is refused, which is what leaves the last two programs open. The programs run in parallel worker processes, which share every result above 50000 bits through files, so T2, T3 and T4 are computed once.
+
+## ln 2, −e, 1/e, e + 1, and e²
+
+`python tools/minimality/decide.py --word WORD --upto K` takes the target as an EML word. The word is evaluated in the same `reset()` scope as each program, so a tower shared with the target is one atom and cancels. A program is excluded when its enclosure misses that value, or when value − target is a nonempty exact combination that cannot be 0. `--strict` is the claim without ln 0: a program that takes ln of an exact 0 may still equal the target. On 2026-11-28:
+
+- **ln 2 at K 25.** The word `11111111EEE1EE11EE1EEE1EE` does not use ln 0. Of the 82500 programs with K ≤ 23, 82499 are excluded and none is ln 2. The one the decider leaves undecided is `11E1E1111E1E1EEEE1E1E1E`, exp(exp(T4/z)). towers.py stops at `phase of a tower near ±π/2`: it does not know cos θ. That phase is the one already computed for −2, θ = −5.39531064387935195139… and cos θ = 0.63106214288953973449… > 0, with Re W > 10^1656000. The modulus is exp(e^{Re W} cos θ), which is not ln 2. So ln 2 is minimal at K 25 with or without ln 0.
+- **−e at K 17, using ln 0.** All 626 programs with K ≤ 15 are excluded. The word is `11111E1EEEE11E1EE`. **Without ln 0, −e is minimal at K 23.** Of the 23714 programs with K ≤ 21, the 21 that equal −e all take ln 0. The K 23 word `1111E11E1EEE1EE11E1E1EE` does not.
+- **1/e at K 17, using ln 0.** All 626 programs with K ≤ 15 are excluded. The word is `11111E1EEEE11EE1E`. **Without ln 0, 1/e is minimal at K 19.** The only program with K ≤ 17 that equals 1/e is that K 17 word, and it takes ln 0. The K 19 word is `11111EEE1EE11E1EE1E`.
+- **e + 1 at K 19, using ln 0.** All 2056 programs with K ≤ 17 are excluded. The word is `111111E1EEEE11EE1EE`. **Without ln 0, e + 1 is minimal at K 21.** The only program with K ≤ 19 that equals e + 1 is that K 19 word, and it takes ln 0. The K 21 word is `111111EEE1EE11E1EE1EE`.
+- **e² at K 21.** All 6918 programs with K ≤ 19 are excluded, with or without ln 0. The word `111111EEE1EE11EE1EE1E` does not use ln 0.
 
 ## How towers.py decides a tower program
 

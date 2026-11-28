@@ -29,6 +29,9 @@ usage: python decide.py [max_K]       the claims in docs/minimality.md (default 
        python decide.py --open        +i*pi at K 21 and K 23 without ln 0, -2 at K 25 and
                                       K 27 without ln 0
        python decide.py --open --deep the same, with deep.py for the programs left open
+       python decide.py --word WORD --upto K [--strict]
+                                      WORD is the target. Exclude every program with
+                                      K <= upto. --strict allows a hit that takes ln 0.
 """
 import sys
 import time
@@ -643,6 +646,97 @@ def decide_once(word, tre, tk=0):
     return None, f"{reason}; towers.py: {why}"
 
 
+_TARGET_BOX = {}
+
+
+def target_enclosure(target_word, bits):
+    """Outward enclosure of an EML word at this precision, or None if the pass cannot build one."""
+    key = (target_word, bits)
+    if key in _TARGET_BOX:
+        return _TARGET_BOX[key]
+    saved = iv.prec
+    iv.prec = bits
+    EXP_ARG.clear()
+    LN_ARG.clear()
+    try:
+        _TARGET_BOX[key] = evaluate(target_word)
+    except Undecided:
+        _TARGET_BOX[key] = None
+    finally:
+        iv.prec = saved
+    return _TARGET_BOX[key]
+
+
+def modest_finite(box):
+    """A finite enclosure inside (-10^6, 10^6) on both axes."""
+    if box is None or box.kind != "fin" or box.re is None or box.im is None:
+        return False
+    bound = mpf(10) ** 6
+    return box.re.a > -bound and box.re.b < bound and box.im.a > -bound and box.im.b < bound
+
+
+def excludes_against_box(v, box):
+    """True when v's enclosure is disjoint from a modest finite target enclosure.
+
+    Rectangles are outward, so a miss is certain. A real tower past exp(10^6), an
+    infinity, or a value below exp(-10^6) is disjoint from that box too.
+    """
+    if not modest_finite(box):
+        return False
+    if v.kind in ("nan", "inf", "big", "bigk", "huge"):
+        return True
+    if v.kind == "small":
+        try:
+            rad = iv.exp(-iv.mpf(LIMIT)).b
+        except (OverflowError, ValueError):
+            return False
+        if box.re.a > rad or box.re.b < -rad or box.im.a > rad or box.im.b < -rad:
+            return True
+        return False
+    if v.kind != "fin" or v.re is None or v.im is None:
+        return False
+    if box.re.b < v.re.a or box.re.a > v.re.b:
+        return True
+    if box.im.b < v.im.a or box.im.a > v.im.b:
+        return True
+    return False
+
+
+def decide_word_once(word, target_word):
+    """Interval separation, then towers.decide_word in one shared reset() scope."""
+    reason = None
+    for bits in (128, 1024):
+        iv.prec = bits
+        EXP_ARG.clear()
+        LN_ARG.clear()
+        box = target_enclosure(target_word, bits)
+        try:
+            v = evaluate(word)
+        except Undecided as why:
+            # A structural refusal (a tower the interval layer will not follow)
+            # does not get cheaper at more bits; 1024-bit iv.exp on it can run
+            # for minutes. The exact layer is the next step.
+            reason = str(why)
+            break
+        if excludes_against_box(v, box):
+            return True, None
+        reason = "interval overlaps the target"
+        if not (v.kind == "fin" and box is not None and box.kind == "fin"):
+            break
+    verdict, why = towers.decide_word(word, target_word)
+    if verdict is not None:
+        STATS["towers"] += 1
+        return verdict, None
+    return None, f"{reason}; towers.py: {why}"
+
+
+def decide_word(word, target_word):
+    k = ("W", word, target_word)
+    if k not in VERDICT:
+        VERDICT[k] = decide_word_once(word, target_word)
+    return VERDICT[k]
+
+
 STATS = {"towers": 0, "deep": 0}
 VERDICT = {}    # (word, tre, tk) -> (verdict, reason)
 PENDING = []    # undecided programs whose verdict a claim needs, for deep.py
@@ -723,6 +817,72 @@ SELF_TEST = [
 ]
 
 
+def word_target_test():
+    """Word targets agree with an exact numeric target, and decide a value a float cannot.
+
+    2 is an integer coefficient of the atom 1, so both forms apply. e is not: a rounded
+    point sits outside the enclosure of exp(1), and towers.decide then excludes the word
+    that is e. The word target cancels that atom exactly. The reset between the two
+    evaluations is the KeyError the snapshot exists for: ATOMS loses E[1*1] until
+    restore_scope registers it again with the enclosure from the target.
+    """
+    from mpmath import exp as mexp
+    two = "111111EEE1EE11EE1EE"
+    e = "11E"
+    also_e = "11111EE1EEE"  # another word whose exact form is exp(1)
+    bad = []
+    for prog in ("1", e, two):
+        num = decide(prog, 2)[0]
+        word = decide_word(prog, two)[0]
+        tnum = towers.decide(prog, 2, 0)[0]
+        tword = towers.decide_word(prog, two)[0]
+        if len({num, word, tnum, tword}) != 1:
+            bad.append(f"{prog}: decide {num}, word {word}, towers {tnum}, towers-word {tword}")
+    if decide_word(also_e, e)[0] is not False or towers.decide_word(also_e, e)[0] is not False:
+        bad.append(f"word target did not accept {also_e} as e")
+    if towers.decide(also_e, mexp(1), 0)[0] is False:
+        bad.append("numeric approximation of e reported equality")
+    if decide_word("1", e)[0] is not True:
+        bad.append("word target did not exclude 1 as e")
+    iv.prec = 128
+    towers.reset()
+    target = towers._eval(e)
+    atoms, lnof = towers.scope_snapshot()
+    towers.reset()
+    if "E[1*1]" in towers.ATOMS:
+        bad.append("reset did not drop the target atom")
+    towers.restore_scope(atoms, lnof)
+    info = towers.ATOMS.get("E[1*1]")
+    if info is None or info.get("A") is None:
+        bad.append("restore did not register the target atom with its enclosure")
+    else:
+        value = towers._eval(also_e)
+        towers.restore_scope(atoms, lnof)
+        try:
+            if towers.excludes_value(value, target) is not False:
+                bad.append("restored target atom did not cancel the other word for e")
+        except (towers.Undecided, KeyError) as why:
+            bad.append(f"restored comparison failed: {why}")
+        towers.reset()
+        towers.restore_scope(atoms, lnof)
+        one = towers._eval("1")
+        towers.restore_scope(atoms, lnof)
+        try:
+            if towers.excludes_value(one, target) is not True:
+                bad.append("restored target atom did not exclude 1")
+        except (towers.Undecided, KeyError) as why:
+            bad.append(f"restored exclusion failed: {why}")
+    hard = "11E1E1111E1E1EEEE1E1E1E"
+    ln2 = "11111111EEE1EE11EE1EEE1EE"
+    verdict, why = towers.decide_word(hard, ln2)
+    if verdict is False or (verdict is None and why and "KeyError" in why):
+        bad.append(f"T4-phase word against ln 2: {verdict} {why}")
+    print(f"word-target: {'ok' if not bad else 'FAILED'}  ({len(bad)} problems)")
+    for line in bad:
+        print(f"   {line}")
+    return not bad
+
+
 def self_test():
     bad = [w for w, tre, tk in SELF_TEST if decide(w, tre, tk)[0] is True]
     bad += [w for w, tre, tk in SELF_TEST if towers.decide(w, tre, tk)[0] is True and w not in bad]
@@ -734,13 +894,101 @@ def self_test():
     print(f"self-test: {len(SELF_TEST) - len(bad)}/{len(SELF_TEST)} known words not excluded for their own value")
     for w in bad:
         print(f"   UNSOUND: excluded {w}")
-    return not bad
+    return word_target_test() and not bad
+
+
+class _Alarm(Exception):
+    pass
+
+
+def _on_alarm(signum, frame):
+    raise _Alarm()
+
+
+def _word_batch(payload):
+    """Exclude a batch of programs. Returns the ones that are not certainly excluded."""
+    import signal
+    target_word, words, strict = payload
+    signal.signal(signal.SIGALRM, _on_alarm)
+    bad = []
+    before = STATS["towers"]
+    for w in words:
+        signal.alarm(180)
+        try:
+            verdict, reason = decide_word(w, target_word)
+            if verdict is not True and not (strict and uses_ln0(w) is True):
+                bad.append((w, verdict, reason))
+        except _Alarm:
+            bad.append((w, None, "timeout"))
+        finally:
+            signal.alarm(0)
+    return bad, STATS["towers"] - before
+
+
+def prove_word(label, target_word, upto, strict=False, witness=None):
+    """Exclude every program with K <= upto. With strict, a program that takes ln 0 may hit.
+
+    Returns True when nothing undecided and no counterexample remains.
+    """
+    import os
+    import concurrent.futures
+    wit = witness or target_word
+    verdict, why = decide_word(wit, target_word)
+    if verdict is not False:
+        print(f"{label}: witness is not the target ({verdict}, {why})", flush=True)
+        return False
+    if strict and uses_ln0(wit) is True:
+        print(f"{label}: strict witness takes ln 0", flush=True)
+        return False
+    words = []
+    for n in range(1, (upto + 1) // 2 + 1):
+        words.extend(programs(n))
+    print(f"{label}: {len(words)} programs with K <= {upto}", flush=True)
+    batches = [words[i:i + 400] for i in range(0, len(words), 400)]
+    payloads = [(target_word, batch, strict) for batch in batches]
+    bad = []
+    towers_n = 0
+    if len(words) >= 800:
+        workers = os.cpu_count() or 2
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_word_batch, payload) for payload in payloads]
+            done = 0
+            for fut in concurrent.futures.as_completed(futures):
+                found, n = fut.result()
+                bad.extend(found)
+                towers_n += n
+                done += 1
+                if done % 10 == 0 or done == len(futures):
+                    print(f"   {done}/{len(futures)} batches, {len(bad)} open", flush=True)
+    else:
+        for payload in payloads:
+            found, _n = _word_batch(payload)
+            bad.extend(found)
+    if len(words) >= 800:
+        STATS["towers"] += towers_n
+    equal = [w for w, verdict, _ in bad if verdict is False]
+    undecided = [(w, reason) for w, verdict, reason in bad if verdict is not False]
+    status = "PROVED" if not equal and not undecided else "NOT PROVED"
+    print(f"{label}: {status}  ({len(words)} programs, {len(equal)} not excluded, {len(undecided)} undecided)", flush=True)
+    for w in equal[:10]:
+        print(f"   not excluded: {w}")
+    for w, reason in undecided[:12]:
+        print(f"   undecided: {w}  ({reason})")
+    return status == "PROVED"
 
 
 def main():
     if not self_test():
         sys.exit(2)
     args = sys.argv[1:]
+    if "--word" in args:
+        target = args[args.index("--word") + 1]
+        upto = int(args[args.index("--upto") + 1]) if "--upto" in args else len(target) - 2
+        witness = args[args.index("--witness") + 1] if "--witness" in args else None
+        t0 = time.time()
+        ok = prove_word(target, target, upto, strict="--strict" in args, witness=witness)
+        print(f"decided by towers.py: {STATS['towers']}  ({time.time() - t0:.0f} s)", flush=True)
+        sys.exit(0 if ok else 1)
     if "--open" in args:
         # +i*pi on this cut at K 21 (K 23 without ln 0), and -2 at K 25 (K 27 without ln 0).
         global QUIET

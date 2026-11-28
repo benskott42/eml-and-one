@@ -1,6 +1,6 @@
 # Known limitations
 
-This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), 2 at K 19, +iπ at K 21 (K 23 without ln 0), and −2 at K 25 (using ln 0) are proved minimal. Without ln 0, every K 25 program but two is excluded as −2. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
+This is the v1 list of what is unfinished. None of it blocks the calculator. 0 at K 7, −1 at K 15 (using ln 0) and at K 17 (without ln 0), 2 at K 19, +iπ at K 21 (K 23 without ln 0), and −2 at K 25 (using ln 0) are proved minimal. Without ln 0, every K 25 program but two is excluded as −2. ln 2 at K 25, −e at K 17 (K 23 without ln 0), 1/e at K 17 (K 19 without ln 0), e + 1 at K 19 (K 21 without ln 0), and e² at K 21 are proved minimal as well. The proof is computer-assisted and is summarized in [docs/minimality.md](minimality.md). Every other length here is shortest known. A record that uses ln 0 = −∞ says so. No claim in this release depends on Schanuel's conjecture. A later identity that does will say so in the same place as the claim.
 
 ## Records
 

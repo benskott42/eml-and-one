@@ -22,7 +22,7 @@ The log-as-floor device is due to Cappallo, arXiv:2609.10592, [https://arxiv.org
 
 ## Records
 
-K is the RPN length: one token for each leaf and each eml. Every record below is on the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. 0, −1, 2, +iπ on this cut, and −2 are proved minimal, as summarized in [docs/minimality.md](docs/minimality.md). Everything else below is shortest known. A record that uses ln 0 = −∞ says so. No record here depends on Schanuel's conjecture.
+K is the RPN length: one token for each leaf and each eml. Every record below is on the lower cut, Arg in [−π, π), with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. 0, −1, 2, +iπ on this cut, −2, ln 2, −e, 1/e, e + 1, and e² are proved minimal, as summarized in [docs/minimality.md](docs/minimality.md). Everything else below is shortest known. A record that uses ln 0 = −∞ says so. No record here depends on Schanuel's conjecture.
 
 These lengths were already public. They are not claimed as first discoveries. The search in this project also finds them, under the ln 0 policy named with each one.
 
@@ -35,6 +35,11 @@ Ours, labelled as above:
 | value | K | status |
 | --- | --- | --- |
 | −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); the tower programs take runs of up to 5.5 million bits). Without that value, K 27 is shortest known: all but two K 25 programs are excluded. |
+| ln 2 | 25 | proved minimal, with or without ln 0 ([docs/minimality.md](docs/minimality.md)). One K 23 program is the T4/z tower already excluded by the published phase. |
+| −e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 23 is proved minimal. |
+| 1/e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 19 is proved minimal. |
+| e + 1 | 19 | proved minimal, with ln 0 = −∞. Without ln 0, K 21 is proved minimal. |
+| e² | 21 | proved minimal, with or without ln 0. The word does not use ln 0. |
 | −1/2 | 29 | shortest known, with ln 0 = −∞ |
 | ±1/2 | 31 | shortest known, without ln 0 |
 | −iπ on the lower cut | 45 | shortest known, not proven minimal, lower cut, Arg in [−π, π), with ln 0 = −∞. Not the K 21 word. Under the principal Log this value is +iπ. |
