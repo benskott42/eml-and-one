@@ -26,15 +26,15 @@ K is the RPN length: one token for each leaf and each eml. Every record below is
 
 These lengths were already public. They are not claimed as first discoveries. The search in this project also finds them, under the ln 0 policy named with each one.
 
-- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is proved minimal at K 21: `python tools/minimality/decide.py --open` excludes all 6918 programs with K ≤ 19 (2026-11-22). Without ln 0, +iπ on this cut is proved minimal at K 23: the only K 21 programs that are not excluded take ln 0 (2026-11-24, with [tools/minimality/towers.py](tools/minimality/towers.py) for 16 tower programs).
+- ±iπ at K 21 was posted on Hacker News before this project. On this cut the K 21 word is +iπ. Under the principal log it is −iπ. With ln 0 = −∞ that word is proved minimal at K 21: `python tools/minimality/decide.py --open` excludes all 6918 programs with K ≤ 19 (2026-11-22). CI checks it as `decide.py --word 111111E1EEEE11E1E1EEE --upto 19 --expect ipi`. Without ln 0, +iπ on this cut is proved minimal at K 23: the only K 21 programs that are not excluded take ln 0 (2026-11-24, with [tools/minimality/towers.py](tools/minimality/towers.py) for 16 tower programs). CI checks that as `decide.py --word 111111E1E1EEE1EE11E1EEE --upto 21 --strict --expect ipi`.
 - 3 at K 29 ties Kaseorg's code-golf answer.
-- 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proved minimal on the lower cut, Arg in [−π, π), towers included, with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proved minimal and uses ln 0. Without ln 0, −1 is proved minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17.
+- 0 at K 7, −1 at K 15 and K 17, and 2 at K 19 tie the paper. They are proved minimal on the lower cut, Arg in [−π, π), towers included, with ln 0 = −∞. On this cut −iπ becomes +iπ under the principal Log. The proof is computer-assisted: [docs/minimality.md](docs/minimality.md). 0 at K 7 excludes every program with K ≤ 5. −1 at K 15 is proved minimal and uses ln 0. Without ln 0, −1 is proved minimal at K 17. 2 at K 19 excludes every one of the 2056 programs with K ≤ 17. CI checks that as `decide.py --word 111111EEE1EE11EE1EE --upto 17 --expect 2`.
 
 Ours, labelled as above:
 
 | value | K | status |
 | --- | --- | --- |
-| −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); the tower programs take runs of up to 5.5 million bits). Without that value, K 27 is shortest known: all but two K 25 programs are excluded. |
+| −2 | 25 | proved minimal, with ln 0 = −∞ ([docs/minimality.md](docs/minimality.md); the tower programs take runs of up to 5.5 million bits). CI checks it as `decide.py --word 111111E1EEEE11E1E1EEE11EE --upto 23 --expect -2`. Without that value, K 27 is shortest known: all but two K 25 programs are excluded, and that scan is not a CI step. |
 | ln 2 | 25 | proved minimal, with or without ln 0 ([docs/minimality.md](docs/minimality.md)). `decide.py --word` excludes all 82500 programs with K ≤ 23 and prints PROVED; the last word's phase is computed in that run. |
 | −e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 23 is proved minimal. |
 | 1/e | 17 | proved minimal, with ln 0 = −∞. Without ln 0, K 19 is proved minimal. |

@@ -2,7 +2,7 @@
 
 Every engineering item in [architecture-plan.md](architecture-plan.md) is done:
 - `formal/lean/` is built on Lean 4.28.0 + Mathlib over `ℂ`, `EmlExt`, and `EmlDir` across 21 modules with automatic axiom auditing over all `Eml.*` declarations, proof-carrying circuit certificates (`Eml.Cert`), 100% coverage of all 45 constant records in `lib/eml/best-known.json` (including `-ipi` K 45 and `-ipi-strict` K 47, and the 11 substitution words in `Eml.MoreRecords`; check 112 fails if a stored word has no theorem link), general inverse-trig branch-cut theorems, Raney's Cycle Lemma + Catalan enumeration, unconditional minimality of `0` at K 7, and CI cross-checking of UI theorem links and compiled snippets (`scripts/lean-bridge-check.ts`).
-- `tools/minimality/decide.py 13` runs automatically in `.github/workflows/ci.yml`.
+- `tools/minimality/decide.py 13` and the pinned `decide.py --word --expect` lines (ln 2, −e, 1/e, e + 1, e², 2, +iπ with and without ln 0, and −2 with ln 0) run automatically in `.github/workflows/ci.yml`. The K 25 scan of −2 without ln 0 is not one of them.
 - Structural precision/pole/large-angle notes in `lib/eml/node.ts` persist across fresh browser sessions via `localStorage` (`exportPrecisionRegistry` / `importPrecisionRegistry`).
 
 ## Ongoing Hygiene
