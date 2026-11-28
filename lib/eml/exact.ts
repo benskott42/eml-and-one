@@ -1443,12 +1443,12 @@ function provedByBalls(
 
 /**
  * A dust-band snap (about 10^(−(digits−8))) feeds ln 0 and the pass reports an
- * infinity. Leave that infinity only when the enclosure proves the snapped
- * residue is not 0, and certify the value the enclosure proved. An exact
- * cancellation such as exp(ln a) − ln(exp a) has an empty key and stays the
- * infinity. Anything the enclosure cannot pin down is refused. Agreement of two
- * working precisions is not a proof: the same rounding residue can hold still
- * while its logarithm is a finite number.
+ * infinity. Leave that infinity only when the enclosure proves it. An exact
+ * cancellation such as exp(ln a) − ln(exp a) stays the infinity when the
+ * enclosure returns that exact infinity. A ball that never opens is not a
+ * proof: exp(g)−1−g is g²/2, and the pass's ln 0 of that dropped square is
+ * refused. Agreement of two working precisions is not a proof: the same
+ * rounding residue can hold still while its logarithm is a finite number.
  */
 function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | Z>, budget: EvalBudget): ExactReport | null {
   if (zFinite(report.value) || report.value.re.isNaN() || report.value.im.isNaN() || report.sawLead) return null;
@@ -1456,11 +1456,6 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
   const digits = report.digits ?? D.precision;
   if (!(gap > digits - 24)) return null;
   let prec = Math.min(PRECISION_CAP, Math.max(digits, gap + 48));
-  // A plain identity such as e − ln(exp(e)) is already ln 0. The enclosure
-  // fails when that zero still carries a rounding radius, and that failure
-  // is not a counterexample. Only an enclosure that actually opens can
-  // replace the identity.
-  let opened = false;
   for (let hop = 0; hop < 8; hop += 1) {
     let enclosed: ReturnType<typeof ballEnclose>;
     try {
@@ -1470,7 +1465,6 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
       return certifyZero(report);
     }
     if (enclosed.ok) {
-      opened = true;
       const proved = provedByBalls(enclosed.balls);
       if (proved && proved !== "loose") {
         if (!zFinite(proved.value)) {
@@ -1505,7 +1499,11 @@ function proveDustSnap(report: ExactReport, root: Node, env: Record<string, C | 
     if (next <= prec) break;
     prec = next;
   }
-  return opened ? certifyZero(report) : report;
+  // The enclosure never proved this infinity. exp(g)−1−g is g²/2; when that
+  // square is past the working precision the ball fails at every hop and the
+  // pass's ln 0 is not a proof. Refuse. An identity the enclosure does prove
+  // returned above, as an exact infinity.
+  return certifyZero(report);
 }
 
 /**

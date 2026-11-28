@@ -19,13 +19,17 @@ import type { CheckModule } from "./_types";
  *
  * The 60-word family and the flip word are e − ln(a − ln(exp a)). That difference
  * is an exact 0, so the value is +∞. A certified finite there is the log of a
- * rounding residue. The enclosure failing to open is not a counterexample: the
- * identity is already ln 0. Two agreeing precisions are not a proof.
+ * rounding residue. The enclosure proves that infinity. A ball that never opens
+ * is not a proof, and that infinity is refused. Two agreeing precisions are not
+ * a proof.
  *
  * zw/zw2 cancel by only a few digits. The enclosure, not the size of that gap,
  * is what proves the result is +∞. `1111E1111EE1EEEE11EEE` and
- * `1111E1EE11111EE1EEEEE` are the same kind of identity. ln(exp(10^(−n)) − 1)
+ * `1111E1EE11111EE1EEEEE` are the same kind of identity, and the enclosure
+ * never opens on them, so they stay refused. ln(exp(10^(−n)) − 1)
  * is a finite the enclosure pins once the radius is smaller than the value.
+ * exp(g)−1−g is g²/2. When that square is past the working precision the
+ * enclosure fails at every hop, and the pass's infinity is refused.
  */
 const WORDS: { word: string; text: string; re: string; ln0: boolean }[] = [
   { word: "11111EE1E1E1EE1E11EEE", text: "263.734133269523", re: "263.73413326952317463", ln0: false },
@@ -108,7 +112,7 @@ function realExactZero(source: string): boolean {
 
 const checkModule: CheckModule = {
   id: 117,
-  weight: 22000,
+  weight: 61000,
   run(ctx) {
     for (const row of WORDS) {
       const { app, wire } = bothPaths(row.word);
@@ -120,12 +124,7 @@ const checkModule: CheckModule = {
     }
     const family = [...probeWords("wz.txt"), ...probeWords("flip.txt")];
     if (family.length !== 61) ctx.fail("FAIL family size", family.length);
-    const identities = [
-      ...family,
-      ...probeWords("w10new.txt"),
-      ...probeWords("zw.txt"),
-      ...probeWords("zw2.txt"),
-    ];
+    const identities = [...family, ...probeWords("zw.txt"), ...probeWords("zw2.txt")];
     if (probeWords("w10new.txt").length !== 2) ctx.fail("FAIL identity size");
     if (probeWords("zw.txt").length !== 3 || probeWords("zw2.txt").length !== 36) ctx.fail("FAIL zw size");
     for (const word of identities) {
@@ -179,6 +178,56 @@ const checkModule: CheckModule = {
         ["wire", wire],
       ] as const) {
         if (certifiedFinite(report)) ctx.fail("FAIL expr finite", name, formatExact(report.value), source.slice(0, 48));
+      }
+    }
+    // The enclosure never opens on these two identities, so the infinity is not certified.
+    for (const word of probeWords("w10new.txt")) {
+      const { app, wire } = bothPaths(word);
+      for (const [name, report] of [
+        ["app", app],
+        ["wire", wire],
+      ] as const) {
+        if (report.unverified !== true) {
+          ctx.fail("FAIL unopened word", name, formatExact(report.value), word.slice(0, 32));
+        }
+      }
+    }
+    const unopened = probeWords("unopened-inf.txt");
+    if (unopened.length !== 7) ctx.fail("FAIL unopened size", unopened.length);
+    for (const source of unopened) {
+      const { app, wire } = bothExpr(source);
+      for (const [name, report] of [
+        ["app", app],
+        ["wire", wire],
+      ] as const) {
+        if (report.unverified !== true) {
+          ctx.fail("FAIL unopened expr", name, formatExact(report.value), source.slice(0, 48));
+        }
+      }
+    }
+    // T4/T8/T9/T10 at g = ±10^(−500): e−ln(exp(g)−1) and the towers on it.
+    const squares = [
+      () => E(ONE, E(V("g"), E(ONE, ONE))),
+      () => E(ONE, E(ONE, E(V("g"), E(ONE, ONE)))),
+      () => E(V("g"), E(ONE, E(V("g"), E(ONE, ONE)))),
+      () => tExp(E(ONE, E(V("g"), E(ONE, ONE)))),
+    ];
+    for (const re of ["1e-500", "-1e-500"]) {
+      const env = { g: exactParts(re, "0") };
+      for (const build of squares) {
+        const app = isolateCircuit(() => exactReport(build(), env));
+        const wire = isolateCircuit(() => {
+          const packed = packCircuit(build());
+          return exactReport(unpackCircuit(packed.tokens, packed.root), env);
+        });
+        for (const [name, report] of [
+          ["app", app],
+          ["wire", wire],
+        ] as const) {
+          if (report.unverified !== true) {
+            ctx.fail("FAIL unopened tower", name, re, formatExact(report.value));
+          }
+        }
       }
     }
   },
